@@ -102,6 +102,14 @@ the deprecation/error fires.
 - [ ] `CODEX_DATA_DIR=/tmp/codex-test ccli info` shows `(CODEX_DATA_DIR)` annotation on the Data line
 - [ ] `ccli get -a` and `ccli rename -a foo bar` and `ccli remove -a foo` still work (legacy back-compat) but don't appear in `ccli get --help`
 
+#### v1.14.0
+
+- [ ] `cd /tmp && CODEX_NO_PROJECT=1 ccli set foo bar` refuses with `PROJECT_UNRESOLVED`-shaped error including resolver-chain diagnostic and recovery actions (#99)
+- [ ] `CODEX_BOOTSTRAP_MAX_BYTES=500 ccli context -p` (in a populated repo) prepends a `[trimmed: …]` notice naming `files.*` / `arch.*` / `context.*` with byte counts; if even after shedding it's still over budget, prepends a second `[warning: codex_context payload still exceeds budget …]` notice with the expanded never-shed list (#100)
+- [ ] `CODEX_BOOTSTRAP_MAX_BYTES=500 ccli context -p --tier full` (in the same repo) bypasses the shed entirely — no trimmed notice, full payload renders (#100)
+- [ ] `ccli config set bootstrap_max_response_bytes 102400` accepts the value; `ccli config get bootstrap_max_response_bytes` returns it; an invalid value (negative, non-integer) is rejected with a clear error
+- [ ] (manual via MCP client) Three `codex_set` calls to the same key within 30 minutes — third response includes a `warning:` line naming the count and time-since-first-write (#101)
+
 ## Rollback (if a release goes wrong)
 
 Tagged releases are immutable on GitHub, but you can ship a follow-up patch:
