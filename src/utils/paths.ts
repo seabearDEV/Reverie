@@ -164,7 +164,7 @@ let projectRootOverride: string | null = null;
  * overriding process.cwd(). Pass null to clear. Clears the cached result.
  *
  * Relative input is absolutized via `path.resolve()` so the walk-up always
- * starts from an absolute directory. Without this, an `MCP_PROJECT_DIR=.` /
+ * starts from an absolute directory. Without this, a `CODEX_PROJECT_DIR=.` /
  * `--cwd .` launcher hint would yield a relative `.codexcli` from the
  * resolver, which downstream `path.dirname()` reduced to `"."` in audit
  * rows (issue #102).
