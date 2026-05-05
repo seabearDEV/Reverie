@@ -4,6 +4,7 @@ import { CodexData, CodexValue } from './types';
 import { debug } from './utils/debug';
 import { Scope, loadEntries, saveEntries, loadEntriesMerged, findProjectFile, saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta, getEntryFast, setEntryFast } from './store';
 import { isValidEntryKey } from './utils/directoryStore';
+import { resolveScopeForWrite } from './projectResolution';
 
 export { Scope } from './store';
 
@@ -54,10 +55,13 @@ export function loadData(scope?: Scope  ): CodexData {
 }
 
 /**
- * Save data to storage
+ * Save data to storage. Bulk-write entry point used by import handlers; the
+ * project-resolution guard is applied here so an `--scope auto` import with
+ * no resolvable project refuses up front.
  */
 export function saveData(data: CodexData, scope?: Scope  ): void {
-  saveEntries(data, scope);
+  const effectiveScope = resolveScopeForWrite(scope);
+  saveEntries(data, effectiveScope);
 }
 
 // ── Per-key operations ─────────────────────────────────────────────────
@@ -123,7 +127,10 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
   if (!isValidEntryKey(key)) {
     throw new Error(`Invalid store key: ${JSON.stringify(key)}`);
   }
-  const effectiveScope = scope ?? 'auto';
+  // Refuse auto-scoped writes when project resolution failed (#99). When it
+  // succeeds, auto collapses to 'project' here so downstream load/save get
+  // an explicit scope instead of routing through 'auto' fallthrough.
+  const effectiveScope = resolveScopeForWrite(scope);
   // Fast path: write a single entry file directly. Returns false if a parent
   // or child collision means we'd have to restructure multiple files — in
   // that case fall through to the full load + diff path which already
@@ -151,30 +158,15 @@ export function removeValue(key: string, scope?: Scope  ): boolean {
     // rather than a stack trace.
     return false;
   }
-  if (!scope || scope === 'auto') {
-    if (findProjectFile()) {
-      const projectData = loadEntries('project');
-      if (getNestedValue(projectData, key) !== undefined) {
-        const removed = removeNestedValue(projectData, key);
-        if (removed) {
-          saveEntriesAndRemoveMeta(projectData, key, 'project');
-        }
-        return removed;
-      }
-    }
-    // Fall through to global
-    const globalData = loadEntries('global');
-    const removed = removeNestedValue(globalData, key);
-    if (removed) {
-      saveEntriesAndRemoveMeta(globalData, key, 'global');
-    }
-    return removed;
-  }
-
-  const data = loadEntries(scope);
+  // Auto collapses to 'project' when resolution succeeds, throws when it
+  // fails (#99). The pre-#99 project-then-global fallthrough is deliberately
+  // dropped so a misconfigured workspace cannot silently delete from global.
+  // Users who need to remove a global entry must pass --scope global / scope:'global'.
+  const effectiveScope = resolveScopeForWrite(scope);
+  const data = loadEntries(effectiveScope);
   const removed = removeNestedValue(data, key);
   if (removed) {
-    saveEntriesAndRemoveMeta(data, key, scope);
+    saveEntriesAndRemoveMeta(data, key, effectiveScope);
   }
   return removed;
 }

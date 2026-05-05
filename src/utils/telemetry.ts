@@ -20,6 +20,14 @@ export interface TelemetryEntry {
   /** Whether the operation succeeded. Optional for backward compat with
    *  pre-v1.11.x telemetry that didn't carry this field. */
   success?: boolean | undefined;
+  /** Refusal reason on failed writes (#99). Currently the only value is
+   *  'project_unresolved' for ProjectResolutionError refusals; future codes
+   *  can be added here as additional guardrails land. */
+  refusedReason?: string | undefined;
+  /** True when an explicit `scope: 'global'` succeeded on a call that would
+   *  have refused under `scope: 'auto'` because project resolution failed.
+   *  Lets us measure how often the explicit-scope escape hatch is used (#99). */
+  rescuedByExplicitGlobal?: boolean | undefined;
 }
 
 // Re-export for backward compatibility — anything that previously imported
@@ -340,6 +348,8 @@ export interface TelemetryExtras {
   redundant?: boolean | undefined;
   responseSize?: number | undefined;
   success?: boolean | undefined;
+  refusedReason?: string | undefined;
+  rescuedByExplicitGlobal?: boolean | undefined;
 }
 
 export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 'mcp', scope?: 'project' | 'global', extras?: TelemetryExtras, sync = false): Promise<void> {

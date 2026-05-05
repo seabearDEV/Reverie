@@ -29,6 +29,9 @@ export interface AuditEntry {
   tier?: string | undefined;
   entryCount?: number | undefined;
   redundant?: boolean | undefined;
+  // Project-resolution guardrail signals (#99)
+  refusedReason?: string | undefined;
+  rescuedByExplicitGlobal?: boolean | undefined;
 }
 
 export interface AuditQueryOptions {

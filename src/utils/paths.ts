@@ -166,6 +166,144 @@ let projectRootOverride: string | null = null;
 export function setProjectRootOverride(dir: string | null): void {
   projectRootOverride = dir;
   projectFileCache = null;
+  projectStoreDirCache = null;
+}
+
+/**
+ * Read-only accessor for the programmatic root override. Used by the
+ * project-resolution diagnostic so error messages can report whether MCP
+ * client roots / launcher hints were in effect.
+ */
+export function getProjectRootOverride(): string | null {
+  return projectRootOverride;
+}
+
+/**
+ * Diagnostic record describing which resolver branches fired during project
+ * file discovery. Captured alongside the resolved path by
+ * `findProjectFileWithDiagnostic()` and consumed by `ProjectResolutionError`
+ * to render a recovery-actionable error message.
+ *
+ * Field semantics:
+ *  - `codexNoProject`: CODEX_NO_PROJECT env var was set (resolution short-circuits).
+ *  - `codexProject`: value of CODEX_PROJECT if set, else undefined.
+ *  - `codexProjectFailed`: CODEX_PROJECT was set but did not resolve to a
+ *    `.codexcli/` directory or `.codexcli.json` file.
+ *  - `rootOverride`: programmatic override value if set, else undefined.
+ *  - `startedFrom`: directory the walk-up started from (override or cwd).
+ *    Empty string when the walk did not run (e.g. CODEX_NO_PROJECT short-circuit
+ *    or CODEX_PROJECT failure).
+ *  - `walkReachedRoot`: walk-up exhausted the filesystem without finding a
+ *    project store (stopped at the true filesystem root `/`).
+ *  - `walkStoppedAtGlobalDir`: walk-up was stopped early because it reached
+ *    the codex global data directory before finding a project store.
+ */
+export interface ResolverDiagnostic {
+  codexNoProject: boolean;
+  codexProject: string | undefined;
+  codexProjectFailed: boolean;
+  rootOverride: string | undefined;
+  startedFrom: string;
+  walkReachedRoot: boolean;
+  walkStoppedAtGlobalDir: boolean;
+}
+
+/**
+ * Internal: shared resolver body for `findProjectFile()` and
+ * `findProjectFileWithDiagnostic()`. Always returns both the resolved path
+ * (or null) and a diagnostic record describing which branches fired. Does
+ * not consult or populate the cache — callers handle caching.
+ */
+function resolveProjectFile(): { path: string | null; diagnostic: ResolverDiagnostic } {
+  const codexNoProject = Boolean(process.env.CODEX_NO_PROJECT);
+  const envPath = process.env.CODEX_PROJECT;
+  const codexProject = envPath !== undefined && envPath !== '' ? envPath : undefined;
+  const rootOverride = projectRootOverride ?? undefined;
+
+  const diagnostic: ResolverDiagnostic = {
+    codexNoProject,
+    codexProject,
+    codexProjectFailed: false,
+    rootOverride,
+    startedFrom: '',
+    walkReachedRoot: false,
+    walkStoppedAtGlobalDir: false,
+  };
+
+  // 1. CODEX_NO_PROJECT short-circuit
+  if (codexNoProject) {
+    return { path: null, diagnostic };
+  }
+
+  // 2. CODEX_PROJECT explicit path
+  if (codexProject !== undefined) {
+    const resolved = path.resolve(codexProject);
+    // Direct hit: resolved IS a .codexcli directory
+    try {
+      if (
+        fs.existsSync(resolved) &&
+        fs.statSync(resolved).isDirectory() &&
+        path.basename(resolved) === '.codexcli'
+      ) {
+        return { path: resolved, diagnostic };
+      }
+    } catch { /* fall through */ }
+
+    // Direct hit: resolved IS a .codexcli.json file
+    if (fs.existsSync(resolved) && !isDirectorySafe(resolved)) {
+      return { path: resolved, diagnostic };
+    }
+
+    // Containing directory: look for .codexcli/ or .codexcli.json inside it
+    if (fs.existsSync(resolved) && isDirectorySafe(resolved)) {
+      const dirCandidate = path.join(resolved, '.codexcli');
+      if (fs.existsSync(dirCandidate) && isDirectorySafe(dirCandidate)) {
+        return { path: dirCandidate, diagnostic };
+      }
+      const fileCandidate = path.join(resolved, '.codexcli.json');
+      if (fs.existsSync(fileCandidate)) {
+        return { path: fileCandidate, diagnostic };
+      }
+    }
+
+    // Env var was set but didn't resolve — treat as "no project" rather than
+    // silently falling back to a different directory the user didn't ask for.
+    diagnostic.codexProjectFailed = true;
+    return { path: null, diagnostic };
+  }
+
+  // 3. & 4. Walk up from override or cwd
+  const globalDir = getDataDirectory();
+  const startedFrom = projectRootOverride ?? process.cwd();
+  diagnostic.startedFrom = startedFrom;
+  let dir = startedFrom;
+  const root = path.parse(dir).root;
+
+  while (true) {
+    // Don't match files inside the global data directory
+    if (path.resolve(dir) === path.resolve(globalDir)) {
+      diagnostic.walkStoppedAtGlobalDir = true;
+      return { path: null, diagnostic };
+    }
+
+    // Prefer the new `.codexcli/` directory over the legacy `.codexcli.json` file.
+    const dirCandidate = path.join(dir, '.codexcli');
+    if (fs.existsSync(dirCandidate) && isDirectorySafe(dirCandidate)) {
+      return { path: dirCandidate, diagnostic };
+    }
+
+    const fileCandidate = path.join(dir, '.codexcli.json');
+    if (fs.existsSync(fileCandidate)) {
+      return { path: fileCandidate, diagnostic };
+    }
+
+    const parent = path.dirname(dir);
+    if (parent === dir || dir === root) {
+      diagnostic.walkReachedRoot = true;
+      return { path: null, diagnostic };
+    }
+    dir = parent;
+  }
 }
 
 /**
@@ -185,92 +323,33 @@ export function setProjectRootOverride(dir: string | null): void {
  * `findProjectStoreDir()` instead. Callers that need to *remove* the project
  * should use `fs.rmSync(path, { recursive: true, force: true })` which handles
  * both file and directory returns uniformly.
+ *
+ * Callers that need diagnostic information about which resolver branch fired
+ * (e.g. write paths producing actionable refusal errors) should use
+ * `findProjectFileWithDiagnostic()`.
  */
 export function findProjectFile(): string | null {
   if (projectFileCache !== null) {
     return projectFileCache === '' ? null : projectFileCache;
   }
+  const { path: resolved } = resolveProjectFile();
+  projectFileCache = resolved ?? '';
+  return resolved;
+}
 
-  // Allow tests to suppress project file discovery entirely
-  if (process.env.CODEX_NO_PROJECT) {
-    projectFileCache = '';
-    return null;
-  }
-
-  // Explicit env var override — path to a .codexcli directory, .codexcli.json
-  // file, or a containing directory holding either.
-  const envPath = process.env.CODEX_PROJECT;
-  if (envPath) {
-    const resolved = path.resolve(envPath);
-    // Direct hit: resolved IS a .codexcli directory
-    try {
-      if (
-        fs.existsSync(resolved) &&
-        fs.statSync(resolved).isDirectory() &&
-        path.basename(resolved) === '.codexcli'
-      ) {
-        projectFileCache = resolved;
-        return resolved;
-      }
-    } catch { /* fall through */ }
-
-    // Direct hit: resolved IS a .codexcli.json file
-    if (fs.existsSync(resolved) && !isDirectorySafe(resolved)) {
-      projectFileCache = resolved;
-      return resolved;
-    }
-
-    // Containing directory: look for .codexcli/ or .codexcli.json inside it
-    if (fs.existsSync(resolved) && isDirectorySafe(resolved)) {
-      const dirCandidate = path.join(resolved, '.codexcli');
-      if (fs.existsSync(dirCandidate) && isDirectorySafe(dirCandidate)) {
-        projectFileCache = dirCandidate;
-        return dirCandidate;
-      }
-      const fileCandidate = path.join(resolved, '.codexcli.json');
-      if (fs.existsSync(fileCandidate)) {
-        projectFileCache = fileCandidate;
-        return fileCandidate;
-      }
-    }
-
-    // Env var was set but didn't resolve — treat as "no project" rather than
-    // silently falling back to a different directory the user didn't ask for.
-    projectFileCache = '';
-    return null;
-  }
-
-  const globalDir = getDataDirectory();
-  let dir = projectRootOverride ?? process.cwd();
-  const root = path.parse(dir).root;
-
-  while (true) {
-    // Don't match files inside the global data directory
-    if (path.resolve(dir) === path.resolve(globalDir)) {
-      projectFileCache = '';
-      return null;
-    }
-
-    // Prefer the new `.codexcli/` directory over the legacy `.codexcli.json` file.
-    const dirCandidate = path.join(dir, '.codexcli');
-    if (fs.existsSync(dirCandidate) && isDirectorySafe(dirCandidate)) {
-      projectFileCache = dirCandidate;
-      return dirCandidate;
-    }
-
-    const fileCandidate = path.join(dir, '.codexcli.json');
-    if (fs.existsSync(fileCandidate)) {
-      projectFileCache = fileCandidate;
-      return fileCandidate;
-    }
-
-    const parent = path.dirname(dir);
-    if (parent === dir || dir === root) {
-      projectFileCache = '';
-      return null;
-    }
-    dir = parent;
-  }
+/**
+ * Same resolution as `findProjectFile()` but additionally returns a
+ * diagnostic record naming which resolver branches ran. Used by write paths
+ * to render PROJECT_UNRESOLVED refusal errors that tell the user what was
+ * tried and how to recover. Always re-runs the resolver — does not consult
+ * or populate the path cache, since the diagnostic is uncached and callers
+ * need it fresh.
+ */
+export function findProjectFileWithDiagnostic(): {
+  path: string | null;
+  diagnostic: ResolverDiagnostic;
+} {
+  return resolveProjectFile();
 }
 
 /** Safe wrapper around fs.statSync(...).isDirectory() that returns false on error. */

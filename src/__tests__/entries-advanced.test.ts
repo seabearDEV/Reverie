@@ -13,6 +13,14 @@ import { readStoreState } from './helpers/readStoreState';
 let tmpDir: string;
 
 const run = (args: string) => {
+  // After #99, auto-mode writes refuse when project resolution fails. These
+  // tests run with CODEX_NO_PROJECT=1 to exercise the global store, so
+  // inject --global for write verbs to make the global target explicit.
+  if (/^(set|rm|remove|copy|cp|rename|mv|alias|confirm|edit)\b/.test(args)) {
+    args = args.replace(/^(\S+)/, '$1 --global');
+  } else if (/^data (reset|import)\b/.test(args)) {
+    args = args.replace(/^(data \S+)/, '$1 --global');
+  }
   return execSync(`node dist/index.js ${args}`, {
     env: { ...process.env, CODEX_DATA_DIR: tmpDir, CODEX_NO_PROJECT: '1' },
     timeout: 10000,

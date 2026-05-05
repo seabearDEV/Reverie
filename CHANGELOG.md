@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Breaking changes
+
+- **Auto-scope writes refuse when project resolution fails** (`#99`): pre-fix, every write tool (`codex_set`, `codex_remove`, `codex_alias_*`, `codex_confirm_*`, `codex_copy`, `codex_rename`, `codex_import`, `codex_reset`) silently fell through to the user's global store when no `.codexcli/` could be resolved (`CODEX_NO_PROJECT` set, `CODEX_PROJECT` unresolvable, or cwd walk-up exhausted) and the caller did not pass an explicit scope. The 2026-05-05 soak dataset showed this misrouting project-shaped data into global, growing the bootstrap response past the agent's tool-result cap. Auto-scope writes now refuse with a `PROJECT_UNRESOLVED` error naming what the resolver tried and how to recover. Read paths (`codex_get`, `codex_context`, `codex_find`, …) are unchanged — cross-scope reads remain useful when project resolution fails.
+
+  The auto-mode project-then-global *fallthrough* on remove/alias-remove/confirm-remove also collapses: with auto + resolved project, the operation now targets project only. To remove a global entry while inside a project directory, pass explicit `--scope global` (CLI) or `scope: 'global'` (MCP).
+
+  Recovery actions (named in every refusal):
+  - run `codex_init` (or `ccli init`) to create a project store
+  - retry with explicit `scope: 'global'` (MCP) or `--scope global` (CLI) for an intentional global-store write
+  - if `CODEX_NO_PROJECT` is set, unset it before `codex_init`
+
+  MCP refusals return a two-content-block response: the human-readable message in the first block, and a JSON code block carrying `code: 'PROJECT_UNRESOLVED'` plus a `diagnostic` record of which resolver branches fired. CLI refusals exit with code 1 and write the same message body to stderr.
+
+  Telemetry/audit gains `refusedReason: 'project_unresolved'` on refused calls and `rescuedByExplicitGlobal: true` on calls that succeeded under explicit `scope: 'global'` despite project resolution failing — lets us measure how often the escape hatch is in use post-deploy.
+
 ## [1.13.0] - 2026-04-23
 
 Agent-first release driven by mining a 584-call, 15-day real-usage dataset (see `docs/dogfooding-real-usage.md`). Eleven issues closed across three themes: make agent tool-selection unambiguous (#92), make the audit signal clean enough to mine again (#93 + #94), and formalize the cross-session handoff pattern agents organically converged on (#91). The rest — small bug fixes, soak findings, and the first two Layer 2 tools from the seedRoadmap — fell into the same cycle once the milestone was trimmed to match.

@@ -10,6 +10,14 @@ vi.mock('../store', () => ({
   getEffectiveScope: vi.fn(() => 'global'),
 }));
 
+vi.mock('../projectResolution', () => ({
+  resolveScopeForWrite: vi.fn((scope) => {
+    if (scope === 'project' || scope === 'global') return scope;
+    // Default: simulate project resolved so auto/undefined → 'project'
+    return 'project';
+  }),
+}));
+
 vi.mock('../formatting', () => ({
   color: {
     red: vi.fn((text: string) => `[red]${text}[/red]`),
@@ -18,6 +26,7 @@ vi.mock('../formatting', () => ({
 }));
 
 import { loadEntries, saveEntries, loadEntriesMerged, clearStoreCaches, findProjectFile } from '../store';
+import { resolveScopeForWrite } from '../projectResolution';
 
 describe('Storage', () => {
   const originalConsoleError = console.error;
@@ -137,12 +146,15 @@ describe('Storage', () => {
   });
 
   describe('saveData', () => {
-    it('delegates to saveEntries', () => {
+    it('resolves auto scope before delegating (#99)', () => {
+      // auto/undefined is passed to resolveScopeForWrite which collapses it
+      // to a concrete scope; the mock returns 'project' for the auto path.
       saveData({ key: 'value' });
-      expect(saveEntries).toHaveBeenCalledWith({ key: 'value' }, undefined);
+      expect(resolveScopeForWrite).toHaveBeenCalledWith(undefined);
+      expect(saveEntries).toHaveBeenCalledWith({ key: 'value' }, 'project');
     });
 
-    it('passes scope through', () => {
+    it('passes explicit scope through', () => {
       saveData({ key: 'value' }, 'global');
       expect(saveEntries).toHaveBeenCalledWith({ key: 'value' }, 'global');
     });

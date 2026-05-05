@@ -6,6 +6,7 @@ import { sanitizeValue, sanitizeParams, logAudit } from './audit';
 import { logToolCall, classifyOp, TelemetryExtras } from './telemetry';
 import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
+import { ProjectResolutionError } from '../projectResolution';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
@@ -134,11 +135,15 @@ export async function withCliInstrumentation<T>(
   let result: T | undefined;
   let success = true;
   let errorMsg: string | undefined;
+  let refusedReason: string | undefined;
   try {
     result = await Promise.resolve(fn());
   } catch (err) {
     success = false;
     errorMsg = String(err);
+    if (err instanceof ProjectResolutionError) {
+      refusedReason = 'project_unresolved';
+    }
     throw err;
   } finally {
     // Always restore stdout.write before reading the measurement, so any
@@ -217,12 +222,18 @@ export async function withCliInstrumentation<T>(
     const resolvedScope: 'project' | 'global' | undefined = scope === 'auto'
       ? (projectFile ? 'project' : 'global')
       : scope as 'project' | 'global' | undefined;
+    // #99: rescuedByExplicitGlobal — the call succeeded with explicit
+    // scope:'global' but would have refused under scope:'auto' because
+    // project resolution failed. Mirrors the MCP-side telemetry signal.
+    const rescuedByExplicitGlobal = isWrite && scope === 'global' && !projectFile ? true : undefined;
     const telemetryExtras: TelemetryExtras = {
       duration,
       hit,
       redundant,
       responseSize,
       project: projectFile ? path.dirname(projectFile) : undefined,
+      refusedReason,
+      rescuedByExplicitGlobal,
     };
     void logToolCall(ctx.tool, ctx.key, 'cli', resolvedScope, telemetryExtras, true);
 
@@ -245,6 +256,8 @@ export async function withCliInstrumentation<T>(
       entryCount,
       redundant,
       params: ctx.params ? sanitizeParams(ctx.params) : undefined,
+      refusedReason,
+      rescuedByExplicitGlobal,
     }, true);
   }
 

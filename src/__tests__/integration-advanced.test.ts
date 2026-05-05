@@ -6,7 +6,18 @@ import * as os from 'os';
 describe('CLI Integration Tests — Advanced', () => {
   const testDir = path.join(os.tmpdir(), 'codexcli-integ-' + Math.random().toString(36).substring(2));
   const execOpts = { env: { ...process.env, CODEX_DATA_DIR: testDir, CODEX_NO_PROJECT: '1' }, stdio: ['pipe', 'pipe', 'pipe'] as const };
-  const run = (args: string) => execSync(`node dist/index.js ${args}`, execOpts).toString();
+  const run = (args: string) => {
+    // After #99, auto-mode writes refuse without project resolution. Inject
+    // --global for write verbs so the global-store path remains exercised.
+    // Handle both top-level write verbs (set, rm, alias, ...) and the
+    // `data <subcommand>` family (data reset, data import).
+    if (/^(set|rm|remove|copy|cp|rename|mv|alias|confirm|edit)\b/.test(args)) {
+      args = args.replace(/^(\S+)/, '$1 --global');
+    } else if (/^data (reset|import)\b/.test(args)) {
+      args = args.replace(/^(data \S+)/, '$1 --global');
+    }
+    return execSync(`node dist/index.js ${args}`, execOpts).toString();
+  };
 
   beforeAll(() => {
     fs.mkdirSync(testDir, { recursive: true });

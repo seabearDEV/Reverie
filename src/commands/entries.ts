@@ -12,6 +12,7 @@ import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
 import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAliases, resolveKey, renameAlias } from '../alias';
 import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey } from '../confirm';
+import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
@@ -692,8 +693,10 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
     if (typeof value === 'string') {
       setValue(destKey, value, scope);
     } else {
-      // Batch: load once, set all leaves, save once (instead of O(L) file writes)
-      const effectiveScope = scope ?? 'auto';
+      // Batch: load once, set all leaves, save once (instead of O(L) file writes).
+      // Apply the project-resolution guard here too — this path bypasses
+      // storage.ts setValue, so the guard would otherwise be skipped (#99).
+      const effectiveScope = resolveScopeForWrite(scope);
       const data = loadEntries(effectiveScope);
       for (const [flatKey, flatVal] of Object.entries(flattenObject({ [sourceKey]: value }))) {
         setNestedValue(data, destKey + flatKey.slice(sourceKey.length), String(flatVal));
@@ -746,8 +749,10 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   if (typeof value === 'string') {
     setValue(newKey, value, scope);
   } else {
-    // Batch: load once, set all leaves, save once (instead of O(L) file writes)
-    const effectiveScope = scope ?? 'auto';
+    // Batch: load once, set all leaves, save once (instead of O(L) file writes).
+    // Apply the project-resolution guard here too — this path bypasses
+    // storage.ts setValue, so the guard would otherwise be skipped (#99).
+    const effectiveScope = resolveScopeForWrite(scope);
     const data = loadEntries(effectiveScope);
     for (const [flatKey, flatVal] of Object.entries(flattenObject({ [oldKey]: value }))) {
       setNestedValue(data, newKey + flatKey.slice(oldKey.length), String(flatVal));

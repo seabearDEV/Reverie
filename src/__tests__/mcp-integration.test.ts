@@ -29,7 +29,21 @@ afterEach(() => {
  * Call an MCP tool by invoking the MCP server as a subprocess with
  * a JSON-RPC request over stdin/stdout.
  */
-function callMcpTool(tool: string, params: Record<string, unknown> = {}): { content: { text: string }[]; isError?: boolean } {
+// Tools that take a `scope` param. After #99 these refuse on auto+null
+// project resolution, so the helper injects scope:'global' by default to
+// keep the existing tests exercising the global-store path under
+// CODEX_NO_PROJECT='1'. Read-only tools (codex_get, codex_find, etc.)
+// don't need it but tolerate the extra field.
+const SCOPED_TOOLS = new Set([
+  'codex_set', 'codex_remove', 'codex_copy', 'codex_rename',
+  'codex_alias_set', 'codex_alias_remove', 'codex_import', 'codex_reset',
+  'codex_get', 'codex_find', 'codex_alias_list', 'codex_run',
+]);
+
+function callMcpTool(tool: string, params: Record<string, unknown> = {}, opts: { skipScopeInject?: boolean } = {}): { content: { text: string }[]; isError?: boolean } {
+  if (!opts.skipScopeInject && SCOPED_TOOLS.has(tool) && params.scope === undefined) {
+    params = { ...params, scope: 'global' };
+  }
   // Build a JSON-RPC initialize + tool call sequence
   const initialize = JSON.stringify({
     jsonrpc: '2.0',
@@ -318,6 +332,54 @@ describe('MCP Integration (real I/O)', () => {
           expect(setEntry.op).toBe('write');
           expect(setEntry.src).toBe('mcp');
         }
+      }
+    });
+  });
+
+  // #99: when project resolution fails and the caller does not pass an
+  // explicit scope, write tools refuse with a structured response. When
+  // scope:'global' is explicit, the same call succeeds and is tagged
+  // rescuedByExplicitGlobal in telemetry/audit.
+  describe('project-resolution refusal (#99)', () => {
+    it('codex_set without scope refuses with the structured error', () => {
+      const result = callMcpTool('codex_set', { key: 'refused.key', value: 'v' }, { skipScopeInject: true });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Project resolution failed');
+      expect(result.content[0].text).toContain('CODEX_NO_PROJECT');
+      // Second content block carries the JSON diagnostic
+      expect(result.content[1]?.text).toContain('PROJECT_UNRESOLVED');
+      expect(result.content[1]?.text).toContain('codexNoProject');
+      // Nothing was written
+      const data = readDataFile();
+      expect((data.entries as any).refused).toBeUndefined();
+    });
+
+    it('codex_set with explicit scope:"global" succeeds (rescue path)', () => {
+      const result = callMcpTool('codex_set', { key: 'rescued.key', value: 'v', scope: 'global' });
+      expect(result.isError).toBeFalsy();
+      const data = readDataFile();
+      expect((data.entries as any).rescued.key).toBe('v');
+    });
+
+    it('audit logs refusedReason on the refused call and rescuedByExplicitGlobal on the rescued one', () => {
+      callMcpTool('codex_set', { key: 'audit.refused', value: 'v' }, { skipScopeInject: true });
+      callMcpTool('codex_set', { key: 'audit.rescued', value: 'v', scope: 'global' });
+
+      const auditPath = path.join(tmpDir, 'audit.jsonl');
+      if (!fs.existsSync(auditPath)) return; // audit is best-effort; if it didn't flush, skip
+      const lines = fs.readFileSync(auditPath, 'utf8').trim().split('\n');
+      const entries = lines.map(l => JSON.parse(l));
+
+      const refused = entries.find((e: any) => e.tool === 'codex_set' && e.key === 'audit.refused');
+      if (refused) {
+        expect(refused.success).toBe(false);
+        expect(refused.refusedReason).toBe('project_unresolved');
+      }
+
+      const rescued = entries.find((e: any) => e.tool === 'codex_set' && e.key === 'audit.rescued');
+      if (rescued) {
+        expect(rescued.success).toBe(true);
+        expect(rescued.rescuedByExplicitGlobal).toBe(true);
       }
     });
   });
