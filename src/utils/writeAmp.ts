@@ -39,8 +39,10 @@ export function recordWrite(sessionId: string, key: string, now = Date.now()): W
   // Lazy eviction: remove keys in this session whose most recent timestamp has
   // slid outside the 30-min window. Since timestamps are appended in order,
   // the last element is the most recent — if it's expired, all are expired.
+  // We skip `key` here because its current write hasn't been recorded yet;
+  // it will be evaluated naturally on the next call.
   for (const [k, timestamps] of perSession) {
-    if (k !== key && (timestamps.length === 0 || timestamps[timestamps.length - 1] <= cutoff)) {
+    if (k !== key && timestamps[timestamps.length - 1] <= cutoff) {
       perSession.delete(k);
     }
   }
