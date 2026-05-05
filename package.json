@@ -1,6 +1,6 @@
 {
 	"name": "codexcli",
-	"version": "1.13.0",
+	"version": "1.14.0",
 	"description": "Persistent, structured knowledge store for software projects — CLI + MCP server for AI agent integration",
 	"bin": {
 		"cclid": "dist/index.js",

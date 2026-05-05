@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-05-05
+
 ### Breaking changes
 
 - **Auto-scope writes refuse when project resolution fails** (`#99`): pre-fix, every write tool (`codex_set`, `codex_remove`, `codex_alias_*`, `codex_confirm_*`, `codex_copy`, `codex_rename`, `codex_import`, `codex_reset`) silently fell through to the user's global store when no `.codexcli/` could be resolved (`CODEX_NO_PROJECT` set, `CODEX_PROJECT` unresolvable, or cwd walk-up exhausted) and the caller did not pass an explicit scope. The 2026-05-05 soak dataset showed this misrouting project-shaped data into global, growing the bootstrap response past the agent's tool-result cap. Auto-scope writes now refuse with a `PROJECT_UNRESOLVED` error naming what the resolver tried and how to recover. Read paths (`codex_get`, `codex_context`, `codex_find`, …) are unchanged — cross-scope reads remain useful when project resolution fails.
