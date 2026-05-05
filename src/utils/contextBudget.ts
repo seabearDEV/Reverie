@@ -147,7 +147,7 @@ export function formatShedNotice(segments: ShedSegment[]): string {
  */
 export const PATHOLOGICAL_OVERFLOW_NOTICE =
   '[warning: codex_context payload still exceeds budget after shedding all sheddable namespaces. ' +
-  'Increase bootstrap_max_response_bytes (codex_config_set) or audit project.*/conventions.* for over-long entries.]';
+  'Increase bootstrap_max_response_bytes (codex_config_set) or audit project.*, conventions.*, commands.*, deps.*, and context.next_session for over-long entries.]';
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n}B`;
