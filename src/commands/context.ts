@@ -76,7 +76,31 @@ export function showContext(options: ContextOptions = {}): void {
     const budget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
       ? Number(envOverride)
       : (loadConfig().bootstrap_max_response_bytes || 50 * 1024);
-    const decision = shedToFitBudget(kept, (k) => getStalenessTag(k, meta), 0, budget);
+
+    // Estimate non-entry overhead using Buffer.byteLength for accurate UTF-8
+    // byte counts — covers handoff banner, aliases section, tier footer, and a
+    // conservative allowance for the shed-notice line itself.
+    let fixedOverheadBytes = 0;
+    if (handoff) {
+      for (const line of handoff.lines) fixedOverheadBytes += Buffer.byteLength(`${line}\n`, 'utf8');
+      fixedOverheadBytes += 1; // blank line separator
+    }
+    if (Object.keys(aliases).length > 0) {
+      fixedOverheadBytes += Buffer.byteLength('\nAliases:\n', 'utf8');
+      for (const [a, t] of Object.entries(aliases)) {
+        fixedOverheadBytes += Buffer.byteLength(`  ${a} -> ${t}\n`, 'utf8');
+      }
+    }
+    // Tier footer always present in this branch (tier !== 'full').
+    // Use pre-shed entry count as an upper bound on footer length.
+    const preSheddableCount = Object.keys(kept).length;
+    fixedOverheadBytes += Buffer.byteLength(`\n[tier: ${tier} (${preSheddableCount} entries) — use --tier full for complete context]\n`, 'utf8');
+    // Conservative budget for the shed-notice line (emitted only when shedding
+    // occurs, but including it here prevents the notice itself from pushing the
+    // final output over budget).
+    fixedOverheadBytes += 256;
+
+    const decision = shedToFitBudget(kept, (k) => getStalenessTag(k, meta), fixedOverheadBytes, budget);
     kept = decision.kept;
     shedSegments = decision.segments;
   }

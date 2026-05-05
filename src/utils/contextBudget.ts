@@ -52,8 +52,9 @@ export interface ShedDecision {
  * metadata lives outside this module.
  */
 export function entryRenderBytes(k: string, v: string, ageTag: string): number {
-  // `${k}: ${v}${ageTag}\n` — 2 chars for ': ', 1 for '\n'.
-  return k.length + 2 + v.length + ageTag.length + 1;
+  // Use Buffer.byteLength to correctly count UTF-8 bytes (not UTF-16 code
+  // units), so the budget is accurate for non-ASCII keys/values/age tags.
+  return Buffer.byteLength(`${k}: ${v}${ageTag}\n`, 'utf8');
 }
 
 /**
@@ -99,7 +100,9 @@ export function shedToFitBudget(
     if (candidates.length === 0) continue;
 
     if (rule.largestFirst) {
-      candidates.sort(([, a], [, b]) => b.length - a.length);
+      candidates.sort(([ka, va], [kb, vb]) =>
+        entryRenderBytes(kb, vb, ageTag(kb)) - entryRenderBytes(ka, va, ageTag(ka))
+      );
     }
 
     const segment: ShedSegment = { label: rule.label, keys: [], bytes: 0 };

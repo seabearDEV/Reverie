@@ -49,6 +49,7 @@ import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
 import { HANDOFF_KEY, buildHandoffBanner } from "./utils/handoff";
 import { recordWrite, formatWriteAmpWarning } from "./utils/writeAmp";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 function toScope(scopeParam?: string): Scope {
   return (scopeParam ?? 'auto') as Scope;
@@ -118,24 +119,19 @@ import { SKIP_AUDIT, BULK_OPS, captureValue } from "./utils/instrumentation";
 
 // ── Per-call guardrail signals ──────────────────────────────────────
 // Handlers stash guardrail outcomes here (size-budget shedding for #100,
-// write-amp warning for #101). The wrapper consumes them after the
-// handler returns and forwards them into telemetry + audit. Module
-// state is safe because MCP requests serialize through one server
-// instance — there is no concurrent handler execution.
+// write-amp warning for #101). AsyncLocalStorage makes each tool-call
+// invocation see its own store so concurrent in-flight requests cannot
+// bleed signals into each other's telemetry/audit rows.
 interface GuardrailSignals {
   degraded?: boolean;
   shedNamespaces?: string[];
   writeAmpWarning?: boolean;
   writeAmpCount?: number;
 }
-let pendingGuardrailSignals: GuardrailSignals = {};
+const guardrailStorage = new AsyncLocalStorage<GuardrailSignals>();
 function emitGuardrailSignals(signals: GuardrailSignals): void {
-  Object.assign(pendingGuardrailSignals, signals);
-}
-function consumeGuardrailSignals(): GuardrailSignals {
-  const s = pendingGuardrailSignals;
-  pendingGuardrailSignals = {};
-  return s;
+  const store = guardrailStorage.getStore();
+  if (store) Object.assign(store, signals);
 }
 
 function extractKey(name: string, params: Record<string, unknown>): string | undefined {
@@ -255,8 +251,9 @@ server.tool = ((...args: any[]) => {
     let success = true;
     let errorMsg: string | undefined;
     let refusedReason: string | undefined;
+    const guardrailSignals: GuardrailSignals = {};
     try {
-      result = await origHandler(params, extra);
+      result = await guardrailStorage.run(guardrailSignals, () => origHandler(params, extra));
       if (result && typeof result === 'object' && 'isError' in result && (result as { isError: boolean }).isError) {
         success = false;
         const content = (result as { content?: { text?: string }[] }).content;
@@ -325,7 +322,7 @@ server.tool = ((...args: any[]) => {
       const redundant = op === 'write' && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after ? true : undefined;
 
       // Consume any guardrail signals stashed by the handler (#100/#101).
-      const guardrails = consumeGuardrailSignals();
+      const guardrails = guardrailSignals;
 
       // Telemetry (enriched, moved here so we have duration + metrics)
       const projectFile = findProjectFile();
@@ -1455,27 +1452,32 @@ server.tool(
           ? Number(envOverride)
           : budget;
 
-        // Estimate non-entry overhead. The exact byte count is computed below
-        // when rendering; this estimate just needs to be in the ballpark for
-        // shed-decision purposes — we account for header, handoff banner,
-        // aliases section, tier footer.
+        // Estimate non-entry overhead using Buffer.byteLength for accurate UTF-8
+        // byte counts — covers header, handoff banner, aliases section, tier footer,
+        // and a conservative allowance for the shed-notice line itself.
         let fixedOverheadBytes = 0;
         const headerLine = hasProject
           ? `[project: ${projectFile}]`
           : `[project: NONE — auto-scope writes will fall through to global. Pin CODEX_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`;
-        fixedOverheadBytes += headerLine.length + 1 /* \n */ + 1 /* blank line */;
+        fixedOverheadBytes += Buffer.byteLength(`${headerLine}\n\n`, 'utf8');
         if (handoff) {
-          for (const l of handoff.lines) fixedOverheadBytes += l.length + 1;
-          fixedOverheadBytes += 1; // separator
+          for (const l of handoff.lines) fixedOverheadBytes += Buffer.byteLength(`${l}\n`, 'utf8');
+          fixedOverheadBytes += 1; // blank line separator
         }
         if (Object.keys(aliases).length > 0) {
-          fixedOverheadBytes += 1 /* blank */ + 'Aliases:'.length + 1;
+          fixedOverheadBytes += Buffer.byteLength('\nAliases:\n', 'utf8');
           for (const [a, t] of Object.entries(aliases)) {
-            fixedOverheadBytes += 2 + a.length + 4 + t.length + 1; // '  a -> t\n'
+            fixedOverheadBytes += Buffer.byteLength(`  ${a} -> ${t}\n`, 'utf8');
           }
         }
         // Tier footer always present in this branch (effectiveTier !== 'full').
-        fixedOverheadBytes += 1 + `[tier: ${effectiveTier} ( entries) — pass tier:"full" for complete context]`.length + 1;
+        // Use pre-shed entry count as an upper bound on footer length.
+        const preSheddableCount = Object.keys(displayed).length;
+        fixedOverheadBytes += Buffer.byteLength(`\n[tier: ${effectiveTier} (${preSheddableCount} entries) — pass tier:"full" for complete context]\n`, 'utf8');
+        // Conservative budget for the shed-notice line (emitted only when shedding
+        // occurs, but including it here prevents the notice itself from pushing the
+        // final response over budget).
+        fixedOverheadBytes += 256;
 
         const decision = shedToFitBudget(displayed, (k) => getStalenessTag(k, meta), fixedOverheadBytes, effectiveBudget);
         kept = decision.kept;

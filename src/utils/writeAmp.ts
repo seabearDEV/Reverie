@@ -7,9 +7,10 @@ const WINDOW_MS = 30 * 60 * 1000;
 const THRESHOLD = 3;
 
 // sessionId → key → timestamps[] (ms epoch). Per-MCP-server-process state,
-// cleared on server restart. Old timestamps are trimmed on each access via
-// the sliding window, so memory stays bounded by active-session count ×
-// distinct-keys-touched-per-session × writes-fitting-in-30-min.
+// cleared on server restart. Keys are lazily evicted when their most recent
+// timestamp slides outside the 30-min window; sessions are evicted when all
+// their keys have been swept. Memory is proportional to
+// active-session count × live-keys-per-session (keys with any in-window write).
 const sessionWrites = new Map<string, Map<string, number[]>>();
 
 export interface WriteAmpResult {
@@ -34,6 +35,22 @@ export function recordWrite(sessionId: string, key: string, now = Date.now()): W
   }
 
   const cutoff = now - WINDOW_MS;
+
+  // Lazy eviction: remove keys in this session whose most recent timestamp has
+  // slid outside the 30-min window. Since timestamps are appended in order,
+  // the last element is the most recent — if it's expired, all are expired.
+  for (const [k, timestamps] of perSession) {
+    if (k !== key && (timestamps.length === 0 || timestamps[timestamps.length - 1] <= cutoff)) {
+      perSession.delete(k);
+    }
+  }
+  // Evict sessions that became empty after prior sweeps.
+  for (const [sid, sess] of sessionWrites) {
+    if (sid !== sessionId && sess.size === 0) {
+      sessionWrites.delete(sid);
+    }
+  }
+
   const prior = (perSession.get(key) ?? []).filter(ts => ts > cutoff);
   prior.push(now);
   perSession.set(key, prior);
