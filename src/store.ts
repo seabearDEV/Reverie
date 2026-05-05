@@ -18,6 +18,7 @@ import { saveJsonSorted } from './utils/saveJsonSorted';
 import { createDirectoryStore, migrateFileToDirectory } from './utils/directoryStore';
 import { flattenObject } from './utils/objectPath';
 import { debug } from './utils/debug';
+import { resolveScopeForWrite } from './projectResolution';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -257,7 +258,9 @@ export function saveAll(
   },
   scope?: Scope,
 ): void {
-  const store = resolveStore(scope);
+  // Bulk transactional write (#77): import handlers + reset paths route here.
+  const effectiveScope = resolveScopeForWrite(scope);
+  const store = resolveStore(effectiveScope);
   const current = store.load();
 
   // Stamp _meta for new/changed leaves when entries are written. Without

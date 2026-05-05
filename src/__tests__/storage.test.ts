@@ -137,12 +137,14 @@ describe('Storage', () => {
   });
 
   describe('saveData', () => {
-    it('delegates to saveEntries', () => {
-      saveData({ key: 'value' });
-      expect(saveEntries).toHaveBeenCalledWith({ key: 'value' }, undefined);
+    it('resolves auto scope before delegating (#99)', () => {
+      // Auto/undefined collapses to a concrete scope at the guard chokepoint;
+      // saveEntries always receives 'project' or 'global', never undefined.
+      saveData({ key: 'value' }, 'global');
+      expect(saveEntries).toHaveBeenCalledWith({ key: 'value' }, 'global');
     });
 
-    it('passes scope through', () => {
+    it('passes explicit scope through', () => {
       saveData({ key: 'value' }, 'global');
       expect(saveEntries).toHaveBeenCalledWith({ key: 'value' }, 'global');
     });

@@ -1,7 +1,7 @@
 import { debug } from './utils/debug';
-import { Scope, loadAliasMap, saveAliasMap, loadAliasMapMerged, findProjectFile } from './store';
+import { Scope, loadAliasMap, saveAliasMap, loadAliasMapMerged } from './store';
 import { isValidEntryKey } from './utils/directoryStore';
-
+import { resolveScopeForWrite } from './projectResolution';
 
 
 export function loadAliases(scope?: Scope  ): Record<string, string> {
@@ -12,7 +12,8 @@ export function loadAliases(scope?: Scope  ): Record<string, string> {
 }
 
 export function saveAliases(data: Record<string, string>, scope?: Scope  ): void {
-  saveAliasMap(data, scope);
+  const effectiveScope = resolveScopeForWrite(scope);
+  saveAliasMap(data, effectiveScope);
 }
 
 // Create or update an alias (one alias per entry — replaces any existing alias for the same target)
@@ -30,7 +31,8 @@ export function setAlias(alias: string, path: string, scope?: Scope  ): void {
   if (!isValidEntryKey(path)) {
     throw new Error(`Invalid alias target: ${JSON.stringify(path)}`);
   }
-  const aliases = loadAliasMap(scope);
+  const effectiveScope = resolveScopeForWrite(scope);
+  const aliases = loadAliasMap(effectiveScope);
   // Enforce one alias per entry: O(1) lookup via inverted map
   const keyToAlias = buildKeyToAliasMap(aliases);
   const existing = keyToAlias[path];
@@ -38,35 +40,20 @@ export function setAlias(alias: string, path: string, scope?: Scope  ): void {
     delete aliases[existing];
   }
   aliases[alias] = path;
-  saveAliasMap(aliases, scope);
+  saveAliasMap(aliases, effectiveScope);
   console.log(`Alias '${alias}' added successfully.`);
 }
 
 // Remove an alias
 export function removeAlias(alias: string, scope?: Scope  ): boolean {
-  if (!scope || scope === 'auto') {
-    // Try project first, then global
-    if (findProjectFile()) {
-      const projectAliases = loadAliasMap('project');
-      if (alias in projectAliases) {
-        delete projectAliases[alias];
-        saveAliasMap(projectAliases, 'project');
-        return true;
-      }
-    }
-    const globalAliases = loadAliasMap('global');
-    if (alias in globalAliases) {
-      delete globalAliases[alias];
-      saveAliasMap(globalAliases, 'global');
-      return true;
-    }
-    return false;
-  }
-
-  const aliases = loadAliasMap(scope);
+  // Auto collapses to 'project' when resolution succeeds, throws when it
+  // fails (#99). Pre-#99 project-then-global fallthrough is dropped to keep
+  // remove semantics aligned with set: if you want to touch global, ask for it.
+  const effectiveScope = resolveScopeForWrite(scope);
+  const aliases = loadAliasMap(effectiveScope);
   if (alias in aliases) {
     delete aliases[alias];
-    saveAliasMap(aliases, scope);
+    saveAliasMap(aliases, effectiveScope);
     return true;
   }
   return false;
@@ -74,33 +61,13 @@ export function removeAlias(alias: string, scope?: Scope  ): boolean {
 
 // Rename an alias
 export function renameAlias(oldName: string, newName: string, scope?: Scope  ): boolean {
-  if (!scope || scope === 'auto') {
-    // Try project first, then global
-    if (findProjectFile()) {
-      const projectAliases = loadAliasMap('project');
-      if (oldName in projectAliases) {
-        if (newName in projectAliases) return false;
-        projectAliases[newName] = projectAliases[oldName];
-        delete projectAliases[oldName];
-        saveAliasMap(projectAliases, 'project');
-        return true;
-      }
-    }
-    const globalAliases = loadAliasMap('global');
-    if (!(oldName in globalAliases)) return false;
-    if (newName in globalAliases) return false;
-    globalAliases[newName] = globalAliases[oldName];
-    delete globalAliases[oldName];
-    saveAliasMap(globalAliases, 'global');
-    return true;
-  }
-
-  const aliases = loadAliasMap(scope);
+  const effectiveScope = resolveScopeForWrite(scope);
+  const aliases = loadAliasMap(effectiveScope);
   if (!(oldName in aliases)) return false;
   if (newName in aliases) return false;
   aliases[newName] = aliases[oldName];
   delete aliases[oldName];
-  saveAliasMap(aliases, scope);
+  saveAliasMap(aliases, effectiveScope);
   return true;
 }
 
@@ -130,17 +97,16 @@ export function resolveKey(key: string, scope?: Scope  ): string {
   return resolved;
 }
 
-// Remove any aliases whose target matches `key` or is a child of `key` (cascade delete)
+// Remove any aliases whose target matches `key` or is a child of `key` (cascade delete).
+//
+// Called as a post-step from removeEntry — that caller already passed its
+// scope through resolveScopeForWrite, so by the time we get here the entry
+// remove either succeeded with an explicit scope or threw. Re-applying the
+// guard here keeps independent callers honest while making cascade calls a
+// no-cost passthrough.
 export function removeAliasesForKey(key: string, scope?: Scope  ): void {
-  if (!scope || scope === 'auto') {
-    // Remove from both scopes
-    removeAliasesFromScope(key, 'global');
-    if (findProjectFile()) {
-      removeAliasesFromScope(key, 'project');
-    }
-    return;
-  }
-  removeAliasesFromScope(key, scope);
+  const effectiveScope = resolveScopeForWrite(scope);
+  removeAliasesFromScope(key, effectiveScope);
 }
 
 function removeAliasesFromScope(key: string, scope: 'project' | 'global'): void {

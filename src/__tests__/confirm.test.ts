@@ -59,12 +59,13 @@ describe('Confirm Metadata', () => {
   });
 
   describe('saveConfirmKeys', () => {
-    it('delegates to saveConfirmMap', () => {
-      saveConfirmKeys({ 'z.key': true, 'a.key': true });
-
+    it('resolves auto scope before delegating (#99)', () => {
+      // Auto/undefined collapses to a concrete scope at the guard chokepoint;
+      // saveConfirmMap always receives 'project' or 'global', never undefined.
+      saveConfirmKeys({ 'z.key': true, 'a.key': true }, 'global');
       expect(saveConfirmMap).toHaveBeenCalledWith(
         { 'z.key': true, 'a.key': true },
-        undefined
+        'global'
       );
     });
   });

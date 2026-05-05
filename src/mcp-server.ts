@@ -43,6 +43,7 @@ import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./
 import { interpolate, interpolateObject, StrictInterpolationError } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace } from "./utils/telemetry";
 import { logAudit, queryAuditLog, sanitizeValue, sanitizeParams, getAuditPath } from "./utils/audit";
+import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
@@ -57,6 +58,24 @@ function textResponse(text: string) {
 }
 function errorResponse(text: string) {
   return { content: [{ type: "text" as const, text }], isError: true };
+}
+
+/**
+ * Render a ProjectResolutionError (#99) as a two-block MCP tool result: the
+ * human-readable refusal message in the first content item and a JSON code
+ * block carrying `code` + `diagnostic` for programmatic consumers in the
+ * second. Both ride the same `isError: true` envelope so the client can
+ * surface the failure like any other tool error.
+ */
+function projectResolutionErrorResponse(err: ProjectResolutionError) {
+  const structured = JSON.stringify({ code: err.code, diagnostic: err.diagnostic }, null, 2);
+  return {
+    content: [
+      { type: "text" as const, text: err.message },
+      { type: "text" as const, text: '```json\n' + structured + '\n```' },
+    ],
+    isError: true,
+  };
 }
 
 ensureDataDirectoryExists();
@@ -178,6 +197,13 @@ server.tool = ((...args: any[]) => {
     const op = classifyOp(name);
     const isWrite = op === 'write' || op === 'exec' || op === 'remove';
 
+    // #99: detect the "rescued by explicit scope:'global'" path. If the
+    // caller passed scope:'global' AND project resolution would have
+    // failed, the call would have refused under scope:'auto'. We capture
+    // this so telemetry can measure how often the escape hatch is used.
+    const explicitGlobal = (params.scope as string | undefined) === 'global';
+    const rescuedByExplicitGlobal = isWrite && explicitGlobal && !findProjectFile() ? true : undefined;
+
     // Capture before-value for writes
     let before: string | undefined;
     let copySourceValue: string | undefined;
@@ -205,6 +231,7 @@ server.tool = ((...args: any[]) => {
     let result: unknown;
     let success = true;
     let errorMsg: string | undefined;
+    let refusedReason: string | undefined;
     try {
       result = await origHandler(params, extra);
       if (result && typeof result === 'object' && 'isError' in result && (result as { isError: boolean }).isError) {
@@ -215,7 +242,17 @@ server.tool = ((...args: any[]) => {
     } catch (err) {
       success = false;
       errorMsg = String(err);
-      throw err;
+      // #99: convert project-resolution refusals into the structured
+      // two-block response right here, so every write tool surfaces the
+      // diagnostic uniformly without each handler having to special-case
+      // the error type. Telemetry/audit downstream pick up refusedReason
+      // from this branch.
+      if (err instanceof ProjectResolutionError) {
+        result = projectResolutionErrorResponse(err);
+        refusedReason = 'project_unresolved';
+      } else {
+        throw err;
+      }
     } finally {
       const duration = Date.now() - startTime;
 
@@ -273,6 +310,8 @@ server.tool = ((...args: any[]) => {
         responseSize,
         success,
         project: projectFile ? path.dirname(projectFile) : undefined,
+        refusedReason,
+        rescuedByExplicitGlobal,
       };
       void logToolCall(name, key, 'mcp', resolvedScope, telemetryExtras);
 
@@ -295,6 +334,8 @@ server.tool = ((...args: any[]) => {
         tier,
         entryCount,
         redundant,
+        refusedReason,
+        rescuedByExplicitGlobal,
       });
 
       // Miss-path tracking: feed every call to the tracker
@@ -362,6 +403,7 @@ server.tool(
       }
       return textResponse(lines.join('\n'));
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;
       return errorResponse(`Error setting entry: ${String(err)}`);
     }
   }
@@ -549,6 +591,7 @@ server.tool(
       removeConfirmForKey(resolvedKey, scope);
       return textResponse(`Removed: ${resolvedKey}`);
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;
       return errorResponse(`Error removing entry: ${String(err)}`);
     }
   }
@@ -583,16 +626,21 @@ server.tool(
       if (typeof value === "string") {
         setValue(dest, value, scope);
       } else {
-        // Batch: load once, set all leaves, save once
-        const data = loadEntries(scope);
+        // Batch: load once, set all leaves, save once.
+        // Apply the project-resolution guard before the bulk write — this
+        // path bypasses storage.ts setValue, so #99's refusal would
+        // otherwise be missed.
+        const writeScope = resolveScopeForWrite(scope);
+        const data = loadEntries(writeScope);
         for (const [flatKey, flatVal] of Object.entries(flattenObject({ [resolvedSource]: value }))) {
           setNestedValue(data, dest + flatKey.slice(resolvedSource.length), String(flatVal));
         }
-        saveEntriesAndTouchMeta(data, dest, scope);
+        saveEntriesAndTouchMeta(data, dest, writeScope);
       }
 
       return textResponse(`Copied: ${resolvedSource} -> ${dest}`);
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;
       return errorResponse(`Error copying entry: ${String(err)}`);
     }
   }
@@ -642,12 +690,14 @@ server.tool(
       if (typeof value === 'string') {
         setValue(newKey, value, scope);
       } else {
-        // Batch: load once, set all leaves, save once
-        const data = loadEntries(scope);
+        // Batch: load once, set all leaves, save once. Pre-resolve the
+        // scope so the project-resolution guard fires here too (#99).
+        const writeScope = resolveScopeForWrite(scope);
+        const data = loadEntries(writeScope);
         for (const [flatKey, flatVal] of Object.entries(flattenObject({ [resolvedOld]: value }))) {
           setNestedValue(data, newKey + flatKey.slice(resolvedOld.length), String(flatVal));
         }
-        saveEntriesAndTouchMeta(data, newKey, scope);
+        saveEntriesAndTouchMeta(data, newKey, writeScope);
       }
       removeValue(resolvedOld, scope);
 
@@ -690,6 +740,7 @@ server.tool(
 
       return textResponse(`Renamed: ${resolvedOld} -> ${newKey}`);
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;
       return errorResponse(`Error renaming entry: ${String(err)}`);
     }
   }
@@ -778,6 +829,7 @@ server.tool(
       setAlias(alias, key, scope);
       return textResponse(`Alias set: ${alias} -> ${key}`);
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;
       return errorResponse(`Error setting alias: ${String(err)}`);
     }
   }
@@ -797,6 +849,7 @@ server.tool(
       }
       return textResponse(`Alias removed: ${alias}`);
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;
       return errorResponse(`Error removing alias: ${String(err)}`);
     }
   }
@@ -1262,6 +1315,7 @@ server.tool(
         `${warningPrefix}${typeLabel} ${merge ? "merged" : "imported"} successfully.`
       );
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;
       return errorResponse(`Error importing: ${String(err)}`);
     }
   }
@@ -1300,6 +1354,7 @@ server.tool(
         `${typeLabel} reset to empty state.`
       );
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;
       return errorResponse(`Error resetting: ${String(err)}`);
     }
   }

@@ -23,6 +23,7 @@ SCOPE:
 - If a .codexcli/ project store directory exists, reads/writes default to the project scope.
 - Use scope: "global" to target the user's personal global store (~/.codexcli/store/).
 - codex_get with no key shows project entries by default. Pass all: true to see both scopes.
+- If a write tool returns an error with code "PROJECT_UNRESOLVED", project resolution failed (no .codexcli/ found). Either run codex_init to create a project store, or retry with explicit scope: "global" if the entry is genuinely user-level. Reads still fall through to global automatically — only writes refuse.
 
 TOOLS (19 total):
 

@@ -1,6 +1,6 @@
 import { debug } from './utils/debug';
-import { Scope, loadConfirmMap, saveConfirmMap, loadConfirmMapMerged, findProjectFile } from './store';
-
+import { Scope, loadConfirmMap, saveConfirmMap, loadConfirmMapMerged } from './store';
+import { resolveScopeForWrite } from './projectResolution';
 
 
 export function loadConfirmKeys(scope?: Scope  ): Record<string, true> {
@@ -11,44 +11,30 @@ export function loadConfirmKeys(scope?: Scope  ): Record<string, true> {
 }
 
 export function saveConfirmKeys(data: Record<string, true>, scope?: Scope  ): void {
-  saveConfirmMap(data, scope);
+  const effectiveScope = resolveScopeForWrite(scope);
+  saveConfirmMap(data, effectiveScope);
 }
 
 // Mark a key as requiring confirmation
 export function setConfirm(key: string, scope?: Scope  ): void {
-  const keys = loadConfirmMap(scope);
+  const effectiveScope = resolveScopeForWrite(scope);
+  const keys = loadConfirmMap(effectiveScope);
   keys[key] = true;
-  saveConfirmMap(keys, scope);
+  saveConfirmMap(keys, effectiveScope);
   debug(`Confirm set for key: "${key}"`);
 }
 
 // Remove confirmation requirement from a key
 export function removeConfirm(key: string, scope?: Scope  ): void {
-  if (!scope || scope === 'auto') {
-    // Try project first, then global
-    if (findProjectFile()) {
-      const projectKeys = loadConfirmMap('project');
-      if (key in projectKeys) {
-        delete projectKeys[key];
-        saveConfirmMap(projectKeys, 'project');
-        debug(`Confirm removed for key: "${key}" (project)`);
-        return;
-      }
-    }
-    const globalKeys = loadConfirmMap('global');
-    if (key in globalKeys) {
-      delete globalKeys[key];
-      saveConfirmMap(globalKeys, 'global');
-      debug(`Confirm removed for key: "${key}" (global)`);
-    }
-    return;
-  }
-
-  const keys = loadConfirmMap(scope);
+  // Auto collapses to 'project' when resolution succeeds, throws when it
+  // fails (#99). The pre-#99 project-then-global fallthrough is dropped for
+  // consistency with set/remove on entries and aliases.
+  const effectiveScope = resolveScopeForWrite(scope);
+  const keys = loadConfirmMap(effectiveScope);
   if (key in keys) {
     delete keys[key];
-    saveConfirmMap(keys, scope);
-    debug(`Confirm removed for key: "${key}"`);
+    saveConfirmMap(keys, effectiveScope);
+    debug(`Confirm removed for key: "${key}" (${effectiveScope})`);
   }
 }
 
@@ -60,14 +46,8 @@ export function hasConfirm(key: string): boolean {
 
 // Cascade delete: remove key and any children (e.g., removing "commands" removes "commands.deploy")
 export function removeConfirmForKey(key: string, scope?: Scope  ): void {
-  if (!scope || scope === 'auto') {
-    removeConfirmFromScope(key, 'global');
-    if (findProjectFile()) {
-      removeConfirmFromScope(key, 'project');
-    }
-    return;
-  }
-  removeConfirmFromScope(key, scope);
+  const effectiveScope = resolveScopeForWrite(scope);
+  removeConfirmFromScope(key, effectiveScope);
 }
 
 function removeConfirmFromScope(key: string, scope: 'project' | 'global'): void {

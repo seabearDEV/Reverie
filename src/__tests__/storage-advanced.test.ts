@@ -155,13 +155,19 @@ describe('storage layer — removeValue', () => {
     );
   });
 
-  it('removeValue falls through to global when not in project', () => {
+  it('removeValue with auto scope no longer falls through to global (#99)', () => {
+    // Pre-#99 removeValue with auto walked project→global. After #99 the auto
+    // branch collapses to whichever scope project resolution picks (project
+    // when resolvable). Removing a global-scoped entry now requires explicit
+    // scope:'global'.
     store.__setHasProject(true);
     store.__setProjectEntries({});
     store.__setGlobalEntries({ foo: 'bar' });
 
     const removed = removeValue('foo');
-    expect(removed).toBe(true);
+    expect(removed).toBe(false);
+    // Confirm the explicit-scope path still works
+    expect(removeValue('foo', 'global')).toBe(true);
     expect(store.saveEntriesAndRemoveMeta).toHaveBeenCalledWith(
       expect.anything(),
       'foo',
