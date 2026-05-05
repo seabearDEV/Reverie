@@ -36,10 +36,6 @@ Make the knowledge base useful for teams, not just solo developers.
 - **IDE extensions** — VS Code and JetBrains ([#51](https://github.com/seabearDEV/codexCLI/issues/51))
 - **Performance at scale** — benchmarks, lazy loading, indexing ([#48](https://github.com/seabearDEV/codexCLI/issues/48))
 
-### Housekeeping
-
-- **Rename `--raw` flag** — clarify that it means "no colors", not "no interpolation" ([#40](https://github.com/seabearDEV/codexCLI/issues/40))
-
 ### Long-term: Go Rewrite
 
 A Go rewrite is planned for better performance and single-binary distribution without Node.js. Port core operations, MCP server, and data format compatibility. No issue yet — this is a future initiative.
@@ -47,6 +43,9 @@ A Go rewrite is planned for better performance and single-binary distribution wi
 ---
 
 ## Release History
+
+### v1.14.0 — Guardrails / Data Hygiene
+Theme E, picked mid-soak after the 2026-05-05 dataset surfaced bootstrap-overflow as the strongest signal. Five issues closed: project-resolution chokepoint refuses auto-scope writes when no `.codexcli/` resolves (#99, breaking change), `codex_context` size-budget shedding with priority order and pathological-overflow notice (#100), `codex_set` write-amp warning on 3rd+ same-key write per session (#101), MCP audit `project` field absolutized (#102), tier semantics + size-budget interaction documented in schema-guide.md (#103). New telemetry/audit fields: `refusedReason`, `rescuedByExplicitGlobal`, `degraded`, `shedNamespaces`, `writeAmpWarning`, `writeAmpCount`. Tests 1325 → 1394 (+69).
 
 ### v1.13.0 — Agent-First, Dataset-Driven
 Shaped by mining a 584-call, 15-day real-usage dataset (see `docs/dogfooding-real-usage.md`). Eleven issues closed: cross-session handoff banner in `codex_context` (#91), MCP tool description audit to cut agent tool-selection errors (#92), audit log data-quality cleanup (#93, #94), non-interactive password support for CI/scripting (#88), seed-quality lint heuristic (#82), co-occurrence topology command (#83), plus small cleanups and a CI runtime bump.

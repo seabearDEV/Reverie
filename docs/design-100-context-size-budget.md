@@ -1,7 +1,7 @@
 # Design: codex_context size budget with graceful tier degradation (#100)
 
 **Issue:** [#100](https://github.com/seabearDEV/codexCLI/issues/100)
-**Status:** design — not yet implemented
+**Status:** SHIPPED 2026-05-05 via [PR #108](https://github.com/seabearDEV/codexCLI/pull/108) (merge `d18923f`)
 **Driving evidence:** `docs/investigation-bootstrap-overflow-2026-05-05.md` §1, `docs/dataset-2026-05-05-findings.md` §3
 **Playbook:** mirrors the #91 / #99 design-first treatment
 

@@ -1,7 +1,7 @@
 {
-  "value": "JSONL at ~/.codexcli/audit.jsonl. Captures before/after values, success/fail, scope, agent identity, enriched metrics (duration, responseSize, hit/miss, redundant, entryCount). CLI reads (get, search, stale) also logged. codex_audit (MCP) + ccli audit (CLI) to query with --detailed. Encrypted values masked, passwords redacted. CLI uses sync writes to guarantee log durability on process exit. Session field is shared with telemetry via src/utils/session.ts (single sessionId per process), so audit and telemetry entries from the same operation can be cross-referenced by `session` — fixed in v1.11.x where audit and telemetry previously generated independent random sessionIds.",
+  "value": "JSONL at ~/.codexcli/audit.jsonl. Captures before/after values, success/fail, scope, agent identity, enriched metrics (duration, responseSize, hit/miss, redundant, entryCount). Guardrail signals (v1.13/v1.14): refusedReason ('project_unresolved' from #99), rescuedByExplicitGlobal (#99), degraded + shedNamespaces (#100), writeAmpWarning + writeAmpCount (#101). CLI reads (get, search, stale) also logged. codex_audit (MCP) + ccli audit (CLI) to query with --detailed. Encrypted values masked, passwords redacted. CLI uses sync writes to guarantee log durability on process exit. Session field is shared with telemetry via src/utils/session.ts (single sessionId per process), so audit and telemetry entries from the same operation can be cross-referenced by `session` — fixed in v1.11.x where audit and telemetry previously generated independent random sessionIds.",
   "meta": {
     "created": 1775497218448,
-    "updated": 1775676937113
+    "updated": 1778009120619
   }
 }

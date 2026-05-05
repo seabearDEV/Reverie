@@ -14,7 +14,7 @@ All of the following must be true:
 
 - [ ] `tsc` produces no errors
 - [ ] `eslint src/` produces no errors
-- [ ] Full test suite passes (currently 1150+ tests across 48 files)
+- [ ] Full test suite passes (currently 1394 tests across 59 files; updated each release)
 - [ ] `git status` is clean (no uncommitted work)
 - [ ] You're on `main` and synced with `origin/main`
 - [ ] All issues in the milestone are CLOSED via merged PRs

@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-05
 **Triggered from:** FA-iOS session (`~/Projects/github.com/seabearDEV/sandbox/font-awesome/font-awesome-ios`)
-**Status:** observed, not yet fixed
+**Status:** RESOLVED — fixes shipped in v1.14.0 (#99, #100, #101, #102, #103). See "Resolution" section at the bottom.
 
 ## Symptom
 
@@ -93,3 +93,15 @@ The exact spill file from the triggering session (preserved as evidence):
 ```
 ~/.claude/projects/-Users-kh-Projects-github-com-seabearDEV-sandbox-font-awesome-font-awesome-ios/8a5be618-5ce4-44b9-89f3-f7fed469fd3e/tool-results/mcp-codexcli-codex_context-1777990844599.txt
 ```
+
+## Resolution
+
+All five issues filed from this investigation shipped in v1.14.0:
+
+- **#99** — projectResolution chokepoint refuses auto-scope writes on null project resolution (PR #104, merge `d9126b4`). Closes the silent-fallthrough cause directly.
+- **#100** — `codex_context` size-budget shedding with priority order and pathological-overflow notice (PR #108, merge `d18923f`). Defense in depth — even an overgrown store no longer triggers spill-file.
+- **#101** — `codex_set` write-amp warning on 3rd+ same-key write per session within 30 min (PR #108). Addresses the second stacked cause (write amplification accelerating overflow growth).
+- **#102** — MCP audit `project` field absolutized via `setProjectRootOverride` (PRs #106/#107, merge `001ac9e`). Fixes the audit-log forensics gap that complicated this investigation.
+- **#103** — Tier semantics + size-budget interaction documented in `schema-guide.md` (PR #109).
+
+See design docs: `design-99-project-resolution-refusal.md`, `design-100-context-size-budget.md`, `design-101-write-amp-guard.md`.

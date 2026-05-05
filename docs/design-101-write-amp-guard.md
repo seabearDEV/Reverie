@@ -1,7 +1,7 @@
 # Design: write-amp guard on codex_set (#101)
 
 **Issue:** [#101](https://github.com/seabearDEV/codexCLI/issues/101)
-**Status:** design — not yet implemented
+**Status:** SHIPPED 2026-05-05 via [PR #108](https://github.com/seabearDEV/codexCLI/pull/108) (merge `d18923f`)
 **Driving evidence:** `docs/dataset-2026-05-05-findings.md` §1b, `context.writeAmpPattern` codex entry
 **Playbook:** mirrors the #91 / #99 / #100 design-first treatment
 **Bundling:** ships in the same PR as #100 (theme E guardrails)

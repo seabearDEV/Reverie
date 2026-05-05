@@ -1,7 +1,7 @@
 # Design: refuse codex_set on project resolution failure (#99)
 
 **Issue:** [#99](https://github.com/seabearDEV/codexCLI/issues/99)
-**Status:** design — not yet implemented
+**Status:** SHIPPED 2026-05-05 via [PR #104](https://github.com/seabearDEV/codexCLI/pull/104) (merge `d9126b4`)
 **Driving evidence:** `docs/investigation-bootstrap-overflow-2026-05-05.md`, `docs/dataset-2026-05-05-findings.md`
 **Playbook:** mirrors the #91 design-first treatment
 

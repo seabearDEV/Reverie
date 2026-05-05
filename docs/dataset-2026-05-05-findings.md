@@ -110,3 +110,15 @@ All milestoned to v1.14.0 as candidates for the **E. Guardrails / data hygiene**
 ## Source files
 
 Raw audit/telemetry/miss-paths preserved locally at `~/Projects/liminal/codexCLI_review/`. Not checked in — the derived counts above are what later sessions need.
+
+## Resolution
+
+All five issues filed from these findings shipped in v1.14.0 (theme E):
+
+- **#99** project-resolution refusal — PR #104 (`d9126b4`)
+- **#100** size-budget shedding — PR #108 (`d18923f`)
+- **#101** write-amp guard — PR #108 (`d18923f`)
+- **#102** audit `project=.` bug — PRs #106/#107 (`001ac9e`)
+- **#103** tier semantics docs — PR #109
+
+The miss-paths writeback rate (3.7%) and write-amp pattern (4-7× same-key rewrites on `files.*`) are the calibration anchor for whether the v1.15 dataset shows the guardrails moved behavior.
