@@ -48,6 +48,7 @@ import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
 import { HANDOFF_KEY, buildHandoffBanner } from "./utils/handoff";
+import { recordWrite, formatWriteAmpWarning } from "./utils/writeAmp";
 
 function toScope(scopeParam?: string): Scope {
   return (scopeParam ?? 'auto') as Scope;
@@ -114,6 +115,28 @@ const server = new McpServer(
 // Wrap server.tool to auto-log telemetry and audit for every tool call
 const _origTool = server.tool.bind(server);
 import { SKIP_AUDIT, BULK_OPS, captureValue } from "./utils/instrumentation";
+
+// ── Per-call guardrail signals ──────────────────────────────────────
+// Handlers stash guardrail outcomes here (size-budget shedding for #100,
+// write-amp warning for #101). The wrapper consumes them after the
+// handler returns and forwards them into telemetry + audit. Module
+// state is safe because MCP requests serialize through one server
+// instance — there is no concurrent handler execution.
+interface GuardrailSignals {
+  degraded?: boolean;
+  shedNamespaces?: string[];
+  writeAmpWarning?: boolean;
+  writeAmpCount?: number;
+}
+let pendingGuardrailSignals: GuardrailSignals = {};
+function emitGuardrailSignals(signals: GuardrailSignals): void {
+  Object.assign(pendingGuardrailSignals, signals);
+}
+function consumeGuardrailSignals(): GuardrailSignals {
+  const s = pendingGuardrailSignals;
+  pendingGuardrailSignals = {};
+  return s;
+}
 
 function extractKey(name: string, params: Record<string, unknown>): string | undefined {
   if (name === 'codex_copy') return (params.dest ?? params.source) as string | undefined;
@@ -301,6 +324,9 @@ server.tool = ((...args: any[]) => {
         (name === 'codex_import' && params.preview === true);
       const redundant = op === 'write' && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after ? true : undefined;
 
+      // Consume any guardrail signals stashed by the handler (#100/#101).
+      const guardrails = consumeGuardrailSignals();
+
       // Telemetry (enriched, moved here so we have duration + metrics)
       const projectFile = findProjectFile();
       const telemetryExtras: TelemetryExtras = {
@@ -312,6 +338,7 @@ server.tool = ((...args: any[]) => {
         project: projectFile ? path.dirname(projectFile) : undefined,
         refusedReason,
         rescuedByExplicitGlobal,
+        ...guardrails,
       };
       void logToolCall(name, key, 'mcp', resolvedScope, telemetryExtras);
 
@@ -336,6 +363,7 @@ server.tool = ((...args: any[]) => {
         redundant,
         refusedReason,
         rescuedByExplicitGlobal,
+        ...guardrails,
       });
 
       // Miss-path tracking: feed every call to the tracker
@@ -398,6 +426,16 @@ server.tool(
       const lines: string[] = [`Set: ${resolved} = ${encrypt ? '[encrypted]' : value}`];
       if (alias) lines.push(`Alias set: ${alias} -> ${resolved}`);
       lines.push(`Wrote to: ${wroteTo}${wroteTo === 'project' && projectFile ? ` (${projectFile})` : ''}`);
+
+      // Write-amp guard (#101) — warn when the same key has been written
+      // 3+ times in this session within a 30-min window. Informational
+      // only; the write itself succeeded.
+      const ampResult = recordWrite(getSessionId(), resolved);
+      if (ampResult) {
+        lines.push(`warning: ${formatWriteAmpWarning(ampResult)}`);
+        emitGuardrailSignals({ writeAmpWarning: true, writeAmpCount: ampResult.count });
+      }
+
       return textResponse(lines.join('\n'));
     } catch (err) {
       if (err instanceof ProjectResolutionError) throw err;
@@ -1360,6 +1398,7 @@ server.tool(
 // --- codex_context ---
 
 import { filterEntriesByTier } from "./commands/context";
+import { shedToFitBudget, formatShedNotice } from "./utils/contextBudget";
 
 server.tool(
   "codex_context",
@@ -1398,6 +1437,58 @@ server.tool(
         return textResponse(`${header}No entries stored. Use codex_set to add project knowledge.`);
       }
 
+      // Encrypt-display the entry values once so size accounting matches what
+      // we render below.
+      const displayed: Record<string, string> = {};
+      for (const [k, v] of Object.entries(filtered)) {
+        displayed[k] = isEncrypted(v) ? '[encrypted]' : v;
+      }
+
+      // Apply the size-budget shed (#100) before we render. tier:"full"
+      // bypasses entirely — user has opted in to the full payload.
+      let shedSegments: import('./utils/contextBudget').ShedSegment[] = [];
+      let kept: Record<string, string> = displayed;
+      if (effectiveTier !== 'full') {
+        const budget = (loadConfig().bootstrap_max_response_bytes) || 50 * 1024;
+        const envOverride = process.env.CODEX_BOOTSTRAP_MAX_BYTES;
+        const effectiveBudget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
+          ? Number(envOverride)
+          : budget;
+
+        // Estimate non-entry overhead. The exact byte count is computed below
+        // when rendering; this estimate just needs to be in the ballpark for
+        // shed-decision purposes — we account for header, handoff banner,
+        // aliases section, tier footer.
+        let fixedOverheadBytes = 0;
+        const headerLine = hasProject
+          ? `[project: ${projectFile}]`
+          : `[project: NONE — auto-scope writes will fall through to global. Pin CODEX_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`;
+        fixedOverheadBytes += headerLine.length + 1 /* \n */ + 1 /* blank line */;
+        if (handoff) {
+          for (const l of handoff.lines) fixedOverheadBytes += l.length + 1;
+          fixedOverheadBytes += 1; // separator
+        }
+        if (Object.keys(aliases).length > 0) {
+          fixedOverheadBytes += 1 /* blank */ + 'Aliases:'.length + 1;
+          for (const [a, t] of Object.entries(aliases)) {
+            fixedOverheadBytes += 2 + a.length + 4 + t.length + 1; // '  a -> t\n'
+          }
+        }
+        // Tier footer always present in this branch (effectiveTier !== 'full').
+        fixedOverheadBytes += 1 + `[tier: ${effectiveTier} ( entries) — pass tier:"full" for complete context]`.length + 1;
+
+        const decision = shedToFitBudget(displayed, (k) => getStalenessTag(k, meta), fixedOverheadBytes, effectiveBudget);
+        kept = decision.kept;
+        shedSegments = decision.segments;
+
+        if (shedSegments.length > 0) {
+          emitGuardrailSignals({
+            degraded: true,
+            shedNamespaces: shedSegments.map(s => s.label),
+          });
+        }
+      }
+
       const lines: string[] = [];
 
       // Header: declare resolved project file so agents know where writes will land.
@@ -1408,18 +1499,25 @@ server.tool(
       }
       lines.push('');
 
+      // Shed notice — first thing after the project banner so agents see
+      // exactly what was trimmed and how to retrieve it (#100).
+      if (shedSegments.length > 0) {
+        lines.push(formatShedNotice(shedSegments));
+        lines.push('');
+      }
+
       // Banner before entries — first thing the agent sees after project line.
       if (handoff) {
         lines.push(...handoff.lines);
-        if (Object.keys(filtered).length > 0 || Object.keys(aliases).length > 0) {
+        if (Object.keys(kept).length > 0 || Object.keys(aliases).length > 0) {
           lines.push('');
         }
       }
 
-      if (Object.keys(filtered).length > 0) {
-        for (const [k, v] of Object.entries(filtered)) {
+      if (Object.keys(kept).length > 0) {
+        for (const [k, v] of Object.entries(kept)) {
           const ageTag = getStalenessTag(k, meta);
-          lines.push(`${k}: ${isEncrypted(v) ? '[encrypted]' : v}${ageTag}`);
+          lines.push(`${k}: ${v}${ageTag}`);
         }
       }
 
@@ -1431,7 +1529,7 @@ server.tool(
         }
       }
 
-      const entryCount = Object.keys(filtered).length;
+      const entryCount = Object.keys(kept).length;
       if (effectiveTier !== 'full') {
         lines.push('');
         lines.push(`[tier: ${effectiveTier} (${entryCount} entries) — pass tier:"full" for complete context]`);

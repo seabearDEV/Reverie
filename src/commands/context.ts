@@ -5,6 +5,8 @@ import { isEncrypted } from '../utils/crypto';
 import { color } from '../formatting';
 import { getBinaryName } from '../utils/binaryName';
 import { HANDOFF_KEY, buildHandoffBanner } from '../utils/handoff';
+import { shedToFitBudget, formatShedNotice } from '../utils/contextBudget';
+import { loadConfig } from '../config';
 
 // ── Tier filtering (shared with MCP server) ──────────────────────────
 
@@ -61,6 +63,24 @@ export function showContext(options: ContextOptions = {}): void {
     return;
   }
 
+  // Apply size-budget shed (#100) before either output path. tier:"full"
+  // bypasses entirely. JSON output gets the shed too — agents that pipe
+  // CLI output into a model hit the same host caps as direct MCP calls.
+  let shedSegments: import('../utils/contextBudget').ShedSegment[] = [];
+  let kept: Record<string, string> = {};
+  for (const [k, v] of Object.entries(filtered)) {
+    kept[k] = isEncrypted(v) ? '[encrypted]' : v;
+  }
+  if (tier !== 'full') {
+    const envOverride = process.env.CODEX_BOOTSTRAP_MAX_BYTES;
+    const budget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
+      ? Number(envOverride)
+      : (loadConfig().bootstrap_max_response_bytes || 50 * 1024);
+    const decision = shedToFitBudget(kept, (k) => getStalenessTag(k, meta), 0, budget);
+    kept = decision.kept;
+    shedSegments = decision.segments;
+  }
+
   // JSON output
   if (options.json) {
     const result: Record<string, unknown> = {};
@@ -71,15 +91,27 @@ export function showContext(options: ContextOptions = {}): void {
         stale: handoff.isStale,
       };
     }
-    if (Object.keys(filtered).length > 0) {
-      result.entries = filtered;
+    if (Object.keys(kept).length > 0) {
+      result.entries = kept;
     }
     if (Object.keys(aliases).length > 0) {
       result.aliases = aliases;
     }
     result.tier = tier;
+    if (shedSegments.length > 0) {
+      result.degraded = true;
+      result.shedNamespaces = shedSegments.map(s => s.label);
+    }
     console.log(JSON.stringify(result, null, 2));
     return;
+  }
+
+  // Shed notice — first thing the reader sees, ahead of the handoff banner
+  // and entries (#100).
+  if (shedSegments.length > 0) {
+    const notice = formatShedNotice(shedSegments);
+    console.log(options.plain ? notice : color.yellow(notice));
+    console.log('');
   }
 
   // Formatted output — banner first so it's the first thing the reader sees.
@@ -94,15 +126,14 @@ export function showContext(options: ContextOptions = {}): void {
         console.log(colored);
       }
     }
-    if (Object.keys(filtered).length > 0 || Object.keys(aliases).length > 0) {
+    if (Object.keys(kept).length > 0 || Object.keys(aliases).length > 0) {
       console.log('');
     }
   }
 
-  if (Object.keys(filtered).length > 0) {
-    for (const [k, v] of Object.entries(filtered)) {
+  if (Object.keys(kept).length > 0) {
+    for (const [k, displayVal] of Object.entries(kept)) {
       const ageTag = getStalenessTag(k, meta);
-      const displayVal = isEncrypted(v) ? '[encrypted]' : v;
       if (options.plain) {
         console.log(`${k}: ${displayVal}${ageTag}`);
       } else {
@@ -128,7 +159,7 @@ export function showContext(options: ContextOptions = {}): void {
   }
 
   if (tier !== 'full') {
-    const entryCount = Object.keys(filtered).length;
+    const entryCount = Object.keys(kept).length;
     console.log('');
     const msg = `[tier: ${tier} (${entryCount} entries) — use --tier full for complete context]`;
     console.log(options.plain ? msg : color.gray(msg));
