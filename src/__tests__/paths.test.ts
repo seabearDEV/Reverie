@@ -274,6 +274,34 @@ describe('paths utilities', () => {
         delete process.env.CODEX_NO_PROJECT;
       }
     });
+
+    // Issue #102: a relative override (e.g. CODEX_PROJECT_DIR=. / --cwd .)
+    // used to yield a relative resolved path, which downstream path.dirname()
+    // collapsed to "." in audit rows.
+    it('setProjectRootOverride absolutizes relative input so resolver returns an absolute path', async () => {
+      fs.mkdirSync(path.join(tmpDir, '.codexcli'));
+
+      const originalCwd = process.cwd();
+      process.chdir(tmpDir);
+
+      vi.resetModules();
+      const { findProjectFile, getProjectRootOverride, clearProjectFileCache, setProjectRootOverride } = await import('../utils/paths');
+      clearProjectFileCache();
+      try {
+        setProjectRootOverride('.');
+        expect(path.isAbsolute(getProjectRootOverride() as string)).toBe(true);
+        const resolved = findProjectFile();
+        expect(resolved).not.toBeNull();
+        expect(path.isAbsolute(resolved as string)).toBe(true);
+        // The audit-row contract: path.dirname() of the resolved value is
+        // the project directory in absolute form, never bare "." (#102).
+        expect(path.dirname(resolved as string)).not.toBe('.');
+        expect(path.isAbsolute(path.dirname(resolved as string))).toBe(true);
+      } finally {
+        setProjectRootOverride(null);
+        process.chdir(originalCwd);
+      }
+    });
   });
 
   describe('file path getters', () => {

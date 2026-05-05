@@ -162,9 +162,15 @@ let projectRootOverride: string | null = null;
 /**
  * Set the directory used as the starting point for project file discovery,
  * overriding process.cwd(). Pass null to clear. Clears the cached result.
+ *
+ * Relative input is absolutized via `path.resolve()` so the walk-up always
+ * starts from an absolute directory. Without this, a `CODEX_PROJECT_DIR=.` /
+ * `--cwd .` launcher hint would yield a relative `.codexcli` from the
+ * resolver, which downstream `path.dirname()` reduced to `"."` in audit
+ * rows (issue #102).
  */
 export function setProjectRootOverride(dir: string | null): void {
-  projectRootOverride = dir;
+  projectRootOverride = dir === null ? null : path.resolve(dir);
   projectFileCache = null;
   projectStoreDirCache = null;
 }

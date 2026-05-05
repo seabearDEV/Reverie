@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
   Telemetry/audit gains `refusedReason: 'project_unresolved'` on refused calls and `rescuedByExplicitGlobal: true` on calls that succeeded under explicit `scope: 'global'` despite project resolution failing — lets us measure how often the escape hatch is in use post-deploy.
 
+### Fixed
+
+- **MCP audit/telemetry rows now log absolute project paths** (`#102`): when the MCP server received a relative launcher hint (`CODEX_PROJECT_DIR=.` env or `--cwd .` arg), `setProjectRootOverride` stored the relative value verbatim, the walk-up resolver returned `.codexcli` (relative), and downstream `path.dirname()` collapsed to `"."` in 234 of 302 audit rows on the 2026-05-05 soak machine. The override now absolutizes via `path.resolve()` at set time, so all walk-up branches return absolute paths and audit/telemetry `project` fields match the resolver's absolute output. Forward-only — historical `"."` rows are not backfilled.
+
 ## [1.13.0] - 2026-04-23
 
 Agent-first release driven by mining a 584-call, 15-day real-usage dataset (see `docs/dogfooding-real-usage.md`). Eleven issues closed across three themes: make agent tool-selection unambiguous (#92), make the audit signal clean enough to mine again (#93 + #94), and formalize the cross-session handoff pattern agents organically converged on (#91). The rest — small bug fixes, soak findings, and the first two Layer 2 tools from the seedRoadmap — fell into the same cycle once the milestone was trimmed to match.
