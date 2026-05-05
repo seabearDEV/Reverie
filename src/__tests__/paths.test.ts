@@ -302,6 +302,51 @@ describe('paths utilities', () => {
         process.chdir(originalCwd);
       }
     });
+
+    // Issue #102 acceptance: end-to-end MCP-shaped audit row with a relative
+    // override yields an absolute project field (not bare ".").
+    it('logAudit writes absolute project on MCP rows even when override is relative', async () => {
+      fs.mkdirSync(path.join(tmpDir, '.codexcli'));
+      const auditDataDir = path.join(tmpDir, 'data');
+      fs.mkdirSync(auditDataDir, { recursive: true });
+
+      const originalDataDir = process.env.CODEX_DATA_DIR;
+      const originalCwd = process.cwd();
+      process.env.CODEX_DATA_DIR = auditDataDir;
+      process.chdir(tmpDir);
+
+      vi.resetModules();
+      const { setProjectRootOverride, clearProjectFileCache, clearDataDirectoryCache } = await import('../utils/paths');
+      const { logAudit, loadAuditLog, flushAudit, clearAuditLogCache } = await import('../utils/audit');
+      clearProjectFileCache();
+      clearDataDirectoryCache();
+      clearAuditLogCache();
+      try {
+        setProjectRootOverride('.');
+        await logAudit({
+          src: 'mcp',
+          tool: 'codex_set',
+          op: 'write',
+          key: 'fix.102.audit',
+          success: true,
+        });
+        await flushAudit();
+        clearAuditLogCache();
+
+        const entry = loadAuditLog().find(e => e.key === 'fix.102.audit');
+        expect(entry).toBeDefined();
+        expect(entry!.project).toBeDefined();
+        expect(entry!.project).not.toBe('.');
+        expect(path.isAbsolute(entry!.project as string)).toBe(true);
+      } finally {
+        setProjectRootOverride(null);
+        process.chdir(originalCwd);
+        if (originalDataDir !== undefined) process.env.CODEX_DATA_DIR = originalDataDir;
+        else delete process.env.CODEX_DATA_DIR;
+        clearDataDirectoryCache();
+        clearAuditLogCache();
+      }
+    });
   });
 
   describe('file path getters', () => {
