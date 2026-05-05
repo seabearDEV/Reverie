@@ -11,7 +11,9 @@ import {
   setProjectRootOverride,
   getProjectRootOverride,
   clearProjectFileCache,
+  clearDataDirectoryCache,
   findProjectFileWithDiagnostic,
+  findProjectStoreDir,
 } from '../utils/paths';
 
 let tmpDir: string;
@@ -187,6 +189,26 @@ describe('captureResolverDiagnostic — branch capture', () => {
     const d = captureResolverDiagnostic();
     expect(d.walkReachedRoot).toBe(false);
   });
+
+  it('records walkStoppedAtGlobalDir when walk reaches the codex global dir before any project store', () => {
+    // Pin CODEX_DATA_DIR (=> globalDir) and start the walk at that same dir.
+    // First loop iteration matches `dir === globalDir` and short-circuits with
+    // walkStoppedAtGlobalDir=true (distinct from walkReachedRoot, which means
+    // the walk exhausted to filesystem root).
+    const origDataDir = process.env.CODEX_DATA_DIR;
+    process.env.CODEX_DATA_DIR = tmpDir;
+    clearDataDirectoryCache();
+    setProjectRootOverride(tmpDir);
+    try {
+      const d = captureResolverDiagnostic();
+      expect(d.walkStoppedAtGlobalDir).toBe(true);
+      expect(d.walkReachedRoot).toBe(false);
+    } finally {
+      if (origDataDir === undefined) delete process.env.CODEX_DATA_DIR;
+      else process.env.CODEX_DATA_DIR = origDataDir;
+      clearDataDirectoryCache();
+    }
+  });
 });
 
 describe('paths.ts integration', () => {
@@ -202,5 +224,17 @@ describe('paths.ts integration', () => {
     expect(result.path).toBe(path.join(storeTmpDir, '.codexcli'));
     expect(result.diagnostic.codexProject).toBe(storeTmpDir);
     expect(result.diagnostic.codexProjectFailed).toBe(false);
+  });
+
+  it('setProjectRootOverride invalidates the findProjectStoreDir cache (PR #104 review fix)', () => {
+    // Pre-fix setProjectRootOverride only cleared projectFileCache, leaving
+    // projectStoreDirCache stale. A second findProjectStoreDir() after an
+    // override change would return the previous resolution. This test
+    // sequence fails without the fix and passes with it.
+    setProjectRootOverride(storeTmpDir);
+    expect(findProjectStoreDir()).toBe(path.join(storeTmpDir, '.codexcli'));
+
+    setProjectRootOverride(nestedTmpDir);
+    expect(findProjectStoreDir()).toBeNull();
   });
 });
