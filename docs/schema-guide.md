@@ -324,7 +324,7 @@ When the projected response would exceed `bootstrap_max_response_bytes` (default
 
 `tier: "full"` opts out of degradation entirely. If you ask for the full payload, you get the full payload — even if that means hitting the host cap. The shed only fires for `essential` and `standard`.
 
-If even after shedding everything sheddable the response still exceeds budget (because `project.*`/`conventions.*`/`commands.*`/`deps.*` alone are over), you'll see a second notice: `[warning: codex_context payload still exceeds budget after shedding all sheddable namespaces. Increase bootstrap_max_response_bytes (codex_config_set) or audit project.*/conventions.* for over-long entries.]`. That's the signal to either raise the budget or trim long never-shed entries.
+If even after shedding everything sheddable the response still exceeds budget (because `project.*`, `conventions.*`, `commands.*`, `deps.*`, or `context.next_session` alone are over), you'll see a second notice: `[warning: codex_context payload still exceeds budget after shedding all sheddable namespaces. Increase bootstrap_max_response_bytes (codex_config_set) or audit project.*, conventions.*, commands.*, deps.*, and context.next_session for over-long entries.]`. That's the signal to either raise the budget or trim long never-shed entries.
 
 ### Configuring the budget
 
