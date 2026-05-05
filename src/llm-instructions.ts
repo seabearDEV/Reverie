@@ -27,6 +27,7 @@ SCOPE:
 
 GUARDRAILS:
 - codex_context may prepend a "[trimmed: ...]" notice when the response would exceed the configured size budget (default 50KB). Listed namespaces were dropped to fit; fetch the specific entries via codex_get <key>, or call codex_context with tier:"full" to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never trimmed.
+- codex_context may also prepend a "[warning: ... still exceeds budget after shedding ...]" notice. This means the never-shed namespaces alone are over budget — surface this to the user so they can either raise bootstrap_max_response_bytes via codex_config_set or audit project.*, conventions.*, commands.*, deps.*, and context.next_session for over-long entries.
 - codex_set may append a "warning: this key has been written N times in this session" line on the 3rd+ write of the same key within 30 minutes. The write succeeded; the warning is a nudge to consider whether the entry has stabilized. Files-style keys (files.*) used as scratch space rather than seeds are the most common trigger — see conventions.seedDensity.
 
 TOOLS (19 total):
