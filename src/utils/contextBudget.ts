@@ -28,7 +28,7 @@ const SHED_ORDER: ShedRule[] = [
     largestFirst: false,
   },
   {
-    label: 'context.* (largest first)',
+    label: 'context.*',
     matches: (k) => k.startsWith('context.') && k !== HANDOFF_KEY,
     largestFirst: true,
   },
@@ -138,6 +138,16 @@ export function formatShedNotice(segments: ShedSegment[]): string {
   const parts = segments.map(s => `${s.label} (${s.keys.length} ${s.keys.length === 1 ? 'entry' : 'entries'}, ${formatBytes(s.bytes)})`);
   return `[trimmed: ${parts.join(', ')} — fetch via codex_get <key> or codex_context tier:"full"]`;
 }
+
+/**
+ * Notice for the pathological case where even after shedding every
+ * sheddable namespace the response still exceeds the budget. Surfaces
+ * the situation explicitly rather than silently truncating a never-shed
+ * namespace (per #100 design pathological-case requirement).
+ */
+export const PATHOLOGICAL_OVERFLOW_NOTICE =
+  '[warning: codex_context payload still exceeds budget after shedding all sheddable namespaces. ' +
+  'Increase bootstrap_max_response_bytes (codex_config_set) or audit project.*/conventions.* for over-long entries.]';
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n}B`;

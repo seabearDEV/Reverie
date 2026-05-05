@@ -1379,4 +1379,137 @@ describe('MCP Server Tools', () => {
     });
   });
 
+  describe('guardrail signal propagation (#100, #101)', () => {
+    let logAuditMock: ReturnType<typeof vi.fn>;
+    let logToolCallMock: ReturnType<typeof vi.fn>;
+    let clearWriteAmpStateFn: () => void;
+
+    beforeEach(async () => {
+      resetMocks();
+      const auditModule = await import('../utils/audit');
+      const telemetryModule = await import('../utils/telemetry');
+      const writeAmpModule = await import('../utils/writeAmp');
+      logAuditMock = auditModule.logAudit as ReturnType<typeof vi.fn>;
+      logToolCallMock = telemetryModule.logToolCall as ReturnType<typeof vi.fn>;
+      clearWriteAmpStateFn = writeAmpModule.clearWriteAmpState;
+      logAuditMock.mockClear();
+      logToolCallMock.mockClear();
+      clearWriteAmpStateFn();
+    });
+
+    afterEach(() => {
+      clearWriteAmpStateFn();
+    });
+
+    it('codex_set on 3rd write of same key emits writeAmpWarning to audit + telemetry', async () => {
+      await toolHandlers['codex_set']({ key: 'files.x', value: 'v1' });
+      await toolHandlers['codex_set']({ key: 'files.x', value: 'v2' });
+      logAuditMock.mockClear();
+      logToolCallMock.mockClear();
+      const result = await toolHandlers['codex_set']({ key: 'files.x', value: 'v3' });
+
+      expect(result.content[0].text).toContain('warning: this key has been written 3 times');
+
+      expect(logAuditMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tool: 'codex_set',
+          writeAmpWarning: true,
+          writeAmpCount: 3,
+        })
+      );
+
+      expect(logToolCallMock).toHaveBeenCalledWith(
+        'codex_set',
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ writeAmpWarning: true, writeAmpCount: 3 })
+      );
+    });
+
+    it('codex_set on 1st/2nd writes does not emit writeAmpWarning', async () => {
+      await toolHandlers['codex_set']({ key: 'files.x', value: 'v1' });
+      const audit1 = logAuditMock.mock.calls[logAuditMock.mock.calls.length - 1][0] as Record<string, unknown>;
+      expect(audit1.writeAmpWarning).toBeUndefined();
+
+      await toolHandlers['codex_set']({ key: 'files.x', value: 'v2' });
+      const audit2 = logAuditMock.mock.calls[logAuditMock.mock.calls.length - 1][0] as Record<string, unknown>;
+      expect(audit2.writeAmpWarning).toBeUndefined();
+    });
+
+    it('different keys in same session each get their own counter', async () => {
+      await toolHandlers['codex_set']({ key: 'files.a', value: 'v' });
+      await toolHandlers['codex_set']({ key: 'files.a', value: 'v' });
+      logAuditMock.mockClear();
+      const result = await toolHandlers['codex_set']({ key: 'files.b', value: 'v' });
+      expect(result.content[0].text).not.toContain('warning:');
+      const audit = logAuditMock.mock.calls[0][0] as Record<string, unknown>;
+      expect(audit.writeAmpWarning).toBeUndefined();
+    });
+
+    it('codex_context emits degraded + shedNamespaces when over budget', async () => {
+      mockConfig.bootstrap_max_response_bytes = 200;
+      const big = 'x'.repeat(300);
+      Object.assign(mockData, {
+        project: { name: 'codexcli' },
+        files: { a: big, b: big, c: big },
+      });
+
+      const result = await toolHandlers['codex_context']({});
+      expect(result.content[0].text).toContain('[trimmed:');
+      expect(result.content[0].text).toContain('files.*');
+
+      expect(logAuditMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tool: 'codex_context',
+          degraded: true,
+          shedNamespaces: expect.arrayContaining(['files.*']),
+        })
+      );
+    });
+
+    it('codex_context with tier:"full" bypasses shed even when over budget', async () => {
+      mockConfig.bootstrap_max_response_bytes = 200;
+      const big = 'x'.repeat(300);
+      Object.assign(mockData, {
+        project: { name: 'codexcli' },
+        files: { a: big, b: big, c: big },
+      });
+
+      const result = await toolHandlers['codex_context']({ tier: 'full' });
+      expect(result.content[0].text).not.toContain('[trimmed:');
+      expect(result.content[0].text).toContain('files.a');
+
+      expect(logAuditMock).toHaveBeenCalledWith(
+        expect.not.objectContaining({ degraded: true })
+      );
+    });
+
+    it('codex_context surfaces pathological-overflow notice when never-shed exceeds budget', async () => {
+      mockConfig.bootstrap_max_response_bytes = 50;
+      Object.assign(mockData, {
+        project: { name: 'x'.repeat(500) },
+        files: { shedme: 'x'.repeat(100) },
+      });
+
+      const result = await toolHandlers['codex_context']({});
+      expect(result.content[0].text).toContain('still exceeds budget');
+      expect(result.content[0].text).toContain('bootstrap_max_response_bytes');
+    });
+
+    it('codex_context under budget produces no degraded signal', async () => {
+      mockConfig.bootstrap_max_response_bytes = 50 * 1024;
+      Object.assign(mockData, { project: { name: 'codexcli' } });
+
+      const result = await toolHandlers['codex_context']({});
+      expect(result.content[0].text).not.toContain('[trimmed:');
+
+      const auditCall = logAuditMock.mock.calls.find(c => (c[0] as { tool?: string }).tool === 'codex_context');
+      expect(auditCall).toBeDefined();
+      const auditRow = auditCall![0] as Record<string, unknown>;
+      expect(auditRow.degraded).toBeUndefined();
+      expect(auditRow.shedNamespaces).toBeUndefined();
+    });
+  });
+
 });

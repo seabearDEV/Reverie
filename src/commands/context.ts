@@ -5,7 +5,7 @@ import { isEncrypted } from '../utils/crypto';
 import { color } from '../formatting';
 import { getBinaryName } from '../utils/binaryName';
 import { HANDOFF_KEY, buildHandoffBanner } from '../utils/handoff';
-import { shedToFitBudget, formatShedNotice } from '../utils/contextBudget';
+import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from '../utils/contextBudget';
 import { loadConfig } from '../config';
 
 // ── Tier filtering (shared with MCP server) ──────────────────────────
@@ -67,6 +67,7 @@ export function showContext(options: ContextOptions = {}): void {
   // bypasses entirely. JSON output gets the shed too — agents that pipe
   // CLI output into a model hit the same host caps as direct MCP calls.
   let shedSegments: import('../utils/contextBudget').ShedSegment[] = [];
+  let pathologicalOverflow = false;
   let kept: Record<string, string> = {};
   for (const [k, v] of Object.entries(filtered)) {
     kept[k] = isEncrypted(v) ? '[encrypted]' : v;
@@ -103,6 +104,7 @@ export function showContext(options: ContextOptions = {}): void {
     const decision = shedToFitBudget(kept, (k) => getStalenessTag(k, meta), fixedOverheadBytes, budget);
     kept = decision.kept;
     shedSegments = decision.segments;
+    pathologicalOverflow = decision.pathologicalOverflow;
   }
 
   // JSON output
@@ -122,9 +124,12 @@ export function showContext(options: ContextOptions = {}): void {
       result.aliases = aliases;
     }
     result.tier = tier;
-    if (shedSegments.length > 0) {
+    if (shedSegments.length > 0 || pathologicalOverflow) {
       result.degraded = true;
       result.shedNamespaces = shedSegments.map(s => s.label);
+    }
+    if (pathologicalOverflow) {
+      result.pathologicalOverflow = true;
     }
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -135,6 +140,10 @@ export function showContext(options: ContextOptions = {}): void {
   if (shedSegments.length > 0) {
     const notice = formatShedNotice(shedSegments);
     console.log(options.plain ? notice : color.yellow(notice));
+    console.log('');
+  }
+  if (pathologicalOverflow) {
+    console.log(options.plain ? PATHOLOGICAL_OVERFLOW_NOTICE : color.yellow(PATHOLOGICAL_OVERFLOW_NOTICE));
     console.log('');
   }
 

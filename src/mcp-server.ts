@@ -1395,7 +1395,7 @@ server.tool(
 // --- codex_context ---
 
 import { filterEntriesByTier } from "./commands/context";
-import { shedToFitBudget, formatShedNotice } from "./utils/contextBudget";
+import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from "./utils/contextBudget";
 
 server.tool(
   "codex_context",
@@ -1444,6 +1444,7 @@ server.tool(
       // Apply the size-budget shed (#100) before we render. tier:"full"
       // bypasses entirely — user has opted in to the full payload.
       let shedSegments: import('./utils/contextBudget').ShedSegment[] = [];
+      let pathologicalOverflow = false;
       let kept: Record<string, string> = displayed;
       if (effectiveTier !== 'full') {
         const budget = (loadConfig().bootstrap_max_response_bytes) || 50 * 1024;
@@ -1482,8 +1483,9 @@ server.tool(
         const decision = shedToFitBudget(displayed, (k) => getStalenessTag(k, meta), fixedOverheadBytes, effectiveBudget);
         kept = decision.kept;
         shedSegments = decision.segments;
+        pathologicalOverflow = decision.pathologicalOverflow;
 
-        if (shedSegments.length > 0) {
+        if (shedSegments.length > 0 || pathologicalOverflow) {
           emitGuardrailSignals({
             degraded: true,
             shedNamespaces: shedSegments.map(s => s.label),
@@ -1505,6 +1507,12 @@ server.tool(
       // exactly what was trimmed and how to retrieve it (#100).
       if (shedSegments.length > 0) {
         lines.push(formatShedNotice(shedSegments));
+        lines.push('');
+      }
+      // Pathological overflow notice — surfaces explicitly that even after
+      // shedding everything sheddable, the response still exceeds budget.
+      if (pathologicalOverflow) {
+        lines.push(PATHOLOGICAL_OVERFLOW_NOTICE);
         lines.push('');
       }
 

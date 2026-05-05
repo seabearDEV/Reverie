@@ -1,4 +1,4 @@
-import { shedToFitBudget, formatShedNotice, entryRenderBytes } from '../utils/contextBudget';
+import { shedToFitBudget, formatShedNotice, entryRenderBytes, PATHOLOGICAL_OVERFLOW_NOTICE } from '../utils/contextBudget';
 
 const noTag = (_: string) => '';
 
@@ -164,5 +164,31 @@ describe('formatShedNotice', () => {
       { label: 'arch.*', keys: ['b'], bytes: 200 },
     ]);
     expect(notice).toContain('files.* (1 entry, 100B), arch.* (1 entry, 200B)');
+  });
+
+  it('uses "context.*" as the label (no implementation detail leak)', () => {
+    // The internal SHED_ORDER context rule used to label as
+    // "context.* (largest first)" which leaked into user-facing notices.
+    // Confirm only the namespace appears.
+    const big = 'x'.repeat(2000);
+    const result = shedToFitBudget(
+      { 'project.name': 'codexcli', 'context.large': big },
+      () => '',
+      0,
+      100,
+    );
+    const contextSeg = result.segments.find(s => s.label.startsWith('context.'));
+    if (contextSeg) {
+      expect(contextSeg.label).toBe('context.*');
+      expect(contextSeg.label).not.toContain('largest first');
+    }
+  });
+});
+
+describe('PATHOLOGICAL_OVERFLOW_NOTICE', () => {
+  it('names the config key + recovery actions', () => {
+    expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('bootstrap_max_response_bytes');
+    expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('codex_config_set');
+    expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('warning');
   });
 });
