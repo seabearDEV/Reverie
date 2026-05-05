@@ -25,6 +25,10 @@ SCOPE:
 - codex_get with no key shows project entries by default. Pass all: true to see both scopes.
 - If a write tool returns an error with code "PROJECT_UNRESOLVED", project resolution failed (no .codexcli/ found). Either run codex_init to create a project store, or retry with explicit scope: "global" if the entry is genuinely user-level. Reads still fall through to global automatically — only writes refuse.
 
+GUARDRAILS:
+- codex_context may prepend a "[trimmed: ...]" notice when the response would exceed the configured size budget (default 50KB). Listed namespaces were dropped to fit; fetch the specific entries via codex_get <key>, or call codex_context with tier:"full" to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never trimmed.
+- codex_set may append a "warning: this key has been written N times in this session" line on the 3rd+ write of the same key within 30 minutes. The write succeeded; the warning is a nudge to consider whether the entry has stabilized. Files-style keys (files.*) used as scratch space rather than seeds are the most common trigger — see conventions.seedDensity.
+
 TOOLS (19 total):
 
 Core read/write:
