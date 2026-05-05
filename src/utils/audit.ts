@@ -32,6 +32,12 @@ export interface AuditEntry {
   // Project-resolution guardrail signals (#99)
   refusedReason?: string | undefined;
   rescuedByExplicitGlobal?: boolean | undefined;
+  // codex_context size-budget shedding (#100)
+  degraded?: boolean | undefined;
+  shedNamespaces?: string[] | undefined;
+  // codex_set write-amp guard (#101)
+  writeAmpWarning?: boolean | undefined;
+  writeAmpCount?: number | undefined;
 }
 
 export interface AuditQueryOptions {

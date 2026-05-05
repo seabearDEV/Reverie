@@ -28,6 +28,17 @@ export interface TelemetryEntry {
    *  have refused under `scope: 'auto'` because project resolution failed.
    *  Lets us measure how often the explicit-scope escape hatch is used (#99). */
   rescuedByExplicitGlobal?: boolean | undefined;
+  /** codex_context only: true when the response was trimmed to fit the
+   *  bootstrap_max_response_bytes budget (#100). */
+  degraded?: boolean | undefined;
+  /** codex_context only: priority labels of namespaces shed when degraded
+   *  fired (#100). E.g. `["files.*", "arch.*"]`. */
+  shedNamespaces?: string[] | undefined;
+  /** codex_set only: true when the same key was written ≥3 times in this
+   *  session within a 30-min window (#101). */
+  writeAmpWarning?: boolean | undefined;
+  /** codex_set only: count of in-window writes when writeAmpWarning fired (#101). */
+  writeAmpCount?: number | undefined;
 }
 
 // Re-export for backward compatibility — anything that previously imported
@@ -350,6 +361,10 @@ export interface TelemetryExtras {
   success?: boolean | undefined;
   refusedReason?: string | undefined;
   rescuedByExplicitGlobal?: boolean | undefined;
+  degraded?: boolean | undefined;
+  shedNamespaces?: string[] | undefined;
+  writeAmpWarning?: boolean | undefined;
+  writeAmpCount?: number | undefined;
 }
 
 export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 'mcp', scope?: 'project' | 'global', extras?: TelemetryExtras, sync = false): Promise<void> {
