@@ -1399,7 +1399,7 @@ import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from 
 
 server.tool(
   "codex_context",
-  "Browse all stored project knowledge as a compact summary. Use this at session start to bootstrap context, or any time you want to see what is stored without having a specific key in mind. Prefer over codex_get when you do not have a specific key — this is the 'list everything' tool. Tiers: essential (minimal), standard (default, excludes arch), full (everything).",
+  "Browse all stored project knowledge as a compact summary. Use this at session start to bootstrap context, or any time you want to see what is stored without having a specific key in mind. Prefer over codex_get when you do not have a specific key — this is the 'list everything' tool. Tiers: essential (project/commands/conventions only — for focused work or when standard overflows), standard (default, excludes arch.* — typical session start), full (everything — for refactoring, architectural changes, or onboarding). See docs/schema-guide.md \"Bootstrap tiers\" for tier-vs-task guidance and the size-budget interaction.",
   {
     scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
     tier: z.enum(["essential", "standard", "full"]).optional().describe("Context tier: essential (project/commands/conventions only), standard (default, excludes arch.*), full (everything)"),

@@ -298,6 +298,46 @@ Four namespaces, five entries, and an agent already knows: what the project is, 
 
 The codexCLI project's own [.codexcli.json](../.codexcli.json) is the reference implementation — 53 entries across all 7 namespaces, with aliases for common lookups and confirm metadata for the release command. Use it as a model for comprehensive coverage.
 
+## Bootstrap tiers
+
+`codex_context` is the bootstrap entry point — agents call it at session start to load all stored knowledge in one tool result. But "all stored knowledge" can be larger than the agent's tool-result cap (~25k tokens on Claude Code / Desktop, sized similarly on most hosts). The `tier` parameter lets the caller pick how much detail to materialize.
+
+### The three tiers
+
+| Tier | Includes | Excludes | When to use |
+|---|---|---|---|
+| `essential` | `project.*`, `commands.*`, `conventions.*` | everything else | Cheap preliminary bootstrap; or when even the standard tier overflows |
+| `standard` (default) | everything except `arch.*` | `arch.*` | Typical session start. Excludes architecture detail to keep payload compact |
+| `full` | everything | nothing | Refactoring a subsystem, onboarding to the codebase, or any task where architecture context matters |
+
+The tiers are inclusive cones: `essential ⊂ standard ⊂ full`. There's no way to ask for `arch.*` without also getting `project.*`/`commands.*`/`conventions.*`.
+
+### Pick the right tier for the task
+
+- **Answering a question, small fix, single-file edit** → `essential`. The agent rarely needs architecture context for a focused change.
+- **Multi-file change, bug fix, new feature** → omit (gets `standard`). The default — most work doesn't touch architecture decisions.
+- **Refactor, architectural change, learning the codebase** → `full`. You're going to read `arch.*` entries anyway; load them upfront.
+
+### Relationship to the size budget (#100)
+
+When the projected response would exceed `bootstrap_max_response_bytes` (default 50KB), `codex_context` automatically sheds entries by priority — `files.*` first, then `arch.*`, then large `context.*` (largest-first). `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never shed. A `[trimmed: …]` notice at the top of the response names what was dropped and points at `codex_get <key>` or `tier:"full"` for retrieval.
+
+`tier: "full"` opts out of degradation entirely. If you ask for the full payload, you get the full payload — even if that means hitting the host cap. The shed only fires for `essential` and `standard`.
+
+If even after shedding everything sheddable the response still exceeds budget (because `project.*`/`conventions.*`/`commands.*`/`deps.*` alone are over), you'll see a second notice: `[warning: codex_context payload still exceeds budget after shedding all sheddable namespaces. Increase bootstrap_max_response_bytes (codex_config_set) or audit project.*/conventions.* for over-long entries.]`. That's the signal to either raise the budget or trim long never-shed entries.
+
+### Configuring the budget
+
+```bash
+# Read current budget
+ccli config get bootstrap_max_response_bytes
+
+# Raise the cap (example: 100KB for hosts with larger tool-result limits)
+ccli config set bootstrap_max_response_bytes 102400
+```
+
+For test/integration workflows, `CODEX_BOOTSTRAP_MAX_BYTES` env var overrides the config.
+
 ## Validation
 
 Run `ccli lint` to check that all entries follow the namespace schema:
