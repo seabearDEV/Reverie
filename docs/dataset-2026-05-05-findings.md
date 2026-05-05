@@ -99,7 +99,13 @@ Decision: relax soak-only discipline given the strength of the evidence. File is
 
 ## Related issues filed (2026-05-05)
 
-(Filled in after `gh issue create`.)
+- **#99** — guardrail: refuse `codex_set` when project resolution fails *(highest leverage; root-cause fix)*
+- **#100** — guardrail: `codex_context` size budget with graceful tier degradation
+- **#101** — guardrail: detect same-key `codex_set` rewritten N+ times in one session
+- **#102** — bug: MCP audit logs `project` as `.` instead of resolved cwd *(small, forward-looking)*
+- **#103** — docs: surface tier semantics and overflow fallback path
+
+All milestoned to v1.14.0 as candidates for the **E. Guardrails / data hygiene** theme. Phase 2 theme pick (~2026-05-14) decides anchor + final scope.
 
 ## Source files
 
