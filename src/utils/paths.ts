@@ -166,6 +166,7 @@ let projectRootOverride: string | null = null;
 export function setProjectRootOverride(dir: string | null): void {
   projectRootOverride = dir;
   projectFileCache = null;
+  projectStoreDirCache = null;
 }
 
 /**
@@ -192,7 +193,10 @@ export function getProjectRootOverride(): string | null {
  *  - `startedFrom`: directory the walk-up started from (override or cwd).
  *    Empty string when the walk did not run (e.g. CODEX_NO_PROJECT short-circuit
  *    or CODEX_PROJECT failure).
- *  - `walkReachedRoot`: walk-up exhausted without finding a project store.
+ *  - `walkReachedRoot`: walk-up exhausted the filesystem without finding a
+ *    project store (stopped at the true filesystem root `/`).
+ *  - `walkStoppedAtGlobalDir`: walk-up was stopped early because it reached
+ *    the codex global data directory before finding a project store.
  */
 export interface ResolverDiagnostic {
   codexNoProject: boolean;
@@ -201,6 +205,7 @@ export interface ResolverDiagnostic {
   rootOverride: string | undefined;
   startedFrom: string;
   walkReachedRoot: boolean;
+  walkStoppedAtGlobalDir: boolean;
 }
 
 /**
@@ -222,6 +227,7 @@ function resolveProjectFile(): { path: string | null; diagnostic: ResolverDiagno
     rootOverride,
     startedFrom: '',
     walkReachedRoot: false,
+    walkStoppedAtGlobalDir: false,
   };
 
   // 1. CODEX_NO_PROJECT short-circuit
@@ -276,7 +282,7 @@ function resolveProjectFile(): { path: string | null; diagnostic: ResolverDiagno
   while (true) {
     // Don't match files inside the global data directory
     if (path.resolve(dir) === path.resolve(globalDir)) {
-      diagnostic.walkReachedRoot = true;
+      diagnostic.walkStoppedAtGlobalDir = true;
       return { path: null, diagnostic };
     }
 

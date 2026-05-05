@@ -79,7 +79,7 @@ function buildMessage(d: ResolverDiagnostic): string {
   lines.push(`  1. CODEX_NO_PROJECT env: ${d.codexNoProject ? 'set (resolution disabled)' : 'not set'}`);
 
   if (d.codexProject !== undefined) {
-    const tail = d.codexProjectFailed ? ' — DID NOT RESOLVE TO A .codexcli DIRECTORY' : '';
+    const tail = d.codexProjectFailed ? ' — DID NOT RESOLVE TO A .codexcli DIRECTORY OR .codexcli.json FILE' : '';
     lines.push(`  2. CODEX_PROJECT env: ${d.codexProject}${tail}`);
   } else {
     lines.push('  2. CODEX_PROJECT env: not set');
@@ -92,7 +92,12 @@ function buildMessage(d: ResolverDiagnostic): string {
   }
 
   if (d.startedFrom) {
-    const tail = d.walkReachedRoot ? ': reached filesystem root without finding .codexcli/' : '';
+    let tail = '';
+    if (d.walkReachedRoot) {
+      tail = ': reached filesystem root without finding .codexcli/ or .codexcli.json';
+    } else if (d.walkStoppedAtGlobalDir) {
+      tail = ': stopped at the global codex data directory before finding a project store';
+    }
     lines.push(`  4. Walk up from ${d.startedFrom}${tail}`);
   } else {
     lines.push('  4. Walk up: skipped (earlier resolver branch short-circuited)');

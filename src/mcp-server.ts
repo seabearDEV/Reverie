@@ -389,7 +389,7 @@ server.tool(
       if (alias) {
         setAlias(alias, resolved, scope);
       }
-      // Surface where the write actually landed so agents can detect a project→global fallback.
+      // Surface where the write actually landed.
       const projectFile = findProjectFile();
       const wroteTo: 'project' | 'global' =
         scope === 'project' ? 'project' :
@@ -398,9 +398,6 @@ server.tool(
       const lines: string[] = [`Set: ${resolved} = ${encrypt ? '[encrypted]' : value}`];
       if (alias) lines.push(`Alias set: ${alias} -> ${resolved}`);
       lines.push(`Wrote to: ${wroteTo}${wroteTo === 'project' && projectFile ? ` (${projectFile})` : ''}`);
-      if (wroteTo === 'global' && !scopeParam) {
-        lines.push(`Note: no .codexcli.json was resolved, so 'auto' scope fell through to global. If this entry is project-specific, re-run with scope:"project" after creating a project file, or pin CODEX_PROJECT in the MCP server env.`);
-      }
       return textResponse(lines.join('\n'));
     } catch (err) {
       if (err instanceof ProjectResolutionError) throw err;
