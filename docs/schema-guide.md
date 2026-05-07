@@ -1,16 +1,16 @@
 # Schema Guide
 
-How to structure a the `.reverie/` store file — and why it's structured the way it is.
+How to structure the `.reverie/` store file — and why it's structured the way it is.
 
 ## The problem this solves
 
 Every time an AI agent opens a project, it faces the same question: *what do I need to know?* Without stored context, agents burn tokens re-exploring the codebase, re-reading README files, and re-discovering architectural decisions. Developers switching between projects face the same problem — they grep, they read, they forget.
 
-the `.reverie/` store solves this by giving every project a structured knowledge file that both humans and AI agents can read. But "structured" only works if the structure is consistent and intentional. This guide explains the design behind that structure.
+The `.reverie/` store solves this by giving every project a structured knowledge file that both humans and AI agents can read. But "structured" only works if the structure is consistent and intentional. This guide explains the design behind that structure.
 
 ## File anatomy
 
-A the `.reverie/` store file has five top-level sections:
+The `.reverie/` store file has five top-level sections:
 
 ```json
 {
@@ -270,7 +270,7 @@ If an entry needs multiple paragraphs, it's probably better as a doc file refere
 
 ## Putting it all together
 
-Here's a minimal the `.reverie/` store for a new project:
+Here's a minimal `.reverie/` store for a new project:
 
 ```json
 {

@@ -1,7 +1,0 @@
-{
-  "value": "esbuild ^0.25 — bundler for SEA builds. Produces single-file bundle that gets injected into Node binary via postject.",
-  "meta": {
-    "created": 1775361268959,
-    "updated": 1775361268959
-  }
-}

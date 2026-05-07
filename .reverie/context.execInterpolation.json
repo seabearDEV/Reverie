@@ -1,7 +1,7 @@
 {
-  "value": "Shell \\$(...) collides with codexCLI's exec interpolation syntax \\$(key). In stored commands, use backticks instead: `cmd` not \\$(cmd).",
+  "value": "Shell `$(...)` collides with Reverie's exec interpolation syntax `$(key)`. In stored commands, use backticks instead: `cmd` not `$(cmd)`.",
   "meta": {
     "created": 1775362844353,
-    "updated": 1776958377288
+    "updated": 1778172997786
   }
 }

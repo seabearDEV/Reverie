@@ -1,6 +1,6 @@
-# codexCLI store — do not hand-edit
+# Reverie store — do not hand-edit
 
-This directory is managed by codexCLI. Each `*.json` file is a single
+This directory is managed by Reverie. Each `*.json` file is a single
 store entry written through the CLI or MCP tools.
 
 **Internal sidecar files** (prefix `_`, safe to ignore):
@@ -14,8 +14,8 @@ store entry written through the CLI or MCP tools.
 
 **Edit via one of:**
 
-- `ccli set <key> <value>` (and the rest of the CLI)
-- The codexCLI MCP tools (`codex_set`, `codex_get`, etc.)
+- `rvr set <key> <value>` (and the rest of the CLI)
+- The Reverie MCP tools (`reverie_set`, `reverie_get`, etc.)
 - A future UI
 
 Direct edits to these files desync per-entry metadata (created/updated

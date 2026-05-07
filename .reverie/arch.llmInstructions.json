@@ -1,7 +1,7 @@
 {
-  "value": "Built-in defaults + customizable via system.llm.instructions entry. rvr config llm-instructions to view/edit.",
+  "value": "MCP-side instructions sent to AI agents at session start, shown by `rvr config llm-instructions` (use `--default` to see only built-in defaults). Built-in defaults nudge agents to bootstrap via reverie_context, check open issues with `gh issue list --state open`, pick the right context tier for the task, write back insights when learned, and hand off via context.next_session at session end.",
   "meta": {
     "created": 1775358827605,
-    "updated": 1778164822494
+    "updated": 1778173003167
   }
 }
