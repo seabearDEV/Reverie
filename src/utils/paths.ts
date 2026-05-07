@@ -4,9 +4,18 @@ import * as fs from 'fs';
 import { getBinaryName } from './binaryName';
 
 /**
- * Determines if the application is running in development mode
+ * Determines if the application is running in development mode.
+ *
+ * NOTE on bun --compile: Bun sets NODE_ENV=development at runtime in compiled
+ * binaries even with --compile (which implies --production at build time).
+ * The compiled-binary check (argv[1] starts with `/$bunfs/`) short-circuits
+ * NODE_ENV so a shipped binary doesn't route to the dev data-directory path
+ * (whose __dirname was baked in at build time and refers to the build host's
+ * filesystem). Without this guard, beta.2's bun-compiled binaries pointed at
+ * /Users/runner/work/reverie/reverie/data on every install.
  */
 function isDev(): boolean {
+  if (process.argv[1]?.startsWith('/$bunfs/')) return false;
   return process.env.NODE_ENV === 'development' ||
          getBinaryName() === 'rvr-dev' ||
          Boolean(process.argv[1]?.includes('ts-node')) ||

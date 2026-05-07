@@ -948,12 +948,14 @@ reverie
 async function handleFirstRun(): Promise<void> {
   if (fs.existsSync(getDataDirectory())) return;
 
-  console.log();
+  // Skip the banner for `mcp-server` — its stdout is JSON-RPC framing,
+  // and a chatty stderr write is fine (clients log it but don't parse it).
+  const isMcpServer = process.argv.includes('mcp-server');
   const bin = getBinaryName();
-  console.log(`Welcome to Reverie! Run \`${bin} config examples\` to see usage patterns.`);
+  process.stderr.write(`\nWelcome to Reverie! Run \`${bin} config examples\` to see usage patterns.\n`);
 
-  if (!process.stdin.isTTY) {
-    console.log();
+  if (isMcpServer || !process.stdin.isTTY) {
+    process.stderr.write('\n');
     return;
   }
 

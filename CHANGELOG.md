@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.0.0-beta.3] - 2026-05-07
+
+**Hot-fix for v1.0.0-beta.2.** That release was functionally broken: the bun-compiled binary tried to write its data directory to a path baked in at build time (`/Users/runner/work/reverie/reverie/data`, the GitHub Actions runner's source path), causing every save to fail with `EACCES`. The MCP server was non-functional, and `--version` output was corrupted by a welcome banner that fired on every invocation. Three contributing causes, all in beta.2 → beta.3:
+
+### Fixed
+
+- **`isDev()` no longer trips under bun-compiled binaries**: Bun sets `NODE_ENV=development` at runtime in compiled binaries (despite `--compile` implying `--production` at build time). Combined with `__dirname` being baked at compile time, this routed `getDataDirectory()` to a build-host path that doesn't exist on user machines. New guard: detect bun-compile via `process.argv[1]?.startsWith('/$bunfs/')` and short-circuit before the `NODE_ENV` check.
+- **First-run welcome banner now writes to stderr** (was stdout). Stdout is JSON-RPC framing for `mcp-server` and is consumed by pipes/scripts for other commands. Banner additionally short-circuits in `mcp-server` mode so even stderr noise stays minimal there.
+- **`getBinaryName()` handles bun-compile correctly**: bun's compiled binaries report `argv[0] = "bun"` and `argv[1] = "/$bunfs/root/<build-time-outfile>"`. Both lose the runtime invocation name. Falls back to `process.execPath` (which IS the user-invoked path) when the bunfs prefix is detected. Beta.2's banner said `rvr-macos-arm64` instead of `rvr-beta`; beta.3 says `rvr-beta` (or whatever symlink name was used).
+
+### Validation
+
+End-to-end MCP probe against the beta.3-style local build: 19 tools, initialize handshake clean, `reverie_get` returns the right value. `--version` output is plain `1.0.0-beta.3`. The lessons from this miss are recorded in `context.bunCompileGotchas` (new) so future bun-runtime work doesn't re-trip them.
+
 ## [1.0.0-beta.2] - 2026-05-07
 
 Build-system swap from Node SEA + esbuild + postject to `bun build --compile`. Toolchain change is internal — user-facing binaries behave identically (verified end-to-end via the release matrix on `v0.0.0-debug.1`). Smaller, faster, simpler. No source/runtime semantics change.
