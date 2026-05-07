@@ -62,8 +62,8 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Inline Editing**: Open entries in `$EDITOR` / `$VISUAL` for quick edits
 - **JSON Output**: Machine-readable `--json` flag on `get` and `find` for scripting
 - **Stdin Piping**: Pipe values into `set` from other commands
-- **Project-Scoped Data**: Opt-in `.codexcli/` per project — project entries take precedence, fall through to global
-- **Smart Init**: `rvr init` scans your codebase, populates `.codexcli/` with project/commands/files/deps/conventions/context entries, generates `CLAUDE.md`, and seeds the three-file knowledge convention
+- **Project-Scoped Data**: Opt-in `.reverie/` per project — project entries take precedence, fall through to global
+- **Smart Init**: `rvr init` scans your codebase, populates `.reverie/` with project/commands/files/deps/conventions/context entries, generates `CLAUDE.md`, and seeds the three-file knowledge convention
 - **Auto-Backup**: Automatic timestamped backups with configurable rotation (`max_backups` setting)
 - **File Locking**: Advisory locking prevents data corruption from concurrent access
 - **Shell Tab-Completion**: Full tab-completion for Bash and Zsh (commands, flags, keys, aliases)
@@ -71,10 +71,10 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Schema Validation**: Check entries against recommended namespaces (`rvr lint`), customizable via `_schema.namespaces`
 - **MCP Server**: 19 tools for any MCP-compatible AI agent (Claude Code, Copilot, ChatGPT, etc.) via the Model Context Protocol
 - **Telemetry & Audit**: Track usage patterns with scope-aware telemetry (`rvr stats`) and full audit log with before/after diffs, hit/miss tracking, and per-entry metrics (`rvr audit --detailed`). Includes [net token savings with self-calibrating exploration cost estimates](docs/token-savings.md), miss-path tracking, and per-agent breakdown.
-- **Cross-Session Handoff**: `codex_context` surfaces a top banner from `context.next_session` so the next session reads where things stand before any other work (auto-staled past 7 days)
-- **Project-Resolution Guardrail**: writes refuse with a structured `PROJECT_UNRESOLVED` error when no `.codexcli/` resolves and no explicit scope is given — prevents project-shaped data from silently landing in the global store
-- **Bootstrap Size Budget**: `codex_context` sheds entries by priority when the projected response exceeds `bootstrap_max_response_bytes` (default 50KB) — `files.*` first, then `arch.*`, then large `context.*` largest-first, with a one-line trimmed-notice listing what was dropped. `tier:"full"` opts out
-- **Write-Amp Guard**: `codex_set` warns on the 3rd+ write of the same key in a session within 30 minutes — informational, the write still succeeds. Helps agents notice when a key is being used as scratch space rather than a stable seed
+- **Cross-Session Handoff**: `reverie_context` surfaces a top banner from `context.next_session` so the next session reads where things stand before any other work (auto-staled past 7 days)
+- **Project-Resolution Guardrail**: writes refuse with a structured `PROJECT_UNRESOLVED` error when no `.reverie/` resolves and no explicit scope is given — prevents project-shaped data from silently landing in the global store
+- **Bootstrap Size Budget**: `reverie_context` sheds entries by priority when the projected response exceeds `bootstrap_max_response_bytes` (default 50KB) — `files.*` first, then `arch.*`, then large `context.*` largest-first, with a one-line trimmed-notice listing what was dropped. `tier:"full"` opts out
+- **Write-Amp Guard**: `reverie_set` warns on the 3rd+ write of the same key in a session within 30 minutes — informational, the write still succeeds. Helps agents notice when a key is being used as scratch space rather than a stable seed
 
 ## Installation
 
@@ -143,18 +143,18 @@ Reverie honors a small set of environment variables for deployment-time configur
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `CODEX_DATA_DIR` | Override the global data directory. Must be an absolute path. All global state lives here: the entry store (`store/`), config, audit log, telemetry. | `~/.codexcli` |
-| `CODEX_PROJECT` | Explicit path to a `.codexcli/` directory, a legacy `.codexcli.json` file, or a containing directory. Fails closed if the path doesn't resolve — no `cwd` walk-up fallback. | unset (walk up from `cwd`) |
-| `CODEX_PROJECT_DIR` | MCP-server launcher hint — the directory the server should treat as the project root. Equivalent to passing `--cwd <dir>`. Applied via `setProjectRootOverride` (no `process.chdir`), so it works whether the server is run as a binary or imported. | unset |
-| `CODEX_NO_PROJECT` | Disable project-file lookup entirely. Set to any non-empty value (e.g. `1`) and `findProjectFile()` returns `null` regardless of `cwd` or `CODEX_PROJECT`. | unset |
-| `CODEX_AGENT_NAME` | Identifier recorded in the audit and telemetry logs for the calling agent. Used by `rvr stats` and `rvr audit` to break down activity per agent (Claude, Cursor, Copilot, etc.). | unset |
-| `CODEX_DISABLE_LOCKING` | **Test-only.** When set to `1`, `withFileLock` falls back to running its closure without acquiring the file lock if lock acquisition fails. The default (production) behavior since v1.11 is to fail closed and propagate the lock error. Production code should never set this — there are no known production environments where lock acquisition is expected to fail. Tests that intentionally exercise contended-lock scenarios use this opt-out instead. | unset |
+| `RVR_DATA_DIR` | Override the global data directory. Must be an absolute path. All global state lives here: the entry store (`store/`), config, audit log, telemetry. | `~/.reverie` |
+| `RVR_PROJECT` | Explicit path to a `.reverie/` directory, a legacy `.codexcli.json` file, or a containing directory. Fails closed if the path doesn't resolve — no `cwd` walk-up fallback. | unset (walk up from `cwd`) |
+| `RVR_PROJECT_DIR` | MCP-server launcher hint — the directory the server should treat as the project root. Equivalent to passing `--cwd <dir>`. Applied via `setProjectRootOverride` (no `process.chdir`), so it works whether the server is run as a binary or imported. | unset |
+| `RVR_NO_PROJECT` | Disable project-file lookup entirely. Set to any non-empty value (e.g. `1`) and `findProjectFile()` returns `null` regardless of `cwd` or `RVR_PROJECT`. | unset |
+| `RVR_AGENT_NAME` | Identifier recorded in the audit and telemetry logs for the calling agent. Used by `rvr stats` and `rvr audit` to break down activity per agent (Claude, Cursor, Copilot, etc.). | unset |
+| `RVR_DISABLE_LOCKING` | **Test-only.** When set to `1`, `withFileLock` falls back to running its closure without acquiring the file lock if lock acquisition fails. The default (production) behavior since v1.11 is to fail closed and propagate the lock error. Production code should never set this — there are no known production environments where lock acquisition is expected to fail. Tests that intentionally exercise contended-lock scenarios use this opt-out instead. | unset |
 
 ### Notes
 
-- **`CODEX_DATA_DIR` must be absolute.** Relative paths (`./mydata`, `~/foo`) are rejected with a hard error rather than silently resolved against `process.cwd()`. Pass an expanded absolute path.
-- **Verify your data directory** at any time with `rvr info` — the `Data` line shows the resolved path and is annotated with `(CODEX_DATA_DIR)` when the env var is set.
-- **Pin the project root** for the MCP server in `.claude.json` by setting `"env": { "CODEX_PROJECT": "<repo path>" }` in the reverie MCP block. This is more deterministic than relying on `cwd` walk-up.
+- **`RVR_DATA_DIR` must be absolute.** Relative paths (`./mydata`, `~/foo`) are rejected with a hard error rather than silently resolved against `process.cwd()`. Pass an expanded absolute path.
+- **Verify your data directory** at any time with `rvr info` — the `Data` line shows the resolved path and is annotated with `(RVR_DATA_DIR)` when the env var is set.
+- **Pin the project root** for the MCP server in `.claude.json` by setting `"env": { "RVR_PROJECT": "<repo path>" }` in the reverie MCP block. This is more deterministic than relying on `cwd` walk-up.
 
 ## Usage
 
@@ -202,7 +202,7 @@ After setting an entry, you'll be asked interactively whether it should require 
 
 ### Retrieving Data
 
-When inside a project directory (one with a `.codexcli/` store), `get` shows project entries by default. Use `-G` for global entries or `-A` for both. Outside a project, `get` shows global entries. Looking up a specific key always falls through from project to global automatically.
+When inside a project directory (one with a `.reverie/` store), `get` shows project entries by default. Use `-G` for global entries or `-A` for both. Outside a project, `get` shows global entries. Looking up a specific key always falls through from project to global automatically.
 
 ```bash
 # List keys in the current scope
@@ -542,10 +542,10 @@ Available settings:
 
 ### Project-Scoped Data
 
-Reverie supports per-project knowledge stores that live alongside your code. The `.codexcli/` directory is designed to be committed to version control, creating a shared knowledge base that persists across sessions, team members, and AI agents. As of v1.10.0, each entry is its own JSON file inside the directory (`.codexcli/arch.storage.json`, `.codexcli/commands.build.json`, etc.) — this eliminates merge conflict churn when multiple devs add different entries on parallel branches. Use CLI or MCP tools to edit; hand-editing the wrapper files is unsupported.
+Reverie supports per-project knowledge stores that live alongside your code. The `.reverie/` directory is designed to be committed to version control, creating a shared knowledge base that persists across sessions, team members, and AI agents. As of v1.10.0, each entry is its own JSON file inside the directory (`.reverie/arch.storage.json`, `.reverie/commands.build.json`, etc.) — this eliminates merge conflict churn when multiple devs add different entries on parallel branches. Use CLI or MCP tools to edit; hand-editing the wrapper files is unsupported.
 
 ```bash
-# Initialize a project — scans codebase, creates .codexcli/ and CLAUDE.md
+# Initialize a project — scans codebase, creates .reverie/ and CLAUDE.md
 rvr init
 
 # Preview what init would create
@@ -554,7 +554,7 @@ rvr init --dry-run
 # Init without CLAUDE.md generation
 rvr init --no-claude
 
-# Init without codebase scan (empty .codexcli/)
+# Init without codebase scan (empty .reverie/)
 rvr init --no-scan
 
 # Store project knowledge
@@ -587,7 +587,7 @@ rvr init --remove
 
 #### Recommended Schema
 
-> **Deep dive:** See the [Schema Guide](docs/schema-guide.md) for the full rationale behind the file structure, what makes a good entry, and a walkthrough of the Reverie project's own `.codexcli/` as a reference implementation.
+> **Deep dive:** See the [Schema Guide](docs/schema-guide.md) for the full rationale behind the file structure, what makes a good entry, and a walkthrough of the Reverie project's own `.reverie/` as a reference implementation.
 
 When using Reverie as a project knowledge base (especially with AI agents via MCP), we recommend organizing entries under these namespaces:
 
@@ -607,12 +607,12 @@ Keep values concise — one sentence or a short command. Use multiple keys under
 
 When an AI agent connects via MCP, the recommended workflow is:
 
-1. Call `codex_context` as your **first** tool call to bootstrap session knowledge. Pick the right tier for the task:
+1. Call `reverie_context` as your **first** tool call to bootstrap session knowledge. Pick the right tier for the task:
    - `tier:"essential"` — answering questions, small fixes, single-file edits
    - omit / `tier:"standard"` — multi-file changes, bug fixes, new features (default)
    - `tier:"full"` — refactoring subsystems, changing architecture, onboarding to the codebase
 2. Check relevant namespaces (`arch`, `conventions`, `context`, `files`) before exploring the codebase
-3. Record non-obvious discoveries with `codex_set` as you work
+3. Record non-obvious discoveries with `reverie_set` as you work
 4. Update stale entries when you find they no longer match the code
 
 Agent usage is tracked automatically — run `rvr stats` to see bootstrap rate, write-back rate, and namespace coverage trends.
@@ -623,21 +623,21 @@ Every AI session has the same problem: the agent starts from zero, spends thousa
 
 Here's how it works in practice:
 
-1. **You run `rvr init`** in a new project. The CLI scans the codebase in milliseconds and creates a skeleton `.codexcli/` with project metadata, commands, file paths, dependencies, and conventions it can detect from the filesystem.
+1. **You run `rvr init`** in a new project. The CLI scans the codebase in milliseconds and creates a skeleton `.reverie/` with project metadata, commands, file paths, dependencies, and conventions it can detect from the filesystem.
 
-2. **First AI session begins.** The agent calls `codex_context`, sees the skeleton, and recognizes it's a fresh project (`context.initialized: scaffold`). Before starting your task, it reads the actual source code — entry points, core modules, config files — and populates the deep knowledge: architecture decisions in `arch.*`, non-obvious gotchas in `context.*`, and rich file descriptions in `files.*`. This deep analysis runs once.
+2. **First AI session begins.** The agent calls `reverie_context`, sees the skeleton, and recognizes it's a fresh project (`context.initialized: scaffold`). Before starting your task, it reads the actual source code — entry points, core modules, config files — and populates the deep knowledge: architecture decisions in `arch.*`, non-obvious gotchas in `context.*`, and rich file descriptions in `files.*`. This deep analysis runs once.
 
-3. **Every session after that** — whether it's Claude, Copilot, Cursor, ChatGPT, or any other MCP-compatible agent — bootstraps the full knowledge base in a single `codex_context` call. No re-exploration. No wasted tokens.
+3. **Every session after that** — whether it's Claude, Copilot, Cursor, ChatGPT, or any other MCP-compatible agent — bootstraps the full knowledge base in a single `reverie_context` call. No re-exploration. No wasted tokens.
 
 4. **The flywheel accelerates.** Agent A discovers a database migration gotcha on Monday and stores it in `context.migration`. Agent B (different tool, different session) hits the same area on Tuesday and benefits immediately — it already knows about the gotcha. Agent B discovers an API pattern and stores it in `arch.api`. Agent C benefits on Wednesday.
 
 The knowledge base grows with every session. The token cost per session drops. `rvr stats` shows you the trend: bootstrap rate, hit rate, estimated tokens saved, per-namespace coverage. The more you use it, the more efficient every agent becomes.
 
-Because the knowledge lives in `.codexcli/` (plain JSON files committed to your repo), it works across machines, across team members, and across AI tools. No vendor lock-in, no cloud dependency, no API keys. Just files that get smarter over time.
+Because the knowledge lives in `.reverie/` (plain JSON files committed to your repo), it works across machines, across team members, and across AI tools. No vendor lock-in, no cloud dependency, no API keys. Just files that get smarter over time.
 
 ### Data Management
 
-All data (entries, aliases, confirm metadata) is stored in a directory with one JSON file per entry plus `_aliases.json` and `_confirm.json` sidecars — `~/.codexcli/store/` for global data, `.codexcli/` for project-scoped data. Pre-v1.10.0 unified `.codexcli.json` / `data.json` files are automatically migrated on first access and the old file is renamed to `.backup`.
+All data (entries, aliases, confirm metadata) is stored in a directory with one JSON file per entry plus `_aliases.json` and `_confirm.json` sidecars — `~/.reverie/store/` for global data, `.reverie/` for project-scoped data. Pre-v1.10.0 unified `.codexcli.json` / `data.json` files are automatically migrated on first access and the old file is renamed to `.backup`.
 
 ```bash
 # Export data to a timestamped file
@@ -677,11 +677,11 @@ rvr data reset entries
 rvr data reset all -f
 ```
 
-> **Auto-backup:** Before destructive operations (`data reset`, non-merge `data import`), Reverie automatically creates a timestamped backup in `~/.codexcli/.backups/`. The last 10 backups are kept by default — configure with `rvr config set max_backups <n>` (set to `0` to disable rotation).
+> **Auto-backup:** Before destructive operations (`data reset`, non-merge `data import`), Reverie automatically creates a timestamped backup in `~/.reverie/.backups/`. The last 10 backups are kept by default — configure with `rvr config set max_backups <n>` (set to `0` to disable rotation).
 
 ### Context (Knowledge Summary)
 
-Get a compact summary of stored project knowledge — the same view AI agents get via `codex_context`:
+Get a compact summary of stored project knowledge — the same view AI agents get via `reverie_context`:
 
 ```bash
 # Show project knowledge (standard tier — excludes arch.*)
@@ -735,7 +735,7 @@ rvr stale --json
 
 Timestamps are tracked automatically when entries are set, copied, or renamed.
 
-Staleness is also surfaced inline — `rvr get` and `codex_context` (MCP) append tags to stale or untracked entries:
+Staleness is also surfaced inline — `rvr get` and `reverie_context` (MCP) append tags to stale or untracked entries:
 
 - `[untracked]` — entry has no update timestamp (predates staleness tracking). Most suspect.
 - `[47d]` — entry hasn't been updated in 47 days. Verify before trusting version numbers, URLs, or commands.
@@ -757,7 +757,7 @@ rvr lint --json
 rvr lint -G
 ```
 
-Default namespaces: `project`, `commands`, `arch`, `conventions`, `context`, `files`, `deps`, `system`. Add custom namespaces in `.codexcli/`:
+Default namespaces: `project`, `commands`, `arch`, `conventions`, `context`, `files`, `deps`, `system`. Add custom namespaces in `.reverie/`:
 
 ```json
 {
@@ -866,7 +866,7 @@ rvr --debug get server.production
 | `info` | | | Show version, stats, and storage paths |
 | `alias` | | `<subcommand>` | Manage key aliases (set, remove, list, rename) |
 | `confirm` | | `<subcommand>` | Manage run confirmation (set, remove, list) |
-| `init` | | | Initialize project (`.codexcli/` + codebase scan + `CLAUDE.md`) |
+| `init` | | | Initialize project (`.reverie/` + codebase scan + `CLAUDE.md`) |
 | `stale` | | `[days]` | Show entries not updated in N days (default 30) |
 | `lint` | | | Check entries against namespace schema (`--json`) |
 | `stats` | | | View MCP usage telemetry and trends (`--period`, `--detailed`, `--json`) |
@@ -904,7 +904,7 @@ claude mcp add reverie -- rvr mcp-server
 claude mcp add reverie --scope project -- rvr mcp-server --cwd .
 ```
 
-The `--scope project` makes the registration per-project in Claude Code, and `--cwd .` tells the MCP server to use the project root for `.codexcli/` detection. You can also use the `CODEX_PROJECT_DIR` environment variable instead of `--cwd`.
+The `--scope project` makes the registration per-project in Claude Code, and `--cwd .` tells the MCP server to use the project root for `.reverie/` detection. You can also use the `RVR_PROJECT_DIR` environment variable instead of `--cwd`.
 
 **npm global install** (`npm install -g .`) — dev mode:
 
@@ -965,27 +965,27 @@ claude mcp add reverie -- node /absolute/path/to/dist/mcp-server.js
 
 | Tool | Description |
 |---|---|
-| `codex_set` | Store project knowledge as a key-value entry (dot notation, optional alias, optional encryption) |
-| `codex_get` | Retrieve stored knowledge by dot-notation key, or list all entries (staleness tags on stale/untracked entries, optional decrypt) |
-| `codex_remove` | Remove a stored entry or alias by key |
-| `codex_copy` | Copy an entry to a new key (optional force to overwrite) |
-| `codex_rename` | Rename an entry key or alias (re-points aliases, migrates confirm metadata) |
-| `codex_search` | Search stored knowledge by keyword (keys, values, or both) |
-| `codex_alias_set` | Create or update an alias for a dot-notation path |
-| `codex_alias_remove` | Remove an alias |
-| `codex_alias_list` | List all defined aliases |
-| `codex_run` | Execute a stored shell command by key (dry-run, interpolation, confirmation prompts) |
-| `codex_config_get` | Get one or all configuration settings |
-| `codex_config_set` | Set a configuration setting (colors, theme, max_backups) |
-| `codex_export` | Export data and/or aliases as JSON text |
-| `codex_import` | Import data and/or aliases from a JSON string (merge, replace, or preview) |
-| `codex_reset` | Reset data and/or aliases to empty state |
-| `codex_context` | Compact summary of stored project knowledge (use at session start; supports tiers: essential, standard, full; staleness tags on stale/untracked entries) |
-| `codex_stale` | Find entries not updated recently (threshold in days, default 30) |
-| `codex_stats` | View usage telemetry and [token savings](docs/token-savings.md) (hit rate, exploration cost avoided, per-namespace breakdown, trends) |
-| `codex_audit` | Query the audit log of data mutations (before/after diffs, agent identity, scope, success/fail) |
+| `reverie_set` | Store project knowledge as a key-value entry (dot notation, optional alias, optional encryption) |
+| `reverie_get` | Retrieve stored knowledge by dot-notation key, or list all entries (staleness tags on stale/untracked entries, optional decrypt) |
+| `reverie_remove` | Remove a stored entry or alias by key |
+| `reverie_copy` | Copy an entry to a new key (optional force to overwrite) |
+| `reverie_rename` | Rename an entry key or alias (re-points aliases, migrates confirm metadata) |
+| `reverie_search` | Search stored knowledge by keyword (keys, values, or both) |
+| `reverie_alias_set` | Create or update an alias for a dot-notation path |
+| `reverie_alias_remove` | Remove an alias |
+| `reverie_alias_list` | List all defined aliases |
+| `reverie_run` | Execute a stored shell command by key (dry-run, interpolation, confirmation prompts) |
+| `reverie_config_get` | Get one or all configuration settings |
+| `reverie_config_set` | Set a configuration setting (colors, theme, max_backups) |
+| `reverie_export` | Export data and/or aliases as JSON text |
+| `reverie_import` | Import data and/or aliases from a JSON string (merge, replace, or preview) |
+| `reverie_reset` | Reset data and/or aliases to empty state |
+| `reverie_context` | Compact summary of stored project knowledge (use at session start; supports tiers: essential, standard, full; staleness tags on stale/untracked entries) |
+| `reverie_stale` | Find entries not updated recently (threshold in days, default 30) |
+| `reverie_stats` | View usage telemetry and [token savings](docs/token-savings.md) (hit rate, exploration cost avoided, per-namespace breakdown, trends) |
+| `reverie_audit` | Query the audit log of data mutations (before/after diffs, agent identity, scope, success/fail) |
 
-All data-touching tools accept an optional `scope` parameter (`"project"` or `"global"`). When listing entries (no key), `codex_get` defaults to project-only if a `.codexcli/` exists — pass `all: true` to see both scopes. Single-key lookups fall through from project to global automatically.
+All data-touching tools accept an optional `scope` parameter (`"project"` or `"global"`). When listing entries (no key), `reverie_get` defaults to project-only if a `.reverie/` exists — pass `all: true` to see both scopes. Single-key lookups fall through from project to global automatically.
 
 ### LLM Instructions
 
@@ -1023,7 +1023,7 @@ A successful response will include `"serverInfo":{"name":"reverie"}` in the JSON
 
 | Document | Description |
 |---|---|
-| [Schema Guide](docs/schema-guide.md) | How to structure your `.codexcli/` store — namespaces, file anatomy, good vs bad entries, reference examples |
+| [Schema Guide](docs/schema-guide.md) | How to structure your `.reverie/` store — namespaces, file anatomy, good vs bad entries, reference examples |
 | [Token Savings](docs/token-savings.md) | How Reverie measures AI agent efficiency — every metric explained, estimation methodology, limitations |
 | [Roadmap](docs/ROADMAP.md) | Completed features, upcoming milestones, long-term vision |
 | [Dogfooding](docs/dogfooding.md) | How Reverie found and fixed its own bugs using its own MCP tools |

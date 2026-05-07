@@ -45,10 +45,10 @@ A Go rewrite is planned for better performance and single-binary distribution wi
 ## Release History
 
 ### v1.14.0 — Guardrails / Data Hygiene
-Theme E, picked mid-soak after the 2026-05-05 dataset surfaced bootstrap-overflow as the strongest signal. Five issues closed: project-resolution chokepoint refuses auto-scope writes when no `.codexcli/` resolves (#99, breaking change), `codex_context` size-budget shedding with priority order and pathological-overflow notice (#100), `codex_set` write-amp warning on 3rd+ same-key write per session (#101), MCP audit `project` field absolutized (#102), tier semantics + size-budget interaction documented in schema-guide.md (#103). New telemetry/audit fields: `refusedReason`, `rescuedByExplicitGlobal`, `degraded`, `shedNamespaces`, `writeAmpWarning`, `writeAmpCount`. Tests 1325 → 1394 (+69).
+Theme E, picked mid-soak after the 2026-05-05 dataset surfaced bootstrap-overflow as the strongest signal. Five issues closed: project-resolution chokepoint refuses auto-scope writes when no `.reverie/` resolves (#99, breaking change), `reverie_context` size-budget shedding with priority order and pathological-overflow notice (#100), `reverie_set` write-amp warning on 3rd+ same-key write per session (#101), MCP audit `project` field absolutized (#102), tier semantics + size-budget interaction documented in schema-guide.md (#103). New telemetry/audit fields: `refusedReason`, `rescuedByExplicitGlobal`, `degraded`, `shedNamespaces`, `writeAmpWarning`, `writeAmpCount`. Tests 1325 → 1394 (+69).
 
 ### v1.13.0 — Agent-First, Dataset-Driven
-Shaped by mining a 584-call, 15-day real-usage dataset (see `docs/dogfooding-real-usage.md`). Eleven issues closed: cross-session handoff banner in `codex_context` (#91), MCP tool description audit to cut agent tool-selection errors (#92), audit log data-quality cleanup (#93, #94), non-interactive password support for CI/scripting (#88), seed-quality lint heuristic (#82), co-occurrence topology command (#83), plus small cleanups and a CI runtime bump.
+Shaped by mining a 584-call, 15-day real-usage dataset (see `docs/dogfooding-real-usage.md`). Eleven issues closed: cross-session handoff banner in `reverie_context` (#91), MCP tool description audit to cut agent tool-selection errors (#92), audit log data-quality cleanup (#93, #94), non-interactive password support for CI/scripting (#88), seed-quality lint heuristic (#82), co-occurrence topology command (#83), plus small cleanups and a CI runtime bump.
 
 ### v1.12.x — Export/Import Integrity Chain
 Transactional multi-section imports, export integrity envelope with sha256, auto-backup project scope, encrypted-roundtrip preservation.
@@ -60,19 +60,19 @@ Net token savings, miss-path tracking, self-calibrating exploration costs per na
 `alias`/`confirm` subcommand groups, `context` command, enhanced `rvr init` with codebase scanning, stored command chains (`--chain`).
 
 ### v1.7.0 — Staleness & Testing
-Inline staleness tags in `codex_context`/`codex_get`, exploration-weighted token savings, test suite overhaul (633 → 1048 tests).
+Inline staleness tags in `reverie_context`/`reverie_get`, exploration-weighted token savings, test suite overhaul (633 → 1048 tests).
 
 ### v1.5.0 — v1.6.0 — Enriched Telemetry
 Audit/telemetry metrics (duration, hit/miss, redundant), two-step MCP confirmation, namespace-weighted token savings, import flat-key expansion.
 
 ### v1.0.0 — v1.4.0 — Production Ready
-Staleness detection, schema validation (`rvr lint`), regex search, audit log, tiered `codex_context`, agent-agnostic optimizations.
+Staleness detection, schema validation (`rvr lint`), regex search, audit log, tiered `reverie_context`, agent-agnostic optimizations.
 
 ### v0.9.0 — Conditional Interpolation & Telemetry
 `${key:-default}`/`${key:?error}`, MCP telemetry, backup rotation, init scaffolding.
 
 ### v0.8.0 — GenAI Knowledge Base
-`codex_context` for one-call bootstrap, recommended schema, project-scoped `.codexcli.json`.
+`reverie_context` for one-call bootstrap, recommended schema, project-scoped `.codexcli.json`.
 
 ### v0.6.0 — v0.7.0 — Unified Store
 Consolidated data format, project/global scope resolution, auto-migration.

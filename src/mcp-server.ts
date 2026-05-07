@@ -82,7 +82,7 @@ function projectResolutionErrorResponse(err: ProjectResolutionError) {
 
 ensureDataDirectoryExists();
 
-// --- Confirmation token store for two-step codex_run ---
+// --- Confirmation token store for two-step reverie_run ---
 // Tokens are one-time-use and expire after 5 minutes.
 import crypto from 'crypto';
 const CONFIRM_TOKEN_TTL = 5 * 60 * 1000;
@@ -135,8 +135,8 @@ function emitGuardrailSignals(signals: GuardrailSignals): void {
 }
 
 function extractKey(name: string, params: Record<string, unknown>): string | undefined {
-  if (name === 'codex_copy') return (params.dest ?? params.source) as string | undefined;
-  if (name === 'codex_alias_set') return params.alias as string | undefined;
+  if (name === 'reverie_copy') return (params.dest ?? params.source) as string | undefined;
+  if (name === 'reverie_alias_set') return params.alias as string | undefined;
   return (params.key ?? params.source ?? params.oldKey ?? params.alias ?? params.query) as string | undefined;
 }
 
@@ -169,7 +169,7 @@ function determineHit(result: unknown, success: boolean): boolean {
 
 /** Try to extract entry count from response text */
 function extractEntryCount(text: string): number | undefined {
-  // codex_context footer: "(N entries)"
+  // reverie_context footer: "(N entries)"
   const tierMatch = /\((\d+) entries?\)/.exec(text);
   if (tierMatch) return parseInt(tierMatch[1], 10);
   // Count non-empty content lines (rough approximation for listings)
@@ -191,11 +191,11 @@ server.tool = ((...args: any[]) => {
         ? (findProjectFile() ? 'project' : 'global')
         : scope as 'project' | 'global' | undefined;
 
-    // Resolve alias for audit trail. codex_copy is special-cased: extractKey
+    // Resolve alias for audit trail. reverie_copy is special-cased: extractKey
     // returns dest for the audit-key field, but the alias that matters is the
     // source alias (dest is usually a new canonical key, not an alias). #94.
     let aliasResolved: string | undefined;
-    if (name === 'codex_copy') {
+    if (name === 'reverie_copy') {
       const source = params.source as string | undefined;
       if (source) {
         try {
@@ -228,7 +228,7 @@ server.tool = ((...args: any[]) => {
     let copySourceValue: string | undefined;
     if (isWrite && !BULK_OPS.has(name)) {
       before = captureValue(name, key, scope);
-      if (name === 'codex_copy') {
+      if (name === 'reverie_copy') {
         // Pre-capture source value for the after diff (avoids race with concurrent writes)
         const sourceKey = params.source as string | undefined;
         if (sourceKey) {
@@ -281,16 +281,16 @@ server.tool = ((...args: any[]) => {
       // because concurrent requests can race and corrupt the read.
       let after: string | undefined;
       if (isWrite && success && !BULK_OPS.has(name)) {
-        if (name === 'codex_set' || name === 'codex_config_set') {
+        if (name === 'reverie_set' || name === 'reverie_config_set') {
           after = sanitizeValue(params.value as string | undefined);
-        } else if (name === 'codex_copy') {
+        } else if (name === 'reverie_copy') {
           after = copySourceValue;
-        } else if (name === 'codex_rename') {
+        } else if (name === 'reverie_rename') {
           // Rename preserves the value
           after = before;
-        } else if (name === 'codex_remove' || name === 'codex_alias_remove') {
+        } else if (name === 'reverie_remove' || name === 'reverie_alias_remove') {
           after = undefined; // Entry was deleted
-        } else if (name === 'codex_alias_set') {
+        } else if (name === 'reverie_alias_set') {
           after = params.path as string | undefined;
         } else {
           // Fallback: re-read (only for unexpected tool names)
@@ -308,17 +308,17 @@ server.tool = ((...args: any[]) => {
       const responseSize = Buffer.byteLength(responseText, 'utf8');
       const requestSize = Buffer.byteLength(JSON.stringify(params), 'utf8');
       const hit = op === 'read' ? determineHit(result, success) : undefined;
-      const tier = name === 'codex_context' ? (params.tier as string ?? 'standard') : undefined;
+      const tier = name === 'reverie_context' ? (params.tier as string ?? 'standard') : undefined;
       const entryCount = op === 'read' && success ? extractEntryCount(responseText) : undefined;
       // Redundant = value didn't change on a true mutation. Exclude:
       //   - rename (key move, not value change)
       //   - run --dry (read-only) and import --preview (read-only)
-      //   - exec ops (codex_run): the stored command never changes during a
+      //   - exec ops (reverie_run): the stored command never changes during a
       //     run, so before === after is trivially true and would always
       //     mis-tag runs as "redundant writes" — but they aren't writes at all
-      const isReadOnlyWrite = (name === 'codex_rename') ||
-        (name === 'codex_run' && params.dry === true) ||
-        (name === 'codex_import' && params.preview === true);
+      const isReadOnlyWrite = (name === 'reverie_rename') ||
+        (name === 'reverie_run' && params.dry === true) ||
+        (name === 'reverie_import' && params.preview === true);
       const redundant = op === 'write' && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after ? true : undefined;
 
       // Consume any guardrail signals stashed by the handler (#100/#101).
@@ -372,7 +372,7 @@ server.tool = ((...args: any[]) => {
         op,
         hit,
         responseSize,
-        agent: process.env.CODEX_AGENT_NAME,
+        agent: process.env.RVR_AGENT_NAME,
       });
       for (const mp of closedPaths) {
         void appendMissPath(mp);
@@ -385,10 +385,10 @@ server.tool = ((...args: any[]) => {
   return (_origTool as (...a: any[]) => unknown)(...args);
 }) as typeof server.tool;
 
-// --- codex_set ---
+// --- reverie_set ---
 server.tool(
-  "codex_set",
-  "Store a project-knowledge entry at a dot-notation key (e.g. arch.api). Use to persist non-obvious insights across sessions. For creating a nickname that points at an existing key, use codex_alias_set instead — aliases do not store data.",
+  "reverie_set",
+  "Store a project-knowledge entry at a dot-notation key (e.g. arch.api). Use to persist non-obvious insights across sessions. For creating a nickname that points at an existing key, use reverie_alias_set instead — aliases do not store data.",
   { key: z.string().describe("Dot-notation key (e.g. server.prod.ip)"), value: z.string().describe("Value to store"), alias: z.string().optional().describe("Create an alias for this key"), encrypt: z.boolean().optional().describe("Encrypt the value with the provided password"), password: z.string().optional().describe("Password for encryption (required when encrypt is true)"), scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)") },
   async ({ key, value, alias, encrypt, password, scope: scopeParam }) => {
     try {
@@ -441,10 +441,10 @@ server.tool(
   }
 );
 
-// --- codex_get ---
+// --- reverie_get ---
 server.tool(
-  "codex_get",
-  "Retrieve a specific stored entry by dot-notation key (e.g. arch.api, files.store). Use when you already know the key you want. For browsing or listing everything stored, use codex_context — that is the bootstrap/overview tool. For keyword search, use codex_find.",
+  "reverie_get",
+  "Retrieve a specific stored entry by dot-notation key (e.g. arch.api, files.store). Use when you already know the key you want. For browsing or listing everything stored, use reverie_context — that is the bootstrap/overview tool. For keyword search, use reverie_find.",
   {
     key: z.string().optional().describe("Dot-notation key to retrieve (omit for all entries)"),
     format: z.enum(["flat", "tree"]).optional().describe("Output format: flat (default) or tree"),
@@ -591,10 +591,10 @@ server.tool(
   }
 );
 
-// --- codex_remove ---
+// --- reverie_remove ---
 server.tool(
-  "codex_remove",
-  "Remove a stored entry by dot-notation key. Aliases pointing at this key (or its children) are cascade-removed automatically. Use when knowledge is outdated or incorrect. For removing a nickname only (keeping the entry), use codex_alias_remove or pass is_alias:true.",
+  "reverie_remove",
+  "Remove a stored entry by dot-notation key. Aliases pointing at this key (or its children) are cascade-removed automatically. Use when knowledge is outdated or incorrect. For removing a nickname only (keeping the entry), use reverie_alias_remove or pass is_alias:true.",
   {
     key: z.string().describe("Dot-notation key to remove"),
     is_alias: z.boolean().optional().describe("If true, remove the alias only (keep the entry)"),
@@ -629,10 +629,10 @@ server.tool(
   }
 );
 
-// --- codex_copy ---
+// --- reverie_copy ---
 server.tool(
-  "codex_copy",
-  "Duplicate an entry's value to a new key (creates a full copy). For giving an existing key a short nickname without duplication, use codex_alias_set. For moving/renaming, use codex_rename.",
+  "reverie_copy",
+  "Duplicate an entry's value to a new key (creates a full copy). For giving an existing key a short nickname without duplication, use reverie_alias_set. For moving/renaming, use reverie_rename.",
   {
     source: z.string().describe("Source dot-notation key to copy from"),
     dest: z.string().describe("Destination dot-notation key to copy to"),
@@ -678,10 +678,10 @@ server.tool(
   }
 );
 
-// --- codex_rename ---
+// --- reverie_rename ---
 server.tool(
-  "codex_rename",
-  "Move an entry key to a new name (or rename an alias when is_alias:true). Preserves the value and metadata — distinct from codex_copy, which duplicates.",
+  "reverie_rename",
+  "Move an entry key to a new name (or rename an alias when is_alias:true). Preserves the value and metadata — distinct from reverie_copy, which duplicates.",
   {
     oldKey: z.string().describe("Current dot-notation key (or alias name when is_alias is true)"),
     newKey: z.string().describe("New dot-notation key (or alias name when is_alias is true)"),
@@ -778,10 +778,10 @@ server.tool(
   }
 );
 
-// --- codex_find ---
+// --- reverie_find ---
 server.tool(
-  "codex_find",
-  "Search stored entries by keyword or regex across keys and values. Use when you know roughly what you want but not the exact key. For listing all entries, use codex_context. For exact-key lookup, use codex_get.",
+  "reverie_find",
+  "Search stored entries by keyword or regex across keys and values. Use when you know roughly what you want but not the exact key. For listing all entries, use reverie_context. For exact-key lookup, use reverie_get.",
   {
     query: z.string().describe("Query string to find (case-insensitive substring, or regex if regex=true)"),
     regex: z.boolean().optional().describe("Treat query as a regular expression"),
@@ -846,10 +846,10 @@ server.tool(
   }
 );
 
-// --- codex_alias_set ---
+// --- reverie_alias_set ---
 server.tool(
-  "codex_alias_set",
-  "Create a short nickname that resolves to an existing entry key (e.g. 'api' -> 'arch.api'). Use when a long key is referenced repeatedly. Does NOT store data — the alias resolves to whatever codex_set wrote. For storing new content, use codex_set.",
+  "reverie_alias_set",
+  "Create a short nickname that resolves to an existing entry key (e.g. 'api' -> 'arch.api'). Use when a long key is referenced repeatedly. Does NOT store data — the alias resolves to whatever reverie_set wrote. For storing new content, use reverie_set.",
   {
     alias: z.string().describe("Alias name"),
     key: z.string().describe("Dot-notation key the alias points to"),
@@ -867,10 +867,10 @@ server.tool(
   }
 );
 
-// --- codex_alias_remove ---
+// --- reverie_alias_remove ---
 server.tool(
-  "codex_alias_remove",
-  "Remove a nickname (alias) without touching the entry it points at. For removing the underlying entry, use codex_remove.",
+  "reverie_alias_remove",
+  "Remove a nickname (alias) without touching the entry it points at. For removing the underlying entry, use reverie_remove.",
   { alias: z.string().describe("Alias name to remove"), scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)") },
   async ({ alias, scope: scopeParam }) => {
     try {
@@ -887,10 +887,10 @@ server.tool(
   }
 );
 
-// --- codex_alias_list ---
+// --- reverie_alias_list ---
 server.tool(
-  "codex_alias_list",
-  "List all nicknames (alias -> key mappings). For browsing entries themselves, use codex_context.",
+  "reverie_alias_list",
+  "List all nicknames (alias -> key mappings). For browsing entries themselves, use reverie_context.",
   { scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)") },
   async ({ scope: scopeParam }) => {
     try {
@@ -908,9 +908,9 @@ server.tool(
   }
 );
 
-// --- codex_run ---
+// --- reverie_run ---
 server.tool(
-  "codex_run",
+  "reverie_run",
   "Execute a stored shell command by key (e.g. commands.build) and return its output. Supports ${key}/$(key) interpolation and &&-chaining via chain:true. For entries marked --confirm, a two-step flow applies: the first call returns a confirm_token and command preview; pass the token on the second call to execute. Use dry:true to preview without executing.",
   {
     key: z.string().describe("Dot-notation key (or alias) whose value is a shell command"),
@@ -963,7 +963,7 @@ server.tool(
             }
             const fullCmd = previewCmds.join(' && ');
             const token = createConfirmToken(key, fullCmd);
-            return textResponse(`⚠ This command requires confirmation before execution:\n$ ${fullCmd}\n\nTo execute, call codex_run again with confirm_token: "${token}"`);
+            return textResponse(`⚠ This command requires confirmation before execution:\n$ ${fullCmd}\n\nTo execute, call reverie_run again with confirm_token: "${token}"`);
           }
         }
         try { commands.push(interpolate(cv)); } catch (err) {
@@ -1010,7 +1010,7 @@ server.tool(
       } else {
         const token = createConfirmToken(key, command);
         return textResponse(
-          `⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call codex_run again with confirm_token: "${token}"`
+          `⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call reverie_run again with confirm_token: "${token}"`
         );
       }
     }
@@ -1034,10 +1034,10 @@ server.tool(
   }
 );
 
-// --- codex_config_get ---
+// --- reverie_config_get ---
 server.tool(
-  "codex_config_get",
-  "Get a Reverie user-preference setting (colors, theme, pager). Distinct from codex_get, which retrieves stored project knowledge.",
+  "reverie_config_get",
+  "Get a Reverie user-preference setting (colors, theme, pager). Distinct from reverie_get, which retrieves stored project knowledge.",
   {
     key: z.string().optional().describe("Config key (colors, theme). Omit for all settings."),
   },
@@ -1060,10 +1060,10 @@ server.tool(
   }
 );
 
-// --- codex_config_set ---
+// --- reverie_config_set ---
 server.tool(
-  "codex_config_set",
-  "Set a Reverie user-preference setting (colors, theme, pager). Distinct from codex_set, which stores project knowledge.",
+  "reverie_config_set",
+  "Set a Reverie user-preference setting (colors, theme, pager). Distinct from reverie_set, which stores project knowledge.",
   {
     key: z.string().describe("Config key to set (colors, theme)"),
     value: z.string().describe("Value to set"),
@@ -1085,10 +1085,10 @@ server.tool(
   }
 );
 
-// --- codex_export ---
+// --- reverie_export ---
 server.tool(
-  "codex_export",
-  "Export entries/aliases/confirm as a structured JSON envelope suitable for backup, sharing, or version control. Wrapped in a $codexcli envelope with version + sha256. For viewing entries interactively, use codex_context. For targeted lookup, use codex_get.",
+  "reverie_export",
+  "Export entries/aliases/confirm as a structured JSON envelope suitable for backup, sharing, or version control. Wrapped in a $codexcli envelope with version + sha256. For viewing entries interactively, use reverie_context. For targeted lookup, use reverie_get.",
   {
     type: z.enum(["entries", "aliases", "confirm", "all"]).describe("What to export"),
     pretty: z.boolean().optional().describe("Pretty-print the JSON (default false)"),
@@ -1124,10 +1124,10 @@ server.tool(
   }
 );
 
-// --- codex_import ---
+// --- reverie_import ---
 server.tool(
-  "codex_import",
-  "Import entries/aliases/confirm from a JSON payload (object or string). Accepts codex_export's envelope format or a bare {entries:{...}} shape. Merges by default; pass merge:false to replace. Use preview:true to see the diff without writing. Example: codex_import({ data: { arch: { api: 'GraphQL' } } })",
+  "reverie_import",
+  "Import entries/aliases/confirm from a JSON payload (object or string). Accepts reverie_export's envelope format or a bare {entries:{...}} shape. Merges by default; pass merge:false to replace. Use preview:true to see the diff without writing. Example: reverie_import({ data: { arch: { api: 'GraphQL' } } })",
   {
     data: z.union([z.string(), z.record(z.string(), z.unknown())]).describe("Data to import — either a JSON string or an object literal"),
     type: z.enum(["entries", "aliases", "confirm", "all"]).optional().describe("What to import (default: entries)"),
@@ -1353,10 +1353,10 @@ server.tool(
   }
 );
 
-// --- codex_reset ---
+// --- reverie_reset ---
 server.tool(
-  "codex_reset",
-  "Wipe entries/aliases/confirm to empty state (type:'all') OR clear audit/telemetry/miss-path log files. Destructive and scope-wide. For single-entry deletion, use codex_remove. Run codex_export first if you want a backup.",
+  "reverie_reset",
+  "Wipe entries/aliases/confirm to empty state (type:'all') OR clear audit/telemetry/miss-path log files. Destructive and scope-wide. For single-entry deletion, use reverie_remove. Run reverie_export first if you want a backup.",
   {
     type: z.enum(["entries", "aliases", "confirm", "all", "audit", "telemetry", "miss-paths"]).describe("What to reset ('all' covers entries+aliases+confirm, not logs)"),
     scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global). Ignored for audit/telemetry/miss-paths."),
@@ -1392,14 +1392,14 @@ server.tool(
   }
 );
 
-// --- codex_context ---
+// --- reverie_context ---
 
 import { filterEntriesByTier } from "./commands/context";
 import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from "./utils/contextBudget";
 
 server.tool(
-  "codex_context",
-  "Browse all stored project knowledge as a compact summary. Use this at session start to bootstrap context, or any time you want to see what is stored without having a specific key in mind. Prefer over codex_get when you do not have a specific key — this is the 'list everything' tool. Tiers: essential (project/commands/conventions only — for focused work or when standard overflows), standard (default, excludes arch.* — typical session start), full (everything — for refactoring, architectural changes, or onboarding). See docs/schema-guide.md \"Bootstrap tiers\" for tier-vs-task guidance and the size-budget interaction.",
+  "reverie_context",
+  "Browse all stored project knowledge as a compact summary. Use this at session start to bootstrap context, or any time you want to see what is stored without having a specific key in mind. Prefer over reverie_get when you do not have a specific key — this is the 'list everything' tool. Tiers: essential (project/commands/conventions only — for focused work or when standard overflows), standard (default, excludes arch.* — typical session start), full (everything — for refactoring, architectural changes, or onboarding). See docs/schema-guide.md \"Bootstrap tiers\" for tier-vs-task guidance and the size-budget interaction.",
   {
     scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
     tier: z.enum(["essential", "standard", "full"]).optional().describe("Context tier: essential (project/commands/conventions only — for focused work or when standard overflows), standard (default, excludes arch.* — typical session start), full (everything — for refactoring, architectural changes, or onboarding). See docs/schema-guide.md \"Bootstrap tiers\""),
@@ -1430,8 +1430,8 @@ server.tool(
       if (!handoff && Object.keys(filtered).length === 0 && Object.keys(aliases).length === 0) {
         const header = hasProject
           ? `[project: ${projectFile}]\n\n`
-          : `[project: NONE — auto-scope writes will fall through to global. Pin CODEX_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]\n\n`;
-        return textResponse(`${header}No entries stored. Use codex_set to add project knowledge.`);
+          : `[project: NONE — auto-scope writes will fall through to global. Pin RVR_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]\n\n`;
+        return textResponse(`${header}No entries stored. Use reverie_set to add project knowledge.`);
       }
 
       // Encrypt-display the entry values once so size accounting matches what
@@ -1448,7 +1448,7 @@ server.tool(
       let kept: Record<string, string> = displayed;
       if (effectiveTier !== 'full') {
         const budget = (loadConfig().bootstrap_max_response_bytes) || 50 * 1024;
-        const envOverride = process.env.CODEX_BOOTSTRAP_MAX_BYTES;
+        const envOverride = process.env.RVR_BOOTSTRAP_MAX_BYTES;
         const effectiveBudget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
           ? Number(envOverride)
           : budget;
@@ -1459,7 +1459,7 @@ server.tool(
         let fixedOverheadBytes = 0;
         const headerLine = hasProject
           ? `[project: ${projectFile}]`
-          : `[project: NONE — auto-scope writes will fall through to global. Pin CODEX_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`;
+          : `[project: NONE — auto-scope writes will fall through to global. Pin RVR_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`;
         fixedOverheadBytes += Buffer.byteLength(`${headerLine}\n\n`, 'utf8');
         if (handoff) {
           for (const l of handoff.lines) fixedOverheadBytes += Buffer.byteLength(`${l}\n`, 'utf8');
@@ -1499,7 +1499,7 @@ server.tool(
       if (hasProject) {
         lines.push(`[project: ${projectFile}]`);
       } else {
-        lines.push(`[project: NONE — auto-scope writes will fall through to global. Pin CODEX_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`);
+        lines.push(`[project: NONE — auto-scope writes will fall through to global. Pin RVR_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`);
       }
       lines.push('');
 
@@ -1552,9 +1552,9 @@ server.tool(
   }
 );
 
-// --- codex_stale ---
+// --- reverie_stale ---
 server.tool(
-  "codex_stale",
+  "reverie_stale",
   "List entries not written in the last N days (default 30). Use to find knowledge that may have drifted out of date. Based on write timestamps, not read patterns — a stale entry may still be actively consulted.",
   {
     days: z.coerce.number().int().min(0).optional().describe("Threshold in days (default: 30). Entries not updated in this many days are returned."),
@@ -1593,10 +1593,10 @@ server.tool(
   }
 );
 
-// --- codex_stats ---
+// --- reverie_stats ---
 server.tool(
-  "codex_stats",
-  "Aggregate usage stats across sessions — read/write ratio, bootstrap rate, top tools, namespace activity. High-level health of the store. For per-call granular history with filters, use codex_audit.",
+  "reverie_stats",
+  "Aggregate usage stats across sessions — read/write ratio, bootstrap rate, top tools, namespace activity. High-level health of the store. For per-call granular history with filters, use reverie_audit.",
   {
     period: z.enum(["7d", "30d", "90d", "all"]).optional().describe("Time period to analyze (default: 30d)"),
     detailed: z.boolean().optional().describe("Include namespace activity, project breakdown, and top tools (default: false)"),
@@ -1615,7 +1615,7 @@ server.tool(
       lines.push(`MCP sessions:    ${stats.mcpSessions}`);
       lines.push(`MCP calls:       ${stats.mcpCalls}`);
       if (stats.mcpSessions > 0) {
-        lines.push(`  Bootstrap rate:  ${(stats.bootstrapRate * 100).toFixed(0)}% of MCP sessions call codex_context first`);
+        lines.push(`  Bootstrap rate:  ${(stats.bootstrapRate * 100).toFixed(0)}% of MCP sessions call reverie_context first`);
         lines.push(`  Write-back rate: ${(stats.writeBackRate * 100).toFixed(0)}% of MCP sessions store at least 1 entry`);
       }
       lines.push(`CLI calls:       ${stats.cliCalls}`);
@@ -1762,10 +1762,10 @@ server.tool(
   }
 );
 
-// --- codex_audit ---
+// --- reverie_audit ---
 server.tool(
-  "codex_audit",
-  "Query the per-call audit log with filters (key prefix, time period, writes-only, hits/misses, source). Per-call granular history suitable for debugging or usage forensics. For aggregated stats across the log, use codex_stats.",
+  "reverie_audit",
+  "Query the per-call audit log with filters (key prefix, time period, writes-only, hits/misses, source). Per-call granular history suitable for debugging or usage forensics. For aggregated stats across the log, use reverie_stats.",
   {
     key: z.string().optional().describe("Filter by exact key or key prefix"),
     period: z.enum(["7d", "30d", "90d", "all"]).optional().describe("Time period to query (default: 30d)"),
@@ -1839,8 +1839,8 @@ process.on('beforeExit', () => {
  * implements `roots/list`.
  */
 async function applyClientRootsOverride(): Promise<void> {
-  // CODEX_PROJECT (handled in paths.ts) takes precedence — don't override it.
-  if (process.env.CODEX_PROJECT) return;
+  // RVR_PROJECT (handled in paths.ts) takes precedence — don't override it.
+  if (process.env.RVR_PROJECT) return;
   try {
     // McpServer wraps the low-level Server. Only request roots if the client
     // advertised the capability during initialize — otherwise the request
@@ -1878,8 +1878,8 @@ async function applyClientRootsOverride(): Promise<void> {
 
 export async function startMcpServer(): Promise<void> {
   // Honor explicit project-dir hints before connect, in case the client
-  // doesn't implement roots and the launcher passed CODEX_PROJECT_DIR/--cwd.
-  const projectDir = process.env.CODEX_PROJECT_DIR
+  // doesn't implement roots and the launcher passed RVR_PROJECT_DIR/--cwd.
+  const projectDir = process.env.RVR_PROJECT_DIR
     ?? (process.argv.includes('--cwd') ? process.argv[process.argv.indexOf('--cwd') + 1] : undefined);
   if (projectDir) {
     setProjectRootOverride(projectDir);

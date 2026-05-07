@@ -43,12 +43,12 @@ function writeMissPaths(records: MissPath[]) {
 // ── MissWindowTracker ────────────────────────────────────────────────
 
 describe('MissWindowTracker', () => {
-  it('opens a window on read miss and closes as writeback on codex_set', () => {
+  it('opens a window on read miss and closes as writeback on reverie_set', () => {
     const tracker = new MissWindowTracker();
 
     // Read miss on arch namespace
     const closed1 = tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
       op: 'read', hit: false, responseSize: 0,
     });
     expect(closed1).toHaveLength(0);
@@ -56,15 +56,15 @@ describe('MissWindowTracker', () => {
 
     // Intermediate call accumulates
     const closed2 = tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'files', key: 'files.entry',
+      session: 's1', tool: 'reverie_get', namespace: 'files', key: 'files.entry',
       op: 'read', hit: false, responseSize: 500,
     });
     expect(closed2).toHaveLength(0);
     expect(tracker.openCount).toBe(2); // two windows now
 
-    // codex_set to arch namespace closes the arch window as writeback
+    // reverie_set to arch namespace closes the arch window as writeback
     const closed3 = tracker.onToolCall({
-      session: 's1', tool: 'codex_set', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_set', namespace: 'arch', key: 'arch.mcp',
       op: 'write', hit: undefined, responseSize: 200,
     });
     expect(closed3).toHaveLength(1);
@@ -81,18 +81,18 @@ describe('MissWindowTracker', () => {
 
     // Two misses in same session
     tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
       op: 'read', hit: false, responseSize: 0,
     });
     tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'files', key: 'files.entry',
+      session: 's1', tool: 'reverie_get', namespace: 'files', key: 'files.entry',
       op: 'read', hit: false, responseSize: 0,
     });
     expect(tracker.openCount).toBe(2);
 
     // A hit closes all windows for the session
     const closed = tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'context', key: 'context.ci',
+      session: 's1', tool: 'reverie_get', namespace: 'context', key: 'context.ci',
       op: 'read', hit: true, responseSize: 300,
     });
     expect(closed).toHaveLength(2);
@@ -104,18 +104,18 @@ describe('MissWindowTracker', () => {
     const tracker = new MissWindowTracker();
 
     tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
       op: 'read', hit: false, responseSize: 0,
     });
     tracker.onToolCall({
-      session: 's2', tool: 'codex_get', namespace: 'arch', key: 'arch.mcp',
+      session: 's2', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
       op: 'read', hit: false, responseSize: 0,
     });
     expect(tracker.openCount).toBe(2);
 
     // Hit in s1 only closes s1's window
     const closed = tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
       op: 'read', hit: true, responseSize: 100,
     });
     expect(closed).toHaveLength(1);
@@ -127,11 +127,11 @@ describe('MissWindowTracker', () => {
     const tracker = new MissWindowTracker();
 
     tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
       op: 'read', hit: false, responseSize: 0,
     });
     tracker.onToolCall({
-      session: 's1', tool: 'codex_find', namespace: 'arch', key: 'arch.store',
+      session: 's1', tool: 'reverie_find', namespace: 'arch', key: 'arch.store',
       op: 'read', hit: false, responseSize: 0,
     });
     // Should still be 1 window, not 2
@@ -142,27 +142,27 @@ describe('MissWindowTracker', () => {
     const tracker = new MissWindowTracker();
 
     tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
       op: 'read', hit: false, responseSize: 0,
     });
 
     // Three exploration calls
     tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'files', key: 'files.x',
+      session: 's1', tool: 'reverie_get', namespace: 'files', key: 'files.x',
       op: 'read', hit: false, responseSize: 100,
     });
     tracker.onToolCall({
-      session: 's1', tool: 'codex_find', namespace: '*', key: '',
+      session: 's1', tool: 'reverie_find', namespace: '*', key: '',
       op: 'read', hit: false, responseSize: 200,
     });
     tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'context', key: 'context.y',
+      session: 's1', tool: 'reverie_get', namespace: 'context', key: 'context.y',
       op: 'read', hit: false, responseSize: 300,
     });
 
     // Close arch window via writeback
     const closed = tracker.onToolCall({
-      session: 's1', tool: 'codex_set', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_set', namespace: 'arch', key: 'arch.mcp',
       op: 'write', hit: undefined, responseSize: 50,
     });
     const archPath = closed.find(c => c.namespace === 'arch');
@@ -175,11 +175,11 @@ describe('MissWindowTracker', () => {
     const tracker = new MissWindowTracker();
 
     tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
       op: 'read', hit: false, responseSize: 0,
     });
     tracker.onToolCall({
-      session: 's2', tool: 'codex_get', namespace: 'files', key: 'files.entry',
+      session: 's2', tool: 'reverie_get', namespace: 'files', key: 'files.entry',
       op: 'read', hit: false, responseSize: 0,
     });
     expect(tracker.openCount).toBe(2);
@@ -194,7 +194,7 @@ describe('MissWindowTracker', () => {
     const tracker = new MissWindowTracker();
 
     tracker.onToolCall({
-      session: 's1', tool: 'codex_get', namespace: 'arch', key: 'arch.mcp',
+      session: 's1', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
       op: 'read', hit: false, responseSize: 0, agent: 'claude-code',
     });
 
@@ -206,7 +206,7 @@ describe('MissWindowTracker', () => {
     const tracker = new MissWindowTracker();
     expect(tracker.flushAll()).toHaveLength(0);
     expect(tracker.onToolCall({
-      session: 's1', tool: 'codex_set', namespace: 'arch', key: 'arch.x',
+      session: 's1', tool: 'reverie_set', namespace: 'arch', key: 'arch.x',
       op: 'write', hit: undefined, responseSize: 50,
     })).toHaveLength(0);
   });

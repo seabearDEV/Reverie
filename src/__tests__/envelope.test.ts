@@ -44,7 +44,7 @@ describe('computePayloadHash', () => {
 });
 
 describe('wrapExport', () => {
-  it('wraps payload in $codexcli envelope with computed sha256', () => {
+  it('wraps payload in $reverie envelope with computed sha256', () => {
     const wrapped = wrapExport({
       type: 'entries',
       scope: 'project',
@@ -52,13 +52,13 @@ describe('wrapExport', () => {
       payload: { entries: { a: '1' } },
       version: '1.12.2',
     });
-    expect(wrapped.$codexcli).toMatchObject({
+    expect(wrapped.$reverie).toMatchObject({
       type: 'entries',
       scope: 'project',
       includesEncrypted: false,
       version: '1.12.2',
     });
-    const meta = wrapped.$codexcli as EnvelopeMeta;
+    const meta = wrapped.$reverie as EnvelopeMeta;
     expect(meta.sha256).toHaveLength(64);
     expect(meta.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(wrapped.entries).toEqual({ a: '1' });
@@ -142,17 +142,17 @@ describe('tryUnwrapImport', () => {
   });
 
   it('rejects a malformed envelope (bad type field)', () => {
-    const bad = { $codexcli: { type: 'bogus', version: '1.0.0', scope: 'project' }, entries: {} };
+    const bad = { $reverie: { type: 'bogus', version: '1.0.0', scope: 'project' }, entries: {} };
     expect(() => tryUnwrapImport(bad, currentVersion)).toThrow(/type must be/);
   });
 
   it('rejects a malformed envelope (bad scope field)', () => {
-    const bad = { $codexcli: { type: 'entries', version: '1.0.0', scope: 'bogus' }, entries: {} };
+    const bad = { $reverie: { type: 'entries', version: '1.0.0', scope: 'bogus' }, entries: {} };
     expect(() => tryUnwrapImport(bad, currentVersion)).toThrow(/scope must be/);
   });
 
-  it('treats a non-object $codexcli field as malformed', () => {
-    const bad = { $codexcli: 'not an object', entries: {} };
+  it('treats a non-object $reverie field as malformed', () => {
+    const bad = { $reverie: 'not an object', entries: {} };
     expect(() => tryUnwrapImport(bad, currentVersion)).toThrow(/envelope/);
   });
 

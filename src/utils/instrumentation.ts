@@ -11,10 +11,10 @@ import { ProjectResolutionError } from '../projectResolution';
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
 /** Tools that should not be audited (observability-only commands) */
-export const SKIP_AUDIT = new Set(['codex_stats', 'codex_audit']);
+export const SKIP_AUDIT = new Set(['reverie_stats', 'reverie_audit']);
 
 /** Tools that operate on the entire store (before/after = entry count) */
-export const BULK_OPS = new Set(['codex_import', 'codex_reset']);
+export const BULK_OPS = new Set(['reverie_import', 'reverie_reset']);
 
 // ── Shared helpers ───────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ export function captureValue(tool: string, key: string | undefined, scope: Scope
   if (!key || BULK_OPS.has(tool)) return undefined;
   try {
     // Alias operations: capture the alias target by alias name
-    if (tool === 'codex_alias_set' || tool === 'codex_alias_remove') {
+    if (tool === 'reverie_alias_set' || tool === 'reverie_alias_remove') {
       const aliases = loadAliases(scope);
       return aliases[key];
     }
@@ -42,13 +42,13 @@ export function captureValue(tool: string, key: string | undefined, scope: Scope
 // ── CLI Instrumentation Wrapper ──────────────────────────────────────
 
 export interface CliToolContext {
-  tool: string;                           // e.g. 'codex_set', 'codex_get'
+  tool: string;                           // e.g. 'reverie_set', 'reverie_get'
   key?: string | undefined;               // alias-resolved key
   rawKey?: string | undefined;            // original key before alias resolution
   scope?: 'project' | 'global' | undefined;  // undefined means 'auto'
   params?: Record<string, unknown> | undefined;
   writeValue?: string | undefined;        // explicit after-value for set operations
-  copySourceKey?: string | undefined;     // for codex_copy: source key to pre-capture
+  copySourceKey?: string | undefined;     // for reverie_copy: source key to pre-capture
 }
 
 /**
@@ -71,13 +71,13 @@ export async function withCliInstrumentation<T>(
   const isWrite = op === 'write' || op === 'exec' || op === 'remove';
   const scope: Scope = ctx.scope ?? 'auto';
 
-  // Alias resolution tracking. codex_copy is special-cased: its context
+  // Alias resolution tracking. reverie_copy is special-cased: its context
   // carries rawKey=source (user input) and copySourceKey=resolvedSource, so
   // the generic rawKey-vs-key check (which compares source to dest) would
   // always be trivially true — always setting aliasResolved to dest,
   // regardless of whether source was actually an alias. #94.
   let aliasResolved: string | undefined;
-  if (ctx.tool === 'codex_copy') {
+  if (ctx.tool === 'reverie_copy') {
     if (ctx.rawKey && ctx.copySourceKey && ctx.rawKey !== ctx.copySourceKey) {
       aliasResolved = ctx.copySourceKey;
     }
@@ -91,7 +91,7 @@ export async function withCliInstrumentation<T>(
   if (isWrite && !BULK_OPS.has(ctx.tool)) {
     before = captureValue(ctx.tool, ctx.key, scope);
     // Pre-capture source value for copy
-    if (ctx.tool === 'codex_copy' && ctx.copySourceKey) {
+    if (ctx.tool === 'reverie_copy' && ctx.copySourceKey) {
       try {
         const resolved = resolveKey(ctx.copySourceKey, scope);
         const val = getValue(resolved, scope);
@@ -161,15 +161,15 @@ export async function withCliInstrumentation<T>(
     // After-value derivation (same strategy as MCP — derive from params, not re-read)
     let after: string | undefined;
     if (isWrite && success && !BULK_OPS.has(ctx.tool)) {
-      if (ctx.tool === 'codex_set' || ctx.tool === 'codex_config_set') {
+      if (ctx.tool === 'reverie_set' || ctx.tool === 'reverie_config_set') {
         after = sanitizeValue(ctx.writeValue);
-      } else if (ctx.tool === 'codex_copy') {
+      } else if (ctx.tool === 'reverie_copy') {
         after = copySourceValue;
-      } else if (ctx.tool === 'codex_rename') {
+      } else if (ctx.tool === 'reverie_rename') {
         after = before; // Value preserved on rename
-      } else if (ctx.tool === 'codex_remove' || ctx.tool === 'codex_alias_remove') {
+      } else if (ctx.tool === 'reverie_remove' || ctx.tool === 'reverie_alias_remove') {
         after = undefined; // Deleted
-      } else if (ctx.tool === 'codex_alias_set') {
+      } else if (ctx.tool === 'reverie_alias_set') {
         after = ctx.params?.path as string | undefined ?? ctx.params?.target as string | undefined;
       } else {
         // Fallback: re-read
@@ -204,8 +204,8 @@ export async function withCliInstrumentation<T>(
     }
 
     // Redundant write detection
-    const isReadOnlyWrite = ctx.tool === 'codex_rename' ||
-      (ctx.tool === 'codex_run' && ctx.params?.dry === true);
+    const isReadOnlyWrite = ctx.tool === 'reverie_rename' ||
+      (ctx.tool === 'reverie_run' && ctx.params?.dry === true);
     const redundant = isWrite && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after
       ? true
       : undefined;

@@ -1111,7 +1111,7 @@ describe('Commands', () => {
       expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
       const writeCall = (fs.writeFileSync as Mock).mock.calls[0];
       const parsed = JSON.parse(writeCall[1] as string);
-      expect(parsed.$codexcli.type).toBe('all');
+      expect(parsed.$reverie.type).toBe('all');
       expect(parsed.entries).toBeDefined();
       expect(parsed.aliases).toBeDefined();
       expect(parsed.confirm).toBeDefined();

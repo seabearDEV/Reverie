@@ -11,9 +11,9 @@ import type { Scope } from '../store';
  * Global scope: copies the global store dir + legacy sidecars into
  * `<dataDir>/.backups/<label>-<ts>/`.
  *
- * Project scope: copies the project `.codexcli/` dir into
- * `<projectRoot>/.codexcli.backups/<label>-<ts>/`. The backup lives outside
- * the managed `.codexcli/` dir so it doesn't pollute the store or trip the
+ * Project scope: copies the project `.reverie/` dir into
+ * `<projectRoot>/.reverie.backups/<label>-<ts>/`. The backup lives outside
+ * the managed `.reverie/` dir so it doesn't pollute the store or trip the
  * hand-edit warning contract (conventions.editSurface).
  *
  * Returns the backup subdir path on success, or null if there was nothing to
@@ -40,7 +40,7 @@ function backupProjectStore(label: string): string | null {
   }
 
   const projectRoot = path.dirname(projectStoreDir);
-  const backupDir = path.join(projectRoot, '.codexcli.backups');
+  const backupDir = path.join(projectRoot, '.reverie.backups');
 
   if (!fs.existsSync(backupDir)) {
     fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
@@ -49,7 +49,7 @@ function backupProjectStore(label: string): string | null {
   const backupSubDir = path.join(backupDir, `${label}-${timestamp()}`);
   fs.mkdirSync(backupSubDir, { mode: 0o700 });
 
-  fs.cpSync(projectStoreDir, path.join(backupSubDir, '.codexcli'), { recursive: true });
+  fs.cpSync(projectStoreDir, path.join(backupSubDir, '.reverie'), { recursive: true });
 
   debug(`Auto-backup created: ${backupSubDir} (project store)`);
   rotateBackups(backupDir);

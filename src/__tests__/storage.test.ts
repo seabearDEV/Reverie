@@ -219,7 +219,7 @@ describe('Storage', () => {
   });
 
   describe('import validators (round-2 regression)', () => {
-    // Pre-fix, codex_import / rvr import would silently drop entries with
+    // Pre-fix, reverie_import / rvr import would silently drop entries with
     // prototype-pollution names, leading dots, or empty segments via
     // expandFlatKeys → isSafeKey, then report "merged successfully" with
     // nothing actually persisted. These validators run before the save
@@ -230,7 +230,7 @@ describe('Storage', () => {
     // an own __proto__ property (the literal triggers the prototype setter,
     // not property assignment), but JSON.parse('{"__proto__":"evil"}') DOES
     // create an own __proto__ key. These tests use JSON.parse to mirror what
-    // actually arrives from codex_import / rvr import.
+    // actually arrives from reverie_import / rvr import.
 
     describe('validateImportEntries', () => {
       it('passes for an all-safe entries object', () => {

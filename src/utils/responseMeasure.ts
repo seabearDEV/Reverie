@@ -25,7 +25,7 @@
  * Why this matters: prior to v1.11.x, the CLI wrapper computed
  * `responseSize` from the `after` value, which was only set for writes —
  * so every CLI **read** silently logged `responseSize: undefined`, which in
- * turn meant `codex_stats` undercounted the delivery cost of CLI traffic.
+ * turn meant `reverie_stats` undercounted the delivery cost of CLI traffic.
  * MCP reads were measured correctly via `extractResponseText(result)`. This
  * module unifies the semantic so both CLI and MCP measure "bytes the user
  * actually received" the same way.

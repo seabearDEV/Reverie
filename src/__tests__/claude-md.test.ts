@@ -71,7 +71,7 @@ describe('generateClaudeMd', () => {
 describe('CLAUDE_MD_TEMPLATE', () => {
   it('contains Bootstrap section', () => {
     expect(CLAUDE_MD_TEMPLATE).toContain('## Bootstrap');
-    expect(CLAUDE_MD_TEMPLATE).toContain('codex_context');
+    expect(CLAUDE_MD_TEMPLATE).toContain('reverie_context');
   });
 
   it('contains MCP tools preference', () => {
@@ -80,12 +80,12 @@ describe('CLAUDE_MD_TEMPLATE', () => {
 
   it('contains Before exploring code section', () => {
     expect(CLAUDE_MD_TEMPLATE).toContain('## Before exploring code');
-    expect(CLAUDE_MD_TEMPLATE).toContain('codex_get');
+    expect(CLAUDE_MD_TEMPLATE).toContain('reverie_get');
   });
 
   it('contains Write back section', () => {
     expect(CLAUDE_MD_TEMPLATE).toContain('## Write back');
-    expect(CLAUDE_MD_TEMPLATE).toContain('codex_set');
+    expect(CLAUDE_MD_TEMPLATE).toContain('reverie_set');
   });
 
   it('contains Do not store section', () => {

@@ -29,7 +29,7 @@ export function showInfo(): void {
 
   console.log();
 
-  const dataSource = isDataDirectoryFromEnv() ? color.gray(' (CODEX_DATA_DIR)') : '';
+  const dataSource = isDataDirectoryFromEnv() ? color.gray(' (RVR_DATA_DIR)') : '';
   label('Data', getGlobalStoreDirPath() + dataSource);
   label('Config', getConfigFilePath());
   const projectFile = findProjectFile();

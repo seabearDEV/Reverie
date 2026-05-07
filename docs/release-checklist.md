@@ -98,17 +98,17 @@ the deprecation/error fires.
 - [ ] `rvr stats -d` errors with "unknown option" (moved to `-D`)
 - [ ] `rvr stats -D` works (the new short for `--detailed`)
 - [ ] `rvr stats -j` works (newly-added consistency short for `--json`)
-- [ ] `CODEX_DATA_DIR=./relative rvr info` errors with "must be an absolute path"
-- [ ] `CODEX_DATA_DIR=/tmp/codex-test rvr info` shows `(CODEX_DATA_DIR)` annotation on the Data line
+- [ ] `RVR_DATA_DIR=./relative rvr info` errors with "must be an absolute path"
+- [ ] `RVR_DATA_DIR=/tmp/codex-test rvr info` shows `(RVR_DATA_DIR)` annotation on the Data line
 - [ ] `rvr get -a` and `rvr rename -a foo bar` and `rvr remove -a foo` still work (legacy back-compat) but don't appear in `rvr get --help`
 
 #### v1.14.0
 
-- [ ] `cd /tmp && CODEX_NO_PROJECT=1 rvr set foo bar` refuses with `PROJECT_UNRESOLVED`-shaped error including resolver-chain diagnostic and recovery actions (#99)
-- [ ] `CODEX_BOOTSTRAP_MAX_BYTES=500 rvr context -p` (in a populated repo) prepends a `[trimmed: …]` notice naming `files.*` / `arch.*` / `context.*` with byte counts; if even after shedding it's still over budget, prepends a second `[warning: codex_context payload still exceeds budget …]` notice with the expanded never-shed list (#100)
-- [ ] `CODEX_BOOTSTRAP_MAX_BYTES=500 rvr context -p --tier full` (in the same repo) bypasses the shed entirely — no trimmed notice, full payload renders (#100)
+- [ ] `cd /tmp && RVR_NO_PROJECT=1 rvr set foo bar` refuses with `PROJECT_UNRESOLVED`-shaped error including resolver-chain diagnostic and recovery actions (#99)
+- [ ] `RVR_BOOTSTRAP_MAX_BYTES=500 rvr context -p` (in a populated repo) prepends a `[trimmed: …]` notice naming `files.*` / `arch.*` / `context.*` with byte counts; if even after shedding it's still over budget, prepends a second `[warning: reverie_context payload still exceeds budget …]` notice with the expanded never-shed list (#100)
+- [ ] `RVR_BOOTSTRAP_MAX_BYTES=500 rvr context -p --tier full` (in the same repo) bypasses the shed entirely — no trimmed notice, full payload renders (#100)
 - [ ] `rvr config set bootstrap_max_response_bytes 102400` accepts the value; `rvr config get bootstrap_max_response_bytes` returns it; an invalid value (negative, non-integer) is rejected with a clear error
-- [ ] (manual via MCP client) Three `codex_set` calls to the same key within 30 minutes — third response includes a `warning:` line naming the count and time-since-first-write (#101)
+- [ ] (manual via MCP client) Three `reverie_set` calls to the same key within 30 minutes — third response includes a `warning:` line naming the count and time-since-first-write (#101)
 
 ## Rollback (if a release goes wrong)
 

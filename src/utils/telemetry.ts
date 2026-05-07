@@ -28,16 +28,16 @@ export interface TelemetryEntry {
    *  have refused under `scope: 'auto'` because project resolution failed.
    *  Lets us measure how often the explicit-scope escape hatch is used (#99). */
   rescuedByExplicitGlobal?: boolean | undefined;
-  /** codex_context only: true when the response was trimmed to fit the
+  /** reverie_context only: true when the response was trimmed to fit the
    *  bootstrap_max_response_bytes budget (#100). */
   degraded?: boolean | undefined;
-  /** codex_context only: priority labels of namespaces shed when degraded
+  /** reverie_context only: priority labels of namespaces shed when degraded
    *  fired (#100). E.g. `["files.*", "arch.*"]`. */
   shedNamespaces?: string[] | undefined;
-  /** codex_set only: true when the same key was written ≥3 times in this
+  /** reverie_set only: true when the same key was written ≥3 times in this
    *  session within a 30-min window (#101). */
   writeAmpWarning?: boolean | undefined;
-  /** codex_set only: count of in-window writes when writeAmpWarning fired (#101). */
+  /** reverie_set only: count of in-window writes when writeAmpWarning fired (#101). */
   writeAmpCount?: number | undefined;
 }
 
@@ -186,8 +186,8 @@ export class MissWindowTracker {
       }
     }
 
-    // 3. Close as writeback: codex_set to same session+namespace
-    if (params.tool === 'codex_set') {
+    // 3. Close as writeback: reverie_set to same session+namespace
+    if (params.tool === 'reverie_set') {
       const wk = `${params.session}:${params.namespace}`;
       if (this.windows.has(wk)) {
         closed.push(this.closeWindow(wk, 'writeback', now));
@@ -314,33 +314,33 @@ export function getExplorationCost(namespace: string, missPaths?: MissPath[]): E
  */
 export function classifyOp(tool: string): TelemetryEntry['op'] {
   switch (tool) {
-    case 'codex_set':
-    case 'codex_copy':
-    case 'codex_rename':
-    case 'codex_import':
-    case 'codex_alias_set':
-    case 'codex_config_set':
-    case 'codex_confirm_set':
+    case 'reverie_set':
+    case 'reverie_copy':
+    case 'reverie_rename':
+    case 'reverie_import':
+    case 'reverie_alias_set':
+    case 'reverie_config_set':
+    case 'reverie_confirm_set':
       return 'write';
-    case 'codex_remove':
-    case 'codex_alias_remove':
-    case 'codex_confirm_remove':
-    case 'codex_reset':
+    case 'reverie_remove':
+    case 'reverie_alias_remove':
+    case 'reverie_confirm_remove':
+    case 'reverie_reset':
       return 'remove';
-    case 'codex_run':
+    case 'reverie_run':
       return 'exec';
-    case 'codex_context':
-    case 'codex_get':
-    case 'codex_find':
-    case 'codex_export':
-    case 'codex_alias_list':
-    case 'codex_config_get':
-    case 'codex_stale':
-    case 'codex_lint':
-    case 'codex_topology':
-    case 'codex_confirm_list':
+    case 'reverie_context':
+    case 'reverie_get':
+    case 'reverie_find':
+    case 'reverie_export':
+    case 'reverie_alias_list':
+    case 'reverie_config_get':
+    case 'reverie_stale':
+    case 'reverie_lint':
+    case 'reverie_topology':
+    case 'reverie_confirm_list':
       return 'read';
-    case 'codex_init':
+    case 'reverie_init':
       return 'write';
     default:
       return 'meta';
@@ -384,7 +384,7 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     ns: extractNamespace(key),
     src: source,
     scope,
-    agent: process.env.CODEX_AGENT_NAME ?? undefined,
+    agent: process.env.RVR_AGENT_NAME ?? undefined,
     ...extras,
     project,
   };
@@ -425,7 +425,7 @@ let cachedTelemetryEntries: TelemetryEntry[] = [];
 let cachedTelemetrySize = 0;
 let cachedTelemetryPath = '';
 
-/** Reset the in-memory telemetry cache. Used by tests that swap CODEX_DATA_DIR. */
+/** Reset the in-memory telemetry cache. Used by tests that swap RVR_DATA_DIR. */
 export function clearTelemetryCache(): void {
   cachedTelemetryEntries = [];
   cachedTelemetrySize = 0;
@@ -580,7 +580,7 @@ export function computeStats(periodDays = 0): TelemetryStats {
   let bootstrapped = 0;
   for (const [, calls] of mcpSessionData) {
     const sorted = [...calls].sort((a, b) => a.ts - b.ts);
-    if (sorted[0]?.tool === 'codex_context') bootstrapped++;
+    if (sorted[0]?.tool === 'reverie_context') bootstrapped++;
   }
 
   let wroteBack = 0;
@@ -597,10 +597,10 @@ export function computeStats(periodDays = 0): TelemetryStats {
   // Filter noise from the namespace dashboard:
   //   - failed operations (e.g. rejected validator writes like `_aliases`,
   //     `flog/`, `__proto__`) should not show up as "namespace activity"
-  //   - codex_find keys are search terms (regex, substring) — they're not
+  //   - reverie_find keys are search terms (regex, substring) — they're not
   //     namespaces, but extractNamespace would happily slice them on `.`
   //     and produce phantom namespaces like `^arch\` or `flog/`
-  //   - codex_alias_set / codex_alias_remove keys are alias names, not entry
+  //   - reverie_alias_set / reverie_alias_remove keys are alias names, not entry
   //     namespaces. Counting them produced 1-write "namespaces" like
   //     `flog_test_alias` or `chk` in the dashboard.
   // Older telemetry entries without `success` are kept for backward compat.
@@ -616,8 +616,8 @@ export function computeStats(periodDays = 0): TelemetryStats {
   for (const e of entries) {
     if (e.ns === '*') continue;
     if (e.success === false) continue;
-    if (e.tool === 'codex_find') continue;
-    if (e.tool === 'codex_alias_set' || e.tool === 'codex_alias_remove') continue;
+    if (e.tool === 'reverie_find') continue;
+    if (e.tool === 'reverie_alias_set' || e.tool === 'reverie_alias_remove') continue;
     if (!nsCoverage[e.ns]) nsCoverage[e.ns] = { reads: 0, writes: 0, lastWrite: undefined };
     if (e.op === 'read') nsCoverage[e.ns].reads++;
     if (e.op === 'write') {
@@ -700,7 +700,7 @@ export function computeStats(periodDays = 0): TelemetryStats {
   );
   const estimatedTokensSavedBootstrap = Math.round(
     entries
-      .filter(e => e.tool === 'codex_context' && e.hit === true && e.responseSize !== undefined)
+      .filter(e => e.tool === 'reverie_context' && e.hit === true && e.responseSize !== undefined)
       .reduce((sum, e) => sum + e.responseSize!, 0) / 4
   );
 
@@ -715,7 +715,7 @@ export function computeStats(periodDays = 0): TelemetryStats {
 
   const readHits = entries.filter(e => e.op === 'read' && e.hit === true);
   for (const e of readHits) {
-    if (e.tool === 'codex_context') {
+    if (e.tool === 'reverie_context') {
       // Bootstrap: approximate entry count from response size, each avoids ~1 lookup
       const deliveryCost = (e.responseSize ?? 0) / 4;
       const approxEntries = Math.round((e.responseSize ?? 0) / 80);

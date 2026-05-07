@@ -9,12 +9,12 @@ import { readDirectoryStore } from './helpers/readStoreState';
 
 let tmpDir: string;
 
-// v1.10.0: `rvr init` creates a `.codexcli/` directory, not a `.codexcli.json`
+// v1.10.0: `rvr init` creates a `.reverie/` directory, not a `.codexcli.json`
 // file. These helpers read the new layout and reconstitute the legacy shape.
 const readProjectData = (dir: string) =>
-  readDirectoryStore(path.join(dir, '.codexcli'));
+  readDirectoryStore(path.join(dir, '.reverie'));
 
-const projectStorePath = (dir: string) => path.join(dir, '.codexcli');
+const projectStorePath = (dir: string) => path.join(dir, '.reverie');
 
 // Resolve the CLI path relative to the project root (two levels up from __tests__)
 const cliPath = path.resolve(__dirname, '..', '..', 'dist', 'index.js');
@@ -64,15 +64,15 @@ describe('rvr init — full flow', () => {
     run('init');
     const claudeMd = fs.readFileSync(path.join(tmpDir, 'CLAUDE.md'), 'utf8');
     expect(claudeMd).toContain('## Bootstrap');
-    expect(claudeMd).toContain('codex_context');
-    expect(claudeMd).toContain('codex_set');
+    expect(claudeMd).toContain('reverie_context');
+    expect(claudeMd).toContain('reverie_set');
   });
 
   it('seeds conventions.persistence', () => {
     run('init');
     const data = readProjectData(tmpDir);
     const persistence = (data.entries as any).conventions.persistence;
-    expect(persistence).toContain('.codexcli');
+    expect(persistence).toContain('.reverie');
     expect(persistence).toContain('CLAUDE.md');
     expect(persistence).toContain('MEMORY.md');
   });

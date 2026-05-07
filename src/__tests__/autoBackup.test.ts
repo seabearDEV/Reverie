@@ -87,7 +87,7 @@ describe('createAutoBackup — project scope', () => {
 
   beforeEach(() => {
     projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-project-'));
-    projectStoreDir = path.join(projectRoot, '.codexcli');
+    projectStoreDir = path.join(projectRoot, '.reverie');
     fs.mkdirSync(projectStoreDir, { mode: 0o700 });
     fs.writeFileSync(path.join(projectStoreDir, 'foo.json'), '{"value":"bar"}');
     fs.writeFileSync(path.join(projectStoreDir, '_aliases.json'), '{"a":"foo"}');
@@ -97,13 +97,13 @@ describe('createAutoBackup — project scope', () => {
     fs.rmSync(projectRoot, { recursive: true, force: true });
   });
 
-  it('copies the project .codexcli/ dir into <projectRoot>/.codexcli.backups/', () => {
+  it('copies the project .codexcli/ dir into <projectRoot>/.reverie.backups/', () => {
     const result = createAutoBackup('pre-reset', 'project');
 
     expect(result).toBeTruthy();
-    expect(result!.startsWith(path.join(projectRoot, '.codexcli.backups'))).toBe(true);
-    expect(fs.existsSync(path.join(result!, '.codexcli', 'foo.json'))).toBe(true);
-    expect(fs.existsSync(path.join(result!, '.codexcli', '_aliases.json'))).toBe(true);
+    expect(result!.startsWith(path.join(projectRoot, '.reverie.backups'))).toBe(true);
+    expect(fs.existsSync(path.join(result!, '.reverie', 'foo.json'))).toBe(true);
+    expect(fs.existsSync(path.join(result!, '.reverie', '_aliases.json'))).toBe(true);
   });
 
   it('does not touch the global .backups/ dir', () => {
@@ -120,11 +120,11 @@ describe('createAutoBackup — project scope', () => {
   it('auto-resolves to project when scope is omitted and project store exists', () => {
     const result = createAutoBackup('pre-import');
     expect(result).toBeTruthy();
-    expect(result!.startsWith(path.join(projectRoot, '.codexcli.backups'))).toBe(true);
+    expect(result!.startsWith(path.join(projectRoot, '.reverie.backups'))).toBe(true);
   });
 
   it('throws when the backup write fails', () => {
-    // Make the project root read-only so mkdir of .codexcli.backups/ fails.
+    // Make the project root read-only so mkdir of .reverie.backups/ fails.
     // fs.cpSync/mkdirSync will throw EACCES or EPERM.
     fs.chmodSync(projectRoot, 0o500);
     try {

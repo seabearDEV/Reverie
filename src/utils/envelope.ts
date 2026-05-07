@@ -11,7 +11,8 @@ export interface EnvelopeMeta {
   sha256: string;
 }
 
-const ENVELOPE_KEY = '$codexcli';
+const ENVELOPE_KEY = '$reverie';
+const LEGACY_ENVELOPE_KEY = '$codexcli';
 
 const SECTIONS_FOR_TYPE: Record<EnvelopeType, readonly string[]> = {
   entries: ['entries'],
@@ -71,36 +72,38 @@ export interface UnwrapResult {
 /**
  * Detect envelope vs. bare shape, verify integrity, extract payload.
  *
- * - If `$codexcli` is present, validate the envelope, verify sha256, build
- *   the payload from the sections named by `envelope.type`, and collect any
- *   warnings (e.g. future version).
- * - If `$codexcli` is absent, treat the whole object as the bare payload —
+ * - If `$reverie` (canonical) or `$codexcli` (legacy, pre-v1.0.0-beta.1) is
+ *   present, validate the envelope, verify sha256, build the payload from
+ *   the sections named by `envelope.type`, and collect any warnings (e.g.
+ *   future version).
+ * - If neither key is present, treat the whole object as the bare payload —
  *   the caller's existing section-detection logic takes over.
  *
  * Throws on shape errors or sha256 mismatch. The caller surfaces warnings.
  */
 export function tryUnwrapImport(obj: Record<string, unknown>, currentVersion: string): UnwrapResult {
-  const raw = obj[ENVELOPE_KEY];
+  const raw = obj[ENVELOPE_KEY] ?? obj[LEGACY_ENVELOPE_KEY];
+  const usedKey = obj[ENVELOPE_KEY] !== undefined ? ENVELOPE_KEY : LEGACY_ENVELOPE_KEY;
   if (raw === undefined) {
     return { envelope: null, payload: obj, warnings: [] };
   }
 
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(`Malformed ${ENVELOPE_KEY} envelope: expected object.`);
+    throw new Error(`Malformed ${usedKey} envelope: expected object.`);
   }
   const env = raw as Record<string, unknown>;
 
   const type = env.type;
   if (type !== 'entries' && type !== 'aliases' && type !== 'confirm' && type !== 'all') {
-    throw new Error(`Malformed ${ENVELOPE_KEY} envelope: type must be entries/aliases/confirm/all (got ${JSON.stringify(type)}).`);
+    throw new Error(`Malformed ${usedKey} envelope: type must be entries/aliases/confirm/all (got ${JSON.stringify(type)}).`);
   }
   const version = env.version;
   if (typeof version !== 'string') {
-    throw new Error(`Malformed ${ENVELOPE_KEY} envelope: version must be a string.`);
+    throw new Error(`Malformed ${usedKey} envelope: version must be a string.`);
   }
   const scope = env.scope;
   if (scope !== 'project' && scope !== 'global') {
-    throw new Error(`Malformed ${ENVELOPE_KEY} envelope: scope must be project or global (got ${JSON.stringify(scope)}).`);
+    throw new Error(`Malformed ${usedKey} envelope: scope must be project or global (got ${JSON.stringify(scope)}).`);
   }
   const exportedAt = typeof env.exportedAt === 'string' ? env.exportedAt : '';
   const includesEncrypted = env.includesEncrypted === true;

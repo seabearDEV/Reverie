@@ -1,8 +1,8 @@
 /**
  * Project-resolution guard for write paths (#99).
  *
- * When MCP project resolution fails (no CODEX_PROJECT, no MCP roots, cwd
- * walk-up finds no `.codexcli/`) and the caller did not request an explicit
+ * When MCP project resolution fails (no RVR_PROJECT, no MCP roots, cwd
+ * walk-up finds no `.reverie/`) and the caller did not request an explicit
  * scope, write tools previously fell through silently to the user's global
  * store. This module exposes the chokepoint that turns that silent
  * fallthrough into a structured refusal: callers wrap their resolution
@@ -76,13 +76,13 @@ function buildMessage(d: ResolverDiagnostic): string {
   lines.push('Project resolution failed; refusing to write under scope:auto.');
   lines.push('');
   lines.push('Resolver tried (in order):');
-  lines.push(`  1. CODEX_NO_PROJECT env: ${d.codexNoProject ? 'set (resolution disabled)' : 'not set'}`);
+  lines.push(`  1. RVR_NO_PROJECT env: ${d.rvrNoProject ? 'set (resolution disabled)' : 'not set'}`);
 
-  if (d.codexProject !== undefined) {
-    const tail = d.codexProjectFailed ? ' — DID NOT RESOLVE TO A .codexcli DIRECTORY OR .codexcli.json FILE' : '';
-    lines.push(`  2. CODEX_PROJECT env: ${d.codexProject}${tail}`);
+  if (d.rvrProject !== undefined) {
+    const tail = d.rvrProjectFailed ? ' — DID NOT RESOLVE TO A .reverie DIRECTORY OR LEGACY .codexcli.json FILE' : '';
+    lines.push(`  2. RVR_PROJECT env: ${d.rvrProject}${tail}`);
   } else {
-    lines.push('  2. CODEX_PROJECT env: not set');
+    lines.push('  2. RVR_PROJECT env: not set');
   }
 
   if (d.rootOverride !== undefined) {
@@ -94,9 +94,9 @@ function buildMessage(d: ResolverDiagnostic): string {
   if (d.startedFrom) {
     let tail = '';
     if (d.walkReachedRoot) {
-      tail = ': reached filesystem root without finding .codexcli/ or .codexcli.json';
+      tail = ': reached filesystem root without finding .reverie/ or .codexcli.json';
     } else if (d.walkStoppedAtGlobalDir) {
-      tail = ': stopped at the global codex data directory before finding a project store';
+      tail = ': stopped at the Reverie global data directory before finding a project store';
     }
     lines.push(`  4. Walk up from ${d.startedFrom}${tail}`);
   } else {
@@ -105,11 +105,11 @@ function buildMessage(d: ResolverDiagnostic): string {
 
   lines.push('');
   lines.push('Choose one to proceed:');
-  if (d.codexNoProject) {
-    lines.push('  - unset CODEX_NO_PROJECT and retry, or run `codex_init` (or `rvr init`) once');
+  if (d.rvrNoProject) {
+    lines.push('  - unset RVR_NO_PROJECT and retry, or run `reverie_init` (or `rvr init`) once');
     lines.push('    the env is cleared');
   } else {
-    lines.push('  - run `codex_init` (or `rvr init`) here to create a project store');
+    lines.push('  - run `reverie_init` (or `rvr init`) here to create a project store');
   }
   lines.push('  - retry with explicit scope:"global" (MCP) or --scope global (CLI) for an');
   lines.push('    intentional global-store write');

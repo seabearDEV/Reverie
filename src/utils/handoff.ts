@@ -2,7 +2,7 @@
 //
 // Agents using Reverie via MCP converged on writing `context.next_session`
 // at session end to leave a note for the next session's bootstrap. This
-// module formalizes that convention: when the key is present, codex_context
+// module formalizes that convention: when the key is present, reverie_context
 // renders it as a banner above the regular entries list so it cannot be
 // missed, with age labeling to signal whether the handoff is still fresh.
 

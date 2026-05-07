@@ -128,11 +128,11 @@ function loadCustomSchema(): string[] | null {
   const projectFile = findProjectFile();
   if (!projectFile) return null;
   try {
-    // In v1.10.0, findProjectFile() returns a directory path when the new layout
-    // is in use (.codexcli/ directory). Detect this by basename — the directory
-    // has no extension, while the legacy file ends in .json.
+    // In v1.10.0+, findProjectFile() returns a directory path when the new layout
+    // is in use (.reverie/ directory). Detect this by basename — the directory
+    // has no extension, while the legacy `.codexcli.json` file ends in .json.
     // The _schema feature is not implemented for the directory layout yet.
-    if (path.basename(projectFile) === '.codexcli') return null;
+    if (path.basename(projectFile) === '.reverie') return null;
     const raw = JSON.parse(fs.readFileSync(projectFile, 'utf8')) as Record<string, unknown>;
     const schema = raw._schema as { namespaces?: string[] } | undefined;
     return schema?.namespaces ?? null;
@@ -201,7 +201,7 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
       }
     }
     console.log(color.gray(`\nAllowed namespaces: ${allowedNamespaces.join(', ')}`));
-    console.log(color.gray('Add custom namespaces via _schema.namespaces in .codexcli.json'));
+    console.log(color.gray('Add custom namespaces via _schema.namespaces in the legacy .codexcli.json (directory-format stores do not yet support custom namespaces)'));
     console.log('');
   }
 

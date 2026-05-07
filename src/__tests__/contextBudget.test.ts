@@ -147,7 +147,7 @@ describe('formatShedNotice', () => {
       { label: 'files.*', keys: ['files.a', 'files.b', 'files.c'], bytes: 8200 },
     ]);
     expect(notice).toContain('files.* (3 entries, 8.0K)');
-    expect(notice).toContain('codex_get');
+    expect(notice).toContain('reverie_get');
     expect(notice).toContain('tier:"full"');
   });
 
@@ -188,7 +188,7 @@ describe('formatShedNotice', () => {
 describe('PATHOLOGICAL_OVERFLOW_NOTICE', () => {
   it('names the config key + recovery actions', () => {
     expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('bootstrap_max_response_bytes');
-    expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('codex_config_set');
+    expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('reverie_config_set');
     expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('warning');
   });
 });

@@ -327,7 +327,7 @@ describe('migrateFileToDirectory', () => {
 
   it('migrates a unified file to per-entry wrappers', () => {
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     fs.writeFileSync(oldFile, JSON.stringify({
       entries: {
         arch: { storage: 'unified', scope: 'three' },
@@ -364,7 +364,7 @@ describe('migrateFileToDirectory', () => {
 
   it('preserves untracked entries (missing from _meta) as bare wrappers', () => {
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     fs.writeFileSync(oldFile, JSON.stringify({
       entries: { tracked: 'a', untracked: 'b' },
       aliases: {},
@@ -384,7 +384,7 @@ describe('migrateFileToDirectory', () => {
 
   it('migrates a file with empty entries/aliases/confirm', () => {
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     fs.writeFileSync(oldFile, JSON.stringify({ entries: {}, aliases: {}, confirm: {} }));
 
     const result = migrateFileToDirectory(oldFile, newDir);
@@ -397,7 +397,7 @@ describe('migrateFileToDirectory', () => {
 
   it('throws a helpful error on corrupt JSON in the old file', () => {
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     fs.writeFileSync(oldFile, '{not json');
 
     expect(() => migrateFileToDirectory(oldFile, newDir)).toThrow(/Failed to parse/);
@@ -407,7 +407,7 @@ describe('migrateFileToDirectory', () => {
 
   it('overwrites a pre-existing .backup if another migration was interrupted', () => {
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     fs.writeFileSync(oldFile, JSON.stringify({ entries: { a: '1' }, aliases: {}, confirm: {} }));
     fs.writeFileSync(oldFile + '.backup', 'stale backup from aborted migration');
 
@@ -470,7 +470,7 @@ describe('entryFilePath', () => {
 
 describe('getStoreLockKey', () => {
   it('returns the directory path unchanged (withFileLock appends .lock)', () => {
-    expect(getStoreLockKey('/a/b/.codexcli')).toBe('/a/b/.codexcli');
+    expect(getStoreLockKey('/a/b/.reverie')).toBe('/a/b/.reverie');
   });
 });
 
@@ -579,7 +579,7 @@ describe('migrateFileToDirectory concurrency', () => {
     // provides for concurrent callers: the winner migrates, the loser
     // finds the directory already populated.
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     fs.writeFileSync(oldFile, JSON.stringify({
       entries: { a: '1', b: '2' },
       aliases: {},
@@ -602,7 +602,7 @@ describe('migrateFileToDirectory concurrency', () => {
 
   it('seeds _epoch.json at 0 during migration', () => {
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     fs.writeFileSync(oldFile, JSON.stringify({
       entries: { a: '1' },
       aliases: {},
@@ -617,7 +617,7 @@ describe('migrateFileToDirectory concurrency', () => {
 
   it('first save after migration bumps epoch to 2', () => {
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     fs.writeFileSync(oldFile, JSON.stringify({
       entries: { a: '1' },
       aliases: {},
@@ -637,7 +637,7 @@ describe('migrateFileToDirectory concurrency', () => {
 
   it('removes the tmp dir on a throwing migration, leaving no partial state', () => {
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     // Malformed JSON causes migrateFileToDirectory to throw before the tmp→final rename.
     fs.writeFileSync(oldFile, '{corrupt');
 
@@ -803,7 +803,7 @@ describe('_README.md hand-edit nudge', () => {
 
   it('migration seeds _README.md alongside the migrated entries', () => {
     const oldFile = path.join(tmpRoot, '.codexcli.json');
-    const newDir = path.join(tmpRoot, '.codexcli');
+    const newDir = path.join(tmpRoot, '.reverie');
     fs.writeFileSync(oldFile, JSON.stringify({
       entries: { a: '1' },
       aliases: {},
@@ -830,8 +830,8 @@ describe('save() under lock failure', () => {
     fs.writeFileSync(lockPath, '99999');
     // mtime defaults to now → not stale → acquireLock exhausts retries
 
-    const previousEnv = process.env.CODEX_DISABLE_LOCKING;
-    delete process.env.CODEX_DISABLE_LOCKING;
+    const previousEnv = process.env.RVR_DISABLE_LOCKING;
+    delete process.env.RVR_DISABLE_LOCKING;
     try {
       expect(() =>
         store.save({ entries: { a: '2' }, aliases: {}, confirm: {} })
@@ -841,12 +841,12 @@ describe('save() under lock failure', () => {
       const fresh = makeStore(dir);
       expect(fresh.load().entries).toEqual({ a: '1' });
     } finally {
-      if (previousEnv !== undefined) process.env.CODEX_DISABLE_LOCKING = previousEnv;
+      if (previousEnv !== undefined) process.env.RVR_DISABLE_LOCKING = previousEnv;
       try { fs.unlinkSync(lockPath); } catch { /* may not exist */ }
     }
   });
 
-  it('falls back to lockless save when CODEX_DISABLE_LOCKING=1', () => {
+  it('falls back to lockless save when RVR_DISABLE_LOCKING=1', () => {
     const dir = path.join(tmpRoot, 'store');
     const store = makeStore(dir);
     store.save({ entries: { a: '1' }, aliases: {}, confirm: {} });
@@ -855,16 +855,16 @@ describe('save() under lock failure', () => {
     const lockPath = getStoreLockKey(dir) + '.lock';
     fs.writeFileSync(lockPath, '99999');
 
-    const previousEnv = process.env.CODEX_DISABLE_LOCKING;
-    process.env.CODEX_DISABLE_LOCKING = '1';
+    const previousEnv = process.env.RVR_DISABLE_LOCKING;
+    process.env.RVR_DISABLE_LOCKING = '1';
     try {
       // With the env var set, the save proceeds despite the blocking lock.
       store.save({ entries: { a: '2' }, aliases: {}, confirm: {} });
       const fresh = makeStore(dir);
       expect(fresh.load().entries).toEqual({ a: '2' });
     } finally {
-      if (previousEnv !== undefined) process.env.CODEX_DISABLE_LOCKING = previousEnv;
-      else delete process.env.CODEX_DISABLE_LOCKING;
+      if (previousEnv !== undefined) process.env.RVR_DISABLE_LOCKING = previousEnv;
+      else delete process.env.RVR_DISABLE_LOCKING;
       try { fs.unlinkSync(lockPath); } catch { /* may not exist */ }
     }
   });

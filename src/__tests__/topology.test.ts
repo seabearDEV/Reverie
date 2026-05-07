@@ -7,7 +7,7 @@ function makeEntry(partial: Partial<AuditEntry>): AuditEntry {
     ts: Date.now(),
     session: 's1',
     src: 'mcp',
-    tool: 'codex_get',
+    tool: 'reverie_get',
     op: 'read',
     success: true,
     hit: true,
@@ -67,28 +67,28 @@ describe('computeTopologyFromEntries', () => {
     expect(stats.sessionCount).toBe(3);
   });
 
-  it('excludes codex_context bootstraps', () => {
-    // Two sessions where codex_context was called alongside a focused get.
+  it('excludes reverie_context bootstraps', () => {
+    // Two sessions where reverie_context was called alongside a focused get.
     // The context call must NOT contribute an edge to every entry the
     // bootstrap returned — that would drown out the focused-read signal.
     const entries = [
-      makeEntry({ session: 's1', tool: 'codex_context', key: undefined }),
-      makeEntry({ session: 's1', tool: 'codex_get', key: 'arch.a' }),
-      makeEntry({ session: 's2', tool: 'codex_context', key: undefined }),
-      makeEntry({ session: 's2', tool: 'codex_get', key: 'arch.a' }),
+      makeEntry({ session: 's1', tool: 'reverie_context', key: undefined }),
+      makeEntry({ session: 's1', tool: 'reverie_get', key: 'arch.a' }),
+      makeEntry({ session: 's2', tool: 'reverie_context', key: undefined }),
+      makeEntry({ session: 's2', tool: 'reverie_get', key: 'arch.a' }),
     ];
     const stats = computeTopologyFromEntries(entries);
     expect(stats.pairs).toEqual([]);
     expect(stats.isolated).toEqual(['arch.a']);
   });
 
-  it('excludes codex_find, codex_stale, codex_export, codex_alias_list', () => {
+  it('excludes reverie_find, reverie_stale, reverie_export, reverie_alias_list', () => {
     const entries = [
-      makeEntry({ session: 's1', tool: 'codex_find', key: 'query' }),
-      makeEntry({ session: 's1', tool: 'codex_stale' }),
-      makeEntry({ session: 's1', tool: 'codex_export' }),
-      makeEntry({ session: 's1', tool: 'codex_alias_list' }),
-      makeEntry({ session: 's1', tool: 'codex_get', key: 'arch.a' }),
+      makeEntry({ session: 's1', tool: 'reverie_find', key: 'query' }),
+      makeEntry({ session: 's1', tool: 'reverie_stale' }),
+      makeEntry({ session: 's1', tool: 'reverie_export' }),
+      makeEntry({ session: 's1', tool: 'reverie_alias_list' }),
+      makeEntry({ session: 's1', tool: 'reverie_get', key: 'arch.a' }),
     ];
     const stats = computeTopologyFromEntries(entries);
     expect(stats.sessionCount).toBe(1);
@@ -160,8 +160,8 @@ describe('computeTopologyFromEntries', () => {
 describe('topologyToDot', () => {
   it('emits a graph block with nodes and labeled edges', () => {
     const stats = computeTopologyFromEntries([
-      { ts: 0, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', success: true, hit: true, key: 'arch.a' },
-      { ts: 0, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', success: true, hit: true, key: 'arch.b' },
+      { ts: 0, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', success: true, hit: true, key: 'arch.a' },
+      { ts: 0, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', success: true, hit: true, key: 'arch.b' },
     ]);
     const dot = topologyToDot(stats);
     expect(dot).toMatch(/graph codexTopology \{/);
@@ -173,8 +173,8 @@ describe('topologyToDot', () => {
 
   it('filters out pairs below minSessions when rendering DOT', () => {
     const stats = computeTopologyFromEntries([
-      { ts: 0, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', success: true, hit: true, key: 'arch.a' },
-      { ts: 0, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', success: true, hit: true, key: 'arch.b' },
+      { ts: 0, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', success: true, hit: true, key: 'arch.a' },
+      { ts: 0, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', success: true, hit: true, key: 'arch.b' },
     ]);
     const dot = topologyToDot(stats, 2);
     expect(dot).not.toContain('"arch.a"');

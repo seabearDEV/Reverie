@@ -32,10 +32,10 @@ export interface AuditEntry {
   // Project-resolution guardrail signals (#99)
   refusedReason?: string | undefined;
   rescuedByExplicitGlobal?: boolean | undefined;
-  // codex_context size-budget shedding (#100)
+  // reverie_context size-budget shedding (#100)
   degraded?: boolean | undefined;
   shedNamespaces?: string[] | undefined;
-  // codex_set write-amp guard (#101)
+  // reverie_set write-amp guard (#101)
   writeAmpWarning?: boolean | undefined;
   writeAmpCount?: number | undefined;
 }
@@ -90,7 +90,7 @@ export function logAudit(partial: Omit<AuditEntry, 'ts' | 'session' | 'agent' | 
     ts: Date.now(),
     session: getSessionId(),
     project: projectFile ? path.dirname(projectFile) : undefined,
-    agent: process.env.CODEX_AGENT_NAME ?? undefined,
+    agent: process.env.RVR_AGENT_NAME ?? undefined,
   };
   const line = JSON.stringify(entry) + '\n';
   if (sync) {
@@ -122,7 +122,7 @@ function pushAuditLine(entries: AuditEntry[], line: string): void {
 //
 // audit.jsonl is append-only and grows monotonically. Re-reading the
 // whole file on every loadAuditLog() call costs O(file-size) per
-// invocation, which dominated the codex_audit tool's cost in v1.11.1
+// invocation, which dominated the reverie_audit tool's cost in v1.11.1
 // manual testing — bulk-batch parallel calls froze the MCP server while
 // queued audit reads serialized through the event loop.
 //
@@ -136,7 +136,7 @@ let cachedAuditEntries: AuditEntry[] = [];
 let cachedAuditSize = 0;
 let cachedAuditPath = '';
 
-/** Reset the in-memory audit cache. Used by tests that swap CODEX_DATA_DIR. */
+/** Reset the in-memory audit cache. Used by tests that swap RVR_DATA_DIR. */
 export function clearAuditLogCache(): void {
   cachedAuditEntries = [];
   cachedAuditSize = 0;

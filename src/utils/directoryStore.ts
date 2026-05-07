@@ -88,7 +88,7 @@ store entry written through the CLI or MCP tools.
 **Edit via one of:**
 
 - \`rvr set <key> <value>\` (and the rest of the CLI)
-- The Reverie MCP tools (\`codex_set\`, \`codex_get\`, etc.)
+- The Reverie MCP tools (\`reverie_set\`, \`reverie_get\`, etc.)
 - A future UI
 
 Direct edits to these files desync per-entry metadata (created/updated
@@ -818,7 +818,7 @@ export interface DirectoryMigrationResult {
  * `ensureDataDirectoryExists()` first; for the project store, the parent
  * is the project root which the user creates explicitly via `rvr init`.
  * If the parent is somehow missing, `withFileLock` will throw under the
- * v1.11 fail-closed semantics (set `CODEX_DISABLE_LOCKING=1` for tests
+ * v1.11 fail-closed semantics (set `RVR_DISABLE_LOCKING=1` for tests
  * that intentionally exercise the unlocked path).
  */
 export function migrateFileToDirectory(

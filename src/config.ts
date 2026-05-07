@@ -19,7 +19,7 @@ export const VALID_CONFIG_KEYS = ['colors', 'theme', 'max_backups', 'import_max_
 // adversarial payload) before they OOM the process.
 const DEFAULT_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 
-// 50 KB — codex_context payload cap before tier degradation kicks in
+// 50 KB — reverie_context payload cap before tier degradation kicks in
 // (#100). Sized for ~75% of the ~25k-token / ~68KB host tool-result cap,
 // leaving headroom for the next_session banner, instruction block, and
 // agent prompt overhead. tier:"full" bypasses the cap; users opted in.

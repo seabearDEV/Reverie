@@ -37,7 +37,7 @@ describe('computeStats — boundary cases', () => {
   it('handles a single-call session (no duration)', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_get', session: 'solo', op: 'read', ns: 'project' },
+      { ts: now, tool: 'reverie_get', session: 'solo', op: 'read', ns: 'project' },
     ]);
     const stats = computeStats();
     expect(stats.avgSessionDurationMs).toBeUndefined();
@@ -47,8 +47,8 @@ describe('computeStats — boundary cases', () => {
   it('handles read-only data (infinite ratio)', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now - 100, tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
-      { ts: now - 90, tool: 'codex_get', session: 's1', op: 'read', ns: 'b' },
+      { ts: now - 100, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: now - 90, tool: 'reverie_get', session: 's1', op: 'read', ns: 'b' },
     ]);
     const stats = computeStats();
     expect(stats.readWriteRatio).toBe('∞:1');
@@ -57,7 +57,7 @@ describe('computeStats — boundary cases', () => {
   it('handles write-only data', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now - 100, tool: 'codex_set', session: 's1', op: 'write', ns: 'a' },
+      { ts: now - 100, tool: 'reverie_set', session: 's1', op: 'write', ns: 'a' },
     ]);
     const stats = computeStats();
     expect(stats.readWriteRatio).toBe('0.0:1');
@@ -66,7 +66,7 @@ describe('computeStats — boundary cases', () => {
   it('handles no reads and no writes', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_run', session: 's1', op: 'exec', ns: 'commands' },
+      { ts: now, tool: 'reverie_run', session: 's1', op: 'exec', ns: 'commands' },
     ]);
     const stats = computeStats();
     expect(stats.readWriteRatio).toBe('0:0');
@@ -75,7 +75,7 @@ describe('computeStats — boundary cases', () => {
   it('hitRate is undefined when no reads have hit field', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
     ]);
     const stats = computeStats();
     expect(stats.hitRate).toBeUndefined();
@@ -84,7 +84,7 @@ describe('computeStats — boundary cases', () => {
   it('redundantRate is undefined when no writes exist', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
     ]);
     const stats = computeStats();
     expect(stats.redundantRate).toBeUndefined();
@@ -93,7 +93,7 @@ describe('computeStats — boundary cases', () => {
   it('avgResponseBytes is undefined when no entries have responseSize', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
     ]);
     const stats = computeStats();
     expect(stats.avgResponseBytes).toBeUndefined();
@@ -103,7 +103,7 @@ describe('computeStats — boundary cases', () => {
   it('avgDurationMs is undefined when no entries have duration', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
     ]);
     const stats = computeStats();
     expect(stats.avgDurationMs).toBeUndefined();
@@ -114,7 +114,7 @@ describe('computeStats — boundary cases', () => {
     const DAY = 86400000;
     writeEntries([
       // Only current period (within 7 days), nothing in previous period
-      { ts: now - 1000, tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: now - 1000, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
     ]);
     const stats = computeStats(7);
     // No previous period data → no trend
@@ -126,11 +126,11 @@ describe('computeStats — boundary cases', () => {
     const DAY = 86400000;
     writeEntries([
       // Previous period (8-14 days ago)
-      { ts: now - 10 * DAY, tool: 'codex_get', session: 'p1', op: 'read', ns: 'a' },
-      { ts: now - 9 * DAY, tool: 'codex_set', session: 'p1', op: 'write', ns: 'b' },
+      { ts: now - 10 * DAY, tool: 'reverie_get', session: 'p1', op: 'read', ns: 'a' },
+      { ts: now - 9 * DAY, tool: 'reverie_set', session: 'p1', op: 'write', ns: 'b' },
       // Current period (within 7 days) — same count
-      { ts: now - 3 * DAY, tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
-      { ts: now - 2 * DAY, tool: 'codex_set', session: 's1', op: 'write', ns: 'b' },
+      { ts: now - 3 * DAY, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: now - 2 * DAY, tool: 'reverie_set', session: 's1', op: 'write', ns: 'b' },
     ]);
     const stats = computeStats(7);
     expect(stats.trend).toBeDefined();
@@ -151,7 +151,7 @@ describe('computeStats — boundary cases', () => {
     const now = Date.now();
     // 40 bytes → ~0.5 entries → max(10, 0.5*200=100) → 100 tokens
     writeEntries([
-      { ts: now, tool: 'codex_context', session: 's1', op: 'read', ns: '*', hit: true, responseSize: 40 },
+      { ts: now, tool: 'reverie_context', session: 's1', op: 'read', ns: '*', hit: true, responseSize: 40 },
     ]);
     const stats = computeStats();
     const bsTokens = stats.explorationBreakdown['bootstrap']?.tokensSaved ?? 0;
@@ -164,7 +164,7 @@ describe('computeStats — boundary cases', () => {
     const now = Date.now();
     // 16000 bytes → ~200 entries → max(4000, 200*200=40000) → 40000
     writeEntries([
-      { ts: now, tool: 'codex_context', session: 's1', op: 'read', ns: '*', hit: true, responseSize: 16000 },
+      { ts: now, tool: 'reverie_context', session: 's1', op: 'read', ns: '*', hit: true, responseSize: 16000 },
     ]);
     const stats = computeStats();
     expect(stats.explorationBreakdown['bootstrap']?.tokensSaved).toBe(40000);
@@ -174,13 +174,13 @@ describe('computeStats — boundary cases', () => {
     const now = Date.now();
     writeEntries([
       // Session 1: 5000ms span
-      { ts: now - 15000, tool: 'codex_context', session: 's1', op: 'read', ns: '*' },
-      { ts: now - 10000, tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: now - 15000, tool: 'reverie_context', session: 's1', op: 'read', ns: '*' },
+      { ts: now - 10000, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
       // Session 2: 3000ms span
-      { ts: now - 8000, tool: 'codex_context', session: 's2', op: 'read', ns: '*' },
-      { ts: now - 5000, tool: 'codex_set', session: 's2', op: 'write', ns: 'b' },
+      { ts: now - 8000, tool: 'reverie_context', session: 's2', op: 'read', ns: '*' },
+      { ts: now - 5000, tool: 'reverie_set', session: 's2', op: 'write', ns: 'b' },
       // Session 3: 1 call only — excluded from duration
-      { ts: now - 1000, tool: 'codex_get', session: 's3', op: 'read', ns: 'c' },
+      { ts: now - 1000, tool: 'reverie_get', session: 's3', op: 'read', ns: 'c' },
     ]);
     const stats = computeStats();
     // (5000 + 3000) / 2 = 4000
@@ -192,7 +192,7 @@ describe('computeStats — boundary cases', () => {
     const agents = ['claude', 'cursor', 'copilot', 'chatgpt', 'windsurf'];
     const entries: TelemetryEntry[] = agents.map((agent, i) => ({
       ts: now - i * 1000,
-      tool: 'codex_get',
+      tool: 'reverie_get',
       session: 's1',
       op: 'read' as const,
       ns: 'a',
@@ -208,7 +208,7 @@ describe('computeStats — boundary cases', () => {
 
   it('period "all" label when periodDays is 0', () => {
     writeEntries([
-      { ts: Date.now(), tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: Date.now(), tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
     ]);
     const stats = computeStats(0);
     expect(stats.period).toBe('all');
@@ -216,7 +216,7 @@ describe('computeStats — boundary cases', () => {
 
   it('period label includes day count', () => {
     writeEntries([
-      { ts: Date.now(), tool: 'codex_get', session: 's1', op: 'read', ns: 'a' },
+      { ts: Date.now(), tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },
     ]);
     const stats = computeStats(30);
     expect(stats.period).toBe('30d');
@@ -235,7 +235,7 @@ describe('computeStats — net savings and calibration', () => {
     const now = Date.now();
     writeEntries([
       // Read hit with responseSize → delivery cost = 400/4 = 100 tokens
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'arch', hit: true, responseSize: 400 },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'arch', hit: true, responseSize: 400 },
     ]);
     const stats = computeStats();
     // deliveryCost = estimatedTokensSaved = 400/4 = 100
@@ -250,7 +250,7 @@ describe('computeStats — net savings and calibration', () => {
     const now = Date.now();
     // Large response for a cheap namespace (project: 500 tokens)
     writeEntries([
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'project', hit: true, responseSize: 4000 },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'project', hit: true, responseSize: 4000 },
     ]);
     const stats = computeStats();
     // deliveryCost = 4000/4 = 1000
@@ -262,8 +262,8 @@ describe('computeStats — net savings and calibration', () => {
   it('populates calibration field with static source when no miss-paths', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'arch', hit: true, responseSize: 100 },
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'files', hit: true, responseSize: 100 },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'arch', hit: true, responseSize: 100 },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'files', hit: true, responseSize: 100 },
     ]);
     const stats = computeStats();
     expect(stats.calibration['arch']).toBeDefined();
@@ -275,7 +275,7 @@ describe('computeStats — net savings and calibration', () => {
   it('uses observed costs when miss-paths.jsonl has sufficient data', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'arch', hit: true, responseSize: 100 },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'arch', hit: true, responseSize: 100 },
     ]);
     // 6 writeback miss-paths for arch with explorationBytes = 800 each → 800/4 = 200 tokens median
     writeMissPaths(Array.from({ length: 6 }, (_, i) => ({
@@ -293,7 +293,7 @@ describe('computeStats — net savings and calibration', () => {
   it('deliveryCostTokens and netTokensSaved are 0 when no hits', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_get', session: 's1', op: 'read', ns: 'arch' },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'arch' },
     ]);
     const stats = computeStats();
     expect(stats.deliveryCostTokens).toBe(0);
@@ -303,7 +303,7 @@ describe('computeStats — net savings and calibration', () => {
   it('calibration is empty when no read hits', () => {
     const now = Date.now();
     writeEntries([
-      { ts: now, tool: 'codex_set', session: 's1', op: 'write', ns: 'arch' },
+      { ts: now, tool: 'reverie_set', session: 's1', op: 'write', ns: 'arch' },
     ]);
     const stats = computeStats();
     expect(Object.keys(stats.calibration)).toHaveLength(0);
@@ -322,7 +322,7 @@ describe('loadTelemetry — edge cases', () => {
   });
 
   it('handles very large log file', () => {
-    const entry = { ts: Date.now(), tool: 'codex_get', session: 's1', op: 'read', ns: 'a' };
+    const entry = { ts: Date.now(), tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' };
     const line = JSON.stringify(entry);
     // Write 1000 entries
     const content = (line + '\n').repeat(1000);

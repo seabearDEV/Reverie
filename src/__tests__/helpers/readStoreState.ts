@@ -25,7 +25,7 @@ export interface ReconstitutedStoreState {
  *
  * @param dataDir  The parent directory containing either `store/` (new) or
  *                 `data.json` (legacy). For project stores, pass the path to
- *                 the `.codexcli/` directory directly as `storeDir` instead.
+ *                 the `.reverie/` directory directly as `storeDir` instead.
  * @param storeDir Optional absolute path to the store directory. If omitted,
  *                 defaults to `path.join(dataDir, 'store')`.
  */
@@ -46,7 +46,7 @@ export function readStoreState(dataDir: string, storeDir?: string): Reconstitute
 }
 
 /**
- * Read a store directory (or a project `.codexcli/` directory) and reconstruct
+ * Read a store directory (or a project `.reverie/` directory) and reconstruct
  * the UnifiedData shape.
  */
 export function readDirectoryStore(storeDir: string): ReconstitutedStoreState {

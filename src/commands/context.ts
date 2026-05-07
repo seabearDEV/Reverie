@@ -73,7 +73,7 @@ export function showContext(options: ContextOptions = {}): void {
     kept[k] = isEncrypted(v) ? '[encrypted]' : v;
   }
   if (tier !== 'full') {
-    const envOverride = process.env.CODEX_BOOTSTRAP_MAX_BYTES;
+    const envOverride = process.env.RVR_BOOTSTRAP_MAX_BYTES;
     const budget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
       ? Number(envOverride)
       : (loadConfig().bootstrap_max_response_bytes || 50 * 1024);

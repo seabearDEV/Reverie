@@ -6,7 +6,7 @@ import * as os from 'os';
 describe('CLI Integration Tests', () => {
   // Create a temporary directory for test data
   const testDir = path.join(os.tmpdir(), 'reverie-test-' + Math.random().toString(36).substring(2));
-  const execOpts = { env: { ...process.env, CODEX_DATA_DIR: testDir, CODEX_NO_PROJECT: '1' }, stdio: ['pipe', 'pipe', 'pipe'] as const };
+  const execOpts = { env: { ...process.env, RVR_DATA_DIR: testDir, RVR_NO_PROJECT: '1' }, stdio: ['pipe', 'pipe', 'pipe'] as const };
 
   const run = (args: string) => {
     // After #99, auto-mode writes refuse without project resolution. Inject
@@ -87,7 +87,7 @@ describe('CLI Integration Tests', () => {
     }
     expect(status).toBe(1);
     expect(stderr).toContain('Project resolution failed');
-    expect(stderr).toContain('CODEX_NO_PROJECT');
+    expect(stderr).toContain('RVR_NO_PROJECT');
     expect(stderr).toContain('--scope global');
   });
 });

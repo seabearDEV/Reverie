@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.0.0-beta.1] - 2026-05-06
+
+Deep rebrand of the data-layer surfaces that v1.0.0-beta.0 deliberately preserved. The Phase 3 carve-out for `codex_*` MCP tools, `.codexcli/` directory, `$codexcli` envelope, `CODEX_*` env vars, and "the codex" lowercase noun has been REVERSED. Every surface a developer or agent touches now uses the Reverie name. See `docs/design-rebrand-deep.md` for the full design rationale.
+
+### Breaking Changes
+
+1. **Project + global store directories renamed**: `.codexcli/` → `.reverie/`, `~/.codexcli/` → `~/.reverie/`, `<root>/.codexcli.backups/` → `<root>/.reverie.backups/`. **Auto-migrated on first access** via atomic same-filesystem rename — no user action needed for existing stores. Refuses if both old and new paths exist (surface and resolve manually rather than silently merge or overwrite).
+
+2. **Env vars renamed (hard cutover, no shim)**: `CODEX_DATA_DIR` → `RVR_DATA_DIR`, `CODEX_PROJECT` → `RVR_PROJECT`, `CODEX_PROJECT_DIR` → `RVR_PROJECT_DIR`, `CODEX_NO_PROJECT` → `RVR_NO_PROJECT`, `CODEX_AGENT_NAME` → `RVR_AGENT_NAME`, `CODEX_DISABLE_LOCKING` → `RVR_DISABLE_LOCKING`, `CODEX_BOOTSTRAP_MAX_BYTES` → `RVR_BOOTSTRAP_MAX_BYTES`. Same precedent as the v1.0.0-beta.0 `CCLI_PASSWORD`/`CCLI_PAGER` cutovers.
+
+3. **MCP tool names renamed (hard cutover, no shim)**: all 19 `codex_*` tools → `reverie_*` (`reverie_get`, `reverie_set`, `reverie_context`, `reverie_run`, `reverie_audit`, `reverie_stats`, `reverie_alias_set`, `reverie_config_set`, etc.). **CLAUDE.md files in dogfooded projects need a one-time update** — agents calling `codex_context` will get tool-not-found errors until updated.
+
+4. **Generic noun "the codex" dropped from prose** in favor of "Reverie" used as a system name (pattern: Git, Docker, Make). README, CLAUDE.md template, llm-instructions, and docs sweep accordingly. Brand pull-through is now consistent at every developer touchpoint.
+
+### Non-breaking changes
+
+- **Export envelope** (`reverie_export` / `rvr data export` output) writes a `$reverie` wrapper key going forward. **Pre-rebrand `$codexcli`-keyed exports import unchanged** — `tryUnwrapImport` accepts either key indefinitely. Files in the wild stay round-trippable.
+
+- **Pre-v1.10 single-file `.codexcli.json` migration path is preserved** — encountering this legacy format triggers conversion directly to `.reverie/` (skipping the intermediate `.codexcli/` directory format that v1.10–v1.0.0-beta.0 used).
+
+- **`docs/design-rebrand-deep.md`** added — full design (D1–D6 decisions, migration algorithm, test plan, 15-step impl order).
+
+### Migration
+
+For most users, migration is automatic on first run of v1.0.0-beta.1+:
+
+- **Existing `.codexcli/` project stores** auto-rename to `.reverie/` via atomic `fs.renameSync` on first walk-up resolution. Sibling `.codexcli.backups/` likewise renames to `.reverie.backups/`.
+- **Existing `~/.codexcli/` global store** auto-renames to `~/.reverie/` on first store init. All sidecars (audit log, telemetry, config, miss-paths, backups) ride along.
+- **Existing exports** (JSON files containing a `$codexcli` envelope) import unchanged. Re-exporting writes the new `$reverie` key.
+- **Pre-rebrand env vars** (`CODEX_*`) stop being honored — set the new `RVR_*` equivalents in your shell/MCP config.
+- **CLAUDE.md across dogfooded projects** must be updated by hand to call `reverie_context` instead of `codex_context`. (A future `rvr migrate-claude-md` command is candidate post-launch tooling but out of scope for v1.0.0-beta.1.)
+
+### Verification (pre-tag)
+
+- typecheck clean (`tsc --noEmit`)
+- lint clean (`eslint src/`)
+- 1392/1392 tests pass under vitest (Node)
+- this repo's own project store auto-migrated `.codexcli/` → `.reverie/` cleanly via the new path resolver during the test run
+
 ## [1.0.0-beta.0] - 2026-05-06
 
 First prerelease on the new brand. Ships under the beta channel — `brew install seabearDEV/reverie/rvr-beta` — so it can coexist with the legacy `ccli` install and validate the renamed release pipeline against `homebrew-reverie` end-to-end. Source-code-wise this is a rename, not a feature change; behavior matches v1.14.0. The Reverie v1.0.0 stable launch follows once Phase 2 (Bun commit-phase via Option A, short-flag audit) and Phase 4 (commercial infrastructure) land.

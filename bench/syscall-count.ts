@@ -14,7 +14,7 @@ import path from 'path';
 
 // ── Set up temp data directory BEFORE any reverie imports ─────────────
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-bench-'));
-process.env.CODEX_DATA_DIR = tmpDir;
+process.env.RVR_DATA_DIR = tmpDir;
 // Force non-interactive mode to avoid TTY prompts
 process.stdin.isTTY = false;
 // Suppress console output from the library

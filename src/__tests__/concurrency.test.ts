@@ -219,7 +219,7 @@ for (let i = 0; i < 20; i++) {
     // Use the CLI to write — it should break the stale lock
     execSync(
       `node dist/index.js set --global --force stale.lock.test "it works"`,
-      { env: { ...process.env, CODEX_DATA_DIR: tmpDir, CODEX_NO_PROJECT: '1' }, timeout: 10000 }
+      { env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' }, timeout: 10000 }
     );
 
     // Lock should be cleaned up
@@ -248,7 +248,7 @@ describe('concurrent CLI invocations', () => {
           const result = execSync(
             `node dist/index.js set --global --force parallel.key${i} "value${i}"`,
             {
-              env: { ...process.env, CODEX_DATA_DIR: tmpDir, CODEX_NO_PROJECT: '1' },
+              env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' },
               timeout: 15000,
             }
           ).toString();
@@ -266,7 +266,7 @@ describe('concurrent CLI invocations', () => {
       execSync(
         `node dist/index.js set --global --force parallel.key${i} "value${i}"`,
         {
-          env: { ...process.env, CODEX_DATA_DIR: tmpDir, CODEX_NO_PROJECT: '1' },
+          env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' },
           timeout: 15000,
         }
       );

@@ -19,7 +19,7 @@ export interface WriteAmpResult {
 }
 
 /**
- * Record a successful codex_set on (sessionId, key) and return a warning
+ * Record a successful reverie_set on (sessionId, key) and return a warning
  * descriptor when the threshold trips, or null when no warning is warranted.
  *
  * The threshold trips on the 3rd+ write within the same session and the

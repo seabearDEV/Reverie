@@ -10,10 +10,10 @@ import { readDirectoryStore } from './helpers/readStoreState';
 
 let tmpDir: string;
 
-// v1.10.0: project store is a `.codexcli/` directory. Read via helper that
+// v1.10.0: project store is a `.reverie/` directory. Read via helper that
 // reconstitutes the legacy UnifiedData shape.
 const readProjectData = (dir: string) =>
-  readDirectoryStore(path.join(dir, '.codexcli'));
+  readDirectoryStore(path.join(dir, '.reverie'));
 const cliPath = path.resolve(__dirname, '..', '..', 'dist', 'index.js');
 
 const run = (args: string) => {
@@ -207,7 +207,7 @@ describe('deprecation notices', () => {
     try {
       // --scaffold should still work but warn
       execSync(`node ${cliPath} init --scaffold --no-claude`, { cwd: freshDir, timeout: 10000 });
-      expect(fs.existsSync(path.join(freshDir, '.codexcli'))).toBe(true);
+      expect(fs.existsSync(path.join(freshDir, '.reverie'))).toBe(true);
     } finally {
       fs.rmSync(freshDir, { recursive: true, force: true });
     }

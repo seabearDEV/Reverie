@@ -79,7 +79,7 @@ reverie
         }
         const rk = resolveKey(k);
         await withCliInstrumentation(
-          { tool: 'codex_set', key: rk, rawKey: k, scope, writeValue: v, params: { key: rk, value: v } },
+          { tool: 'reverie_set', key: rk, rawKey: k, scope, writeValue: v, params: { key: rk, value: v } },
           () => commands.setEntry(rk, v, options.force, undefined, undefined, undefined, options.global)
         );
       }
@@ -131,7 +131,7 @@ reverie
     }
     const resolvedKey = resolveKey(key);
     await withCliInstrumentation(
-      { tool: 'codex_set', key: resolvedKey, rawKey: key, scope, writeValue: value, params: { key: resolvedKey, value: value ?? '' } },
+      { tool: 'reverie_set', key: resolvedKey, rawKey: key, scope, writeValue: value, params: { key: resolvedKey, value: value ?? '' } },
       () => commands.setEntry(resolvedKey, value, options.force, options.encrypt, options.alias, options.confirm, options.global, options.passwordFile)
     );
     if (options.clear) {
@@ -161,7 +161,7 @@ reverie
     const scope = options.global ? 'global' as const : undefined;
     const resolvedKey = key ? resolveKey(key) : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_get', key: resolvedKey, rawKey: key, scope, params: { key: key ?? '' } },
+      { tool: 'reverie_get', key: resolvedKey, rawKey: key, scope, params: { key: key ?? '' } },
       () => withPager(() => commands.getEntry(resolvedKey ?? key, options))
     );
   });
@@ -183,7 +183,7 @@ reverie
     const scope = options.global ? 'global' as const : undefined;
     const resolvedKey = keys[0] ? resolveKey(keys[0], scope) : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_run', key: resolvedKey, rawKey: keys[0], scope, params: { keys } },
+      { tool: 'reverie_run', key: resolvedKey, rawKey: keys[0], scope, params: { keys } },
       () => commands.runCommand(keys, options)
     );
   });
@@ -199,7 +199,7 @@ reverie
     const scope = options.global ? 'global' as const : undefined;
     const resolvedSource = resolveKey(source);
     await withCliInstrumentation(
-      { tool: 'codex_copy', key: dest, rawKey: source, scope, copySourceKey: resolvedSource, params: { source: resolvedSource, dest } },
+      { tool: 'reverie_copy', key: dest, rawKey: source, scope, copySourceKey: resolvedSource, params: { source: resolvedSource, dest } },
       () => commands.copyEntry(resolvedSource, dest, options.force, options.global)
     );
   });
@@ -221,7 +221,7 @@ reverie
     const scope = options.global ? 'global' as const : undefined;
     await withPager(async () => {
       await withCliInstrumentation(
-        { tool: 'codex_find', key: term, scope, params: { query: term } },
+        { tool: 'reverie_find', key: term, scope, params: { query: term } },
         () => commands.searchEntries(term, options)
       );
     });
@@ -238,7 +238,7 @@ reverie
   .action(async (key: string, options: { decrypt?: boolean, global?: boolean, passwordFile?: string }) => {
     const resolvedKey = resolveKey(key);
     await withCliInstrumentation(
-      { tool: 'codex_set', key: resolvedKey, rawKey: key, scope: options.global ? 'global' as const : undefined, params: { key: resolvedKey } },
+      { tool: 'reverie_set', key: resolvedKey, rawKey: key, scope: options.global ? 'global' as const : undefined, params: { key: resolvedKey } },
       () => commands.editEntry(resolvedKey, options)
     );
   });
@@ -256,7 +256,7 @@ reverie
     const scope = options.global ? 'global' as const : undefined;
     const resolvedOld = options.alias ? oldName : resolveKey(oldName);
     await withCliInstrumentation(
-      { tool: 'codex_rename', key: resolvedOld, rawKey: oldName, scope, params: { oldKey: resolvedOld, newKey: newName } },
+      { tool: 'reverie_rename', key: resolvedOld, rawKey: oldName, scope, params: { oldKey: resolvedOld, newKey: newName } },
       () => {
         if (options.alias) {
           commands.renameEntry(oldName, newName, true, undefined, options.global);
@@ -277,7 +277,7 @@ reverie
   .option('-G, --global', 'Target global data store')
   .action(async (key: string, options: { alias?: boolean, force?: boolean, global?: boolean }) => {
     if (options.alias) console.error(color.yellow('Deprecation: use `alias remove <name>` instead of `remove -a`.'));
-    const tool = options.alias ? 'codex_alias_remove' : 'codex_remove';
+    const tool = options.alias ? 'reverie_alias_remove' : 'reverie_remove';
     const scope = options.global ? 'global' as const : undefined;
     const resolvedKey = options.alias ? key : resolveKey(key);
     await withCliInstrumentation(
@@ -311,7 +311,7 @@ aliasCommand
   .action(async (name: string, targetPath: string, options: { global?: boolean }) => {
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_alias_set', key: name, scope, params: { alias: name, path: targetPath } },
+      { tool: 'reverie_alias_set', key: name, scope, params: { alias: name, path: targetPath } },
       () => setAlias(name, targetPath, scope)
     );
   });
@@ -323,7 +323,7 @@ aliasCommand
   .action(async (name: string, options: { global?: boolean }) => {
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_alias_remove', key: name, scope, params: { alias: name } },
+      { tool: 'reverie_alias_remove', key: name, scope, params: { alias: name } },
       () => {
         const removed = removeAlias(name, scope);
         if (removed) {
@@ -344,7 +344,7 @@ aliasCommand
   .action(async (options: { global?: boolean, all?: boolean }) => {
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_alias_list', scope, params: {} },
+      { tool: 'reverie_alias_list', scope, params: {} },
       () => {
         const aliases = loadAliases(scope);
         if (Object.keys(aliases).length === 0) {
@@ -365,7 +365,7 @@ aliasCommand
   .action(async (oldName: string, newName: string, options: { global?: boolean }) => {
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_alias_set', key: oldName, scope, params: { old: oldName, new: newName } },
+      { tool: 'reverie_alias_set', key: oldName, scope, params: { old: oldName, new: newName } },
       () => {
         const result = renameAlias(oldName, newName, scope);
         if (result) {
@@ -397,7 +397,7 @@ confirmCommand
     const resolvedKey = resolveKey(key);
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_confirm_set', key: resolvedKey, scope, params: { key: resolvedKey } },
+      { tool: 'reverie_confirm_set', key: resolvedKey, scope, params: { key: resolvedKey } },
       () => { setConfirm(resolvedKey, scope); console.log(`Entry '${resolvedKey}' now requires confirmation to run.`); }
     );
   });
@@ -410,7 +410,7 @@ confirmCommand
     const resolvedKey = resolveKey(key);
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_confirm_remove', key: resolvedKey, scope, params: { key: resolvedKey } },
+      { tool: 'reverie_confirm_remove', key: resolvedKey, scope, params: { key: resolvedKey } },
       () => { removeConfirm(resolvedKey, scope); console.log(`Confirmation removed from '${resolvedKey}'.`); }
     );
   });
@@ -422,7 +422,7 @@ confirmCommand
   .action(async (options: { global?: boolean }) => {
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_confirm_list', scope, params: {} },
+      { tool: 'reverie_confirm_list', scope, params: {} },
       () => {
         const keys = loadConfirmKeys(scope);
         if (Object.keys(keys).length === 0) {
@@ -448,7 +448,7 @@ reverie
   .action(async (options: { tier?: string, global?: boolean, plain?: boolean, json?: boolean }) => {
     const scope = options.global ? 'global' as const : undefined;
     await withPager(() => withCliInstrumentation(
-      { tool: 'codex_context', scope, params: { tier: options.tier } },
+      { tool: 'reverie_context', scope, params: { tier: options.tier } },
       () => commands.showContext(options)
     ));
   });
@@ -467,7 +467,7 @@ reverie
 async function handleSearch(term: string, options: { entries?: boolean, aliases?: boolean, tree?: boolean, json?: boolean, regex?: boolean, keys?: boolean, values?: boolean, global?: boolean }): Promise<void> {
   const scope = options.global ? 'global' as const : undefined;
   await withCliInstrumentation(
-    { tool: 'codex_find', key: term, scope, params: { query: term } },
+    { tool: 'reverie_find', key: term, scope, params: { query: term } },
     () => commands.searchEntries(term, options)
   );
 }
@@ -496,7 +496,7 @@ reverie
   .action(async (days: string | undefined, options: { json?: boolean, global?: boolean }) => {
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_stale', scope, params: { days: days ?? '30' } },
+      { tool: 'reverie_stale', scope, params: { days: days ?? '30' } },
       async () => {
         const { loadMeta, loadMetaMerged } = await import('./store');
         const { getEntriesFlat } = await import('./storage');
@@ -547,7 +547,7 @@ reverie
   .option('-G, --global', 'Target global data store')
   .action(async (options: { json?: boolean, global?: boolean, seedQuality?: boolean }) => {
     await withCliInstrumentation(
-      { tool: 'codex_lint', scope: options.global ? 'global' : undefined, params: {} },
+      { tool: 'reverie_lint', scope: options.global ? 'global' : undefined, params: {} },
       () => commands.lintEntries(options)
     );
   });
@@ -563,7 +563,7 @@ reverie
   .option('-j, --json', 'Output as JSON')
   .action(async (options: { period?: string, limit?: number, minSessions?: number, dot?: boolean, json?: boolean }) => {
     await withCliInstrumentation(
-      { tool: 'codex_topology', params: { period: options.period } },
+      { tool: 'reverie_topology', params: { period: options.period } },
       () => commands.showTopology(options)
     );
   });
@@ -581,7 +581,7 @@ configCommand
   .description('Set a configuration value')
   .action(async (key: string, value: string) => {
     await withCliInstrumentation(
-      { tool: 'codex_config_set', key, scope: 'global', writeValue: value, params: { key, value } },
+      { tool: 'reverie_config_set', key, scope: 'global', writeValue: value, params: { key, value } },
       () => commands.configSet(key, value)
     );
   });
@@ -591,7 +591,7 @@ configCommand
   .description('Get configuration values')
   .action(async (key?: string) => {
     await withCliInstrumentation(
-      { tool: 'codex_config_get', key, scope: 'global', params: { key } },
+      { tool: 'reverie_config_get', key, scope: 'global', params: { key } },
       () => commands.handleConfig(key)
     );
   });
@@ -661,7 +661,7 @@ dataCommand
   .action(async (type: string, options: { format?: string, output?: string, pretty?: boolean, includeEncrypted?: boolean, split?: boolean, global?: boolean, project?: boolean }) => {
     const scope = options.global ? 'global' as const : options.project ? 'project' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_export', scope, params: { type } },
+      { tool: 'reverie_export', scope, params: { type } },
       () => withPager(() => commands.exportData(type, options))
     );
   });
@@ -677,7 +677,7 @@ dataCommand
   .action(async (type: string, file: string, options: { format?: string, merge?: boolean, force?: boolean, preview?: boolean, global?: boolean, project?: boolean }) => {
     const scope = options.global ? 'global' as const : options.project ? 'project' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_import', scope, params: { type, file } },
+      { tool: 'reverie_import', scope, params: { type, file } },
       () => commands.importData(type, file, options)
     );
   });
@@ -691,14 +691,14 @@ dataCommand
   .action(async (type: string, options: { force?: boolean, global?: boolean, project?: boolean }) => {
     const scope = options.global ? 'global' as const : options.project ? 'project' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'codex_reset', scope, params: { type } },
+      { tool: 'reverie_reset', scope, params: { type } },
       () => commands.resetData(type, options)
     );
   });
 
 dataCommand
   .command('projectfile', { hidden: true })
-  .description('Create or remove a project-scoped .codexcli.json')
+  .description('Create or remove a project-scoped .reverie/ directory')
   .option('--remove', 'Remove the project file')
   .action((options: { remove?: boolean }) => {
     console.error(color.yellow('Deprecation: use `init` instead of `data projectfile`.'));
@@ -708,7 +708,7 @@ dataCommand
 // Init command: create/remove project-scoped data file
 reverie
   .command('init')
-  .description('Initialize project with .codexcli.json, codebase scan, and CLAUDE.md')
+  .description('Initialize project with .reverie/ directory, codebase scan, and CLAUDE.md')
   .option('--remove', 'Remove the project file')
   .option('--scaffold', 'Auto-populate from project files (kept for backward compat)')
   .option('--no-scan', 'Skip codebase analysis')
@@ -718,7 +718,7 @@ reverie
   .action(async (options: { remove?: boolean; scaffold?: boolean; scan?: boolean; claude?: boolean; force?: boolean; dryRun?: boolean }) => {
     if (options.scaffold) console.error(color.yellow('Deprecation: --scaffold is now a no-op. Scanning is the default. Use --no-scan to skip.'));
     await withCliInstrumentation(
-      { tool: 'codex_init', scope: 'project', params: {} },
+      { tool: 'reverie_init', scope: 'project', params: {} },
       () => commands.handleProjectFile(options)
     );
   });
@@ -755,7 +755,7 @@ reverie
     if (stats.mcpSessions > 0) {
       const bootstrapPct = (stats.bootstrapRate * 100).toFixed(0);
       const bootstrapColor = stats.bootstrapRate >= 0.8 ? color.green : stats.bootstrapRate >= 0.5 ? color.yellow : color.red;
-      console.log(`    Bootstrap rate:  ${bootstrapColor(`${bootstrapPct}%`)} of MCP sessions call codex_context first`);
+      console.log(`    Bootstrap rate:  ${bootstrapColor(`${bootstrapPct}%`)} of MCP sessions call reverie_context first`);
 
       const writeBackPct = (stats.writeBackRate * 100).toFixed(0);
       const writeBackColor = stats.writeBackRate >= 0.5 ? color.green : stats.writeBackRate >= 0.25 ? color.yellow : color.red;
@@ -934,9 +934,9 @@ reverie
   .option('--agent <name>', 'Agent identity for audit logging')
   .action(async (options: { cwd?: string; agent?: string }) => {
     if (options.agent) {
-      process.env.CODEX_AGENT_NAME = options.agent;
+      process.env.RVR_AGENT_NAME = options.agent;
     }
-    const projectDir = process.env.CODEX_PROJECT_DIR ?? options.cwd;
+    const projectDir = process.env.RVR_PROJECT_DIR ?? options.cwd;
     if (projectDir) {
       process.chdir(projectDir);
     }

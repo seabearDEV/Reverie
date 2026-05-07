@@ -18,104 +18,104 @@ describe('paths utilities', () => {
   // Use vi.resetModules() and dynamic import.
 
   describe('getDataDirectory', () => {
-    it('returns CODEX_DATA_DIR when set', async () => {
-      // CODEX_DATA_DIR is set by vitest.config.ts, so it should be respected
-      expect(process.env.CODEX_DATA_DIR).toBeDefined();
+    it('returns RVR_DATA_DIR when set', async () => {
+      // RVR_DATA_DIR is set by vitest.config.ts, so it should be respected
+      expect(process.env.RVR_DATA_DIR).toBeDefined();
       vi.resetModules();
       const { getDataDirectory } = await import('../utils/paths');
-      expect(getDataDirectory()).toBe(process.env.CODEX_DATA_DIR);
+      expect(getDataDirectory()).toBe(process.env.RVR_DATA_DIR);
     });
 
-    it('throws when CODEX_DATA_DIR is a relative path', async () => {
+    it('throws when RVR_DATA_DIR is a relative path', async () => {
       vi.resetModules();
-      const original = process.env.CODEX_DATA_DIR;
-      process.env.CODEX_DATA_DIR = './relative/path';
+      const original = process.env.RVR_DATA_DIR;
+      process.env.RVR_DATA_DIR = './relative/path';
       try {
         const { getDataDirectory } = await import('../utils/paths');
         expect(() => getDataDirectory()).toThrow(/absolute path/i);
       } finally {
-        if (original !== undefined) process.env.CODEX_DATA_DIR = original;
-        else delete process.env.CODEX_DATA_DIR;
+        if (original !== undefined) process.env.RVR_DATA_DIR = original;
+        else delete process.env.RVR_DATA_DIR;
       }
     });
 
-    it('treats an empty CODEX_DATA_DIR as unset (does not produce a relative path)', async () => {
+    it('treats an empty RVR_DATA_DIR as unset (does not produce a relative path)', async () => {
       vi.resetModules();
-      const original = process.env.CODEX_DATA_DIR;
-      process.env.CODEX_DATA_DIR = '';
+      const original = process.env.RVR_DATA_DIR;
+      process.env.RVR_DATA_DIR = '';
       try {
         const { getDataDirectory } = await import('../utils/paths');
         const result = getDataDirectory();
         expect(result).not.toBe('');
         expect(path.isAbsolute(result)).toBe(true);
       } finally {
-        if (original !== undefined) process.env.CODEX_DATA_DIR = original;
-        else delete process.env.CODEX_DATA_DIR;
+        if (original !== undefined) process.env.RVR_DATA_DIR = original;
+        else delete process.env.RVR_DATA_DIR;
       }
     });
   });
 
   describe('clearDataDirectoryCache', () => {
-    it('resets the cache so a new CODEX_DATA_DIR is picked up on the next call', async () => {
+    it('resets the cache so a new RVR_DATA_DIR is picked up on the next call', async () => {
       vi.resetModules();
-      const original = process.env.CODEX_DATA_DIR;
+      const original = process.env.RVR_DATA_DIR;
       const firstDir = path.join(tmpDir, 'first');
       const secondDir = path.join(tmpDir, 'second');
       try {
-        process.env.CODEX_DATA_DIR = firstDir;
+        process.env.RVR_DATA_DIR = firstDir;
         const { getDataDirectory, clearDataDirectoryCache } = await import('../utils/paths');
         expect(getDataDirectory()).toBe(firstDir);
 
         // Without clearing, the cache wins even when the env changes.
-        process.env.CODEX_DATA_DIR = secondDir;
+        process.env.RVR_DATA_DIR = secondDir;
         expect(getDataDirectory()).toBe(firstDir);
 
         // After clearing, the next call re-reads the env.
         clearDataDirectoryCache();
         expect(getDataDirectory()).toBe(secondDir);
       } finally {
-        if (original !== undefined) process.env.CODEX_DATA_DIR = original;
-        else delete process.env.CODEX_DATA_DIR;
+        if (original !== undefined) process.env.RVR_DATA_DIR = original;
+        else delete process.env.RVR_DATA_DIR;
       }
     });
   });
 
   describe('isDataDirectoryFromEnv', () => {
-    it('returns true when CODEX_DATA_DIR is set to a non-empty value', async () => {
+    it('returns true when RVR_DATA_DIR is set to a non-empty value', async () => {
       vi.resetModules();
-      const original = process.env.CODEX_DATA_DIR;
-      process.env.CODEX_DATA_DIR = path.join(tmpDir, 'somewhere');
+      const original = process.env.RVR_DATA_DIR;
+      process.env.RVR_DATA_DIR = path.join(tmpDir, 'somewhere');
       try {
         const { isDataDirectoryFromEnv } = await import('../utils/paths');
         expect(isDataDirectoryFromEnv()).toBe(true);
       } finally {
-        if (original !== undefined) process.env.CODEX_DATA_DIR = original;
-        else delete process.env.CODEX_DATA_DIR;
+        if (original !== undefined) process.env.RVR_DATA_DIR = original;
+        else delete process.env.RVR_DATA_DIR;
       }
     });
 
-    it('returns false when CODEX_DATA_DIR is unset', async () => {
+    it('returns false when RVR_DATA_DIR is unset', async () => {
       vi.resetModules();
-      const original = process.env.CODEX_DATA_DIR;
-      delete process.env.CODEX_DATA_DIR;
+      const original = process.env.RVR_DATA_DIR;
+      delete process.env.RVR_DATA_DIR;
       try {
         const { isDataDirectoryFromEnv } = await import('../utils/paths');
         expect(isDataDirectoryFromEnv()).toBe(false);
       } finally {
-        if (original !== undefined) process.env.CODEX_DATA_DIR = original;
+        if (original !== undefined) process.env.RVR_DATA_DIR = original;
       }
     });
 
-    it('returns false when CODEX_DATA_DIR is an empty string', async () => {
+    it('returns false when RVR_DATA_DIR is an empty string', async () => {
       vi.resetModules();
-      const original = process.env.CODEX_DATA_DIR;
-      process.env.CODEX_DATA_DIR = '';
+      const original = process.env.RVR_DATA_DIR;
+      process.env.RVR_DATA_DIR = '';
       try {
         const { isDataDirectoryFromEnv } = await import('../utils/paths');
         expect(isDataDirectoryFromEnv()).toBe(false);
       } finally {
-        if (original !== undefined) process.env.CODEX_DATA_DIR = original;
-        else delete process.env.CODEX_DATA_DIR;
+        if (original !== undefined) process.env.RVR_DATA_DIR = original;
+        else delete process.env.RVR_DATA_DIR;
       }
     });
   });
@@ -124,24 +124,24 @@ describe('paths utilities', () => {
     it('creates directory if it does not exist', async () => {
       const newDir = path.join(tmpDir, 'new-data-dir');
       vi.resetModules();
-      const originalEnv = process.env.CODEX_DATA_DIR;
-      process.env.CODEX_DATA_DIR = newDir;
+      const originalEnv = process.env.RVR_DATA_DIR;
+      process.env.RVR_DATA_DIR = newDir;
 
       try {
         const { ensureDataDirectoryExists } = await import('../utils/paths');
         ensureDataDirectoryExists();
         expect(fs.existsSync(newDir)).toBe(true);
       } finally {
-        process.env.CODEX_DATA_DIR = originalEnv;
+        process.env.RVR_DATA_DIR = originalEnv;
       }
     });
   });
 
   describe('findProjectFile', () => {
-    it('returns null when CODEX_NO_PROJECT is set', async () => {
+    it('returns null when RVR_NO_PROJECT is set', async () => {
       vi.resetModules();
-      const originalNoProject = process.env.CODEX_NO_PROJECT;
-      process.env.CODEX_NO_PROJECT = '1';
+      const originalNoProject = process.env.RVR_NO_PROJECT;
+      process.env.RVR_NO_PROJECT = '1';
 
       try {
         const { findProjectFile, clearProjectFileCache } = await import('../utils/paths');
@@ -149,17 +149,17 @@ describe('paths utilities', () => {
         expect(findProjectFile()).toBeNull();
       } finally {
         if (originalNoProject !== undefined) {
-          process.env.CODEX_NO_PROJECT = originalNoProject;
+          process.env.RVR_NO_PROJECT = originalNoProject;
         } else {
-          delete process.env.CODEX_NO_PROJECT;
+          delete process.env.RVR_NO_PROJECT;
         }
       }
     });
 
     it('caches result after first call', async () => {
       vi.resetModules();
-      const originalNoProject = process.env.CODEX_NO_PROJECT;
-      process.env.CODEX_NO_PROJECT = '1';
+      const originalNoProject = process.env.RVR_NO_PROJECT;
+      process.env.RVR_NO_PROJECT = '1';
 
       try {
         const { findProjectFile, clearProjectFileCache } = await import('../utils/paths');
@@ -169,56 +169,56 @@ describe('paths utilities', () => {
         expect(first).toBe(second);
       } finally {
         if (originalNoProject !== undefined) {
-          process.env.CODEX_NO_PROJECT = originalNoProject;
+          process.env.RVR_NO_PROJECT = originalNoProject;
         } else {
-          delete process.env.CODEX_NO_PROJECT;
+          delete process.env.RVR_NO_PROJECT;
         }
       }
     });
 
-    it('honors CODEX_PROJECT pointing at a .codexcli.json file', async () => {
+    it('honors RVR_PROJECT pointing at a .codexcli.json file', async () => {
       const projectFile = path.join(tmpDir, '.codexcli.json');
       fs.writeFileSync(projectFile, '{}');
       vi.resetModules();
-      const original = process.env.CODEX_PROJECT;
-      process.env.CODEX_PROJECT = projectFile;
+      const original = process.env.RVR_PROJECT;
+      process.env.RVR_PROJECT = projectFile;
       try {
         const { findProjectFile, clearProjectFileCache } = await import('../utils/paths');
         clearProjectFileCache();
         expect(findProjectFile()).toBe(projectFile);
       } finally {
-        if (original !== undefined) process.env.CODEX_PROJECT = original;
-        else delete process.env.CODEX_PROJECT;
+        if (original !== undefined) process.env.RVR_PROJECT = original;
+        else delete process.env.RVR_PROJECT;
       }
     });
 
-    it('honors CODEX_PROJECT pointing at a directory', async () => {
+    it('honors RVR_PROJECT pointing at a directory', async () => {
       const projectFile = path.join(tmpDir, '.codexcli.json');
       fs.writeFileSync(projectFile, '{}');
       vi.resetModules();
-      const original = process.env.CODEX_PROJECT;
-      process.env.CODEX_PROJECT = tmpDir;
+      const original = process.env.RVR_PROJECT;
+      process.env.RVR_PROJECT = tmpDir;
       try {
         const { findProjectFile, clearProjectFileCache } = await import('../utils/paths');
         clearProjectFileCache();
         expect(findProjectFile()).toBe(projectFile);
       } finally {
-        if (original !== undefined) process.env.CODEX_PROJECT = original;
-        else delete process.env.CODEX_PROJECT;
+        if (original !== undefined) process.env.RVR_PROJECT = original;
+        else delete process.env.RVR_PROJECT;
       }
     });
 
-    it('CODEX_PROJECT pointing at a missing path returns null (no cwd fallback)', async () => {
+    it('RVR_PROJECT pointing at a missing path returns null (no cwd fallback)', async () => {
       vi.resetModules();
-      const original = process.env.CODEX_PROJECT;
-      process.env.CODEX_PROJECT = path.join(tmpDir, 'nope');
+      const original = process.env.RVR_PROJECT;
+      process.env.RVR_PROJECT = path.join(tmpDir, 'nope');
       try {
         const { findProjectFile, clearProjectFileCache } = await import('../utils/paths');
         clearProjectFileCache();
         expect(findProjectFile()).toBeNull();
       } finally {
-        if (original !== undefined) process.env.CODEX_PROJECT = original;
-        else delete process.env.CODEX_PROJECT;
+        if (original !== undefined) process.env.RVR_PROJECT = original;
+        else delete process.env.RVR_PROJECT;
       }
     });
 
@@ -238,29 +238,29 @@ describe('paths utilities', () => {
       }
     });
 
-    it('CODEX_NO_PROJECT wins over CODEX_PROJECT', async () => {
+    it('RVR_NO_PROJECT wins over RVR_PROJECT', async () => {
       const projectFile = path.join(tmpDir, '.codexcli.json');
       fs.writeFileSync(projectFile, '{}');
       vi.resetModules();
-      const originalNo = process.env.CODEX_NO_PROJECT;
-      const originalP = process.env.CODEX_PROJECT;
-      process.env.CODEX_NO_PROJECT = '1';
-      process.env.CODEX_PROJECT = projectFile;
+      const originalNo = process.env.RVR_NO_PROJECT;
+      const originalP = process.env.RVR_PROJECT;
+      process.env.RVR_NO_PROJECT = '1';
+      process.env.RVR_PROJECT = projectFile;
       try {
         const { findProjectFile, clearProjectFileCache } = await import('../utils/paths');
         clearProjectFileCache();
         expect(findProjectFile()).toBeNull();
       } finally {
-        if (originalNo !== undefined) process.env.CODEX_NO_PROJECT = originalNo;
-        else delete process.env.CODEX_NO_PROJECT;
-        if (originalP !== undefined) process.env.CODEX_PROJECT = originalP;
-        else delete process.env.CODEX_PROJECT;
+        if (originalNo !== undefined) process.env.RVR_NO_PROJECT = originalNo;
+        else delete process.env.RVR_NO_PROJECT;
+        if (originalP !== undefined) process.env.RVR_PROJECT = originalP;
+        else delete process.env.RVR_PROJECT;
       }
     });
 
     it('clearProjectFileCache resets the cache', async () => {
       vi.resetModules();
-      process.env.CODEX_NO_PROJECT = '1';
+      process.env.RVR_NO_PROJECT = '1';
 
       try {
         const { findProjectFile, clearProjectFileCache } = await import('../utils/paths');
@@ -269,17 +269,17 @@ describe('paths utilities', () => {
         clearProjectFileCache(); // clear
         // After clear, it should search again
         const result = findProjectFile();
-        expect(result).toBeNull(); // still null because CODEX_NO_PROJECT
+        expect(result).toBeNull(); // still null because RVR_NO_PROJECT
       } finally {
-        delete process.env.CODEX_NO_PROJECT;
+        delete process.env.RVR_NO_PROJECT;
       }
     });
 
-    // Issue #102: a relative override (e.g. CODEX_PROJECT_DIR=. / --cwd .)
+    // Issue #102: a relative override (e.g. RVR_PROJECT_DIR=. / --cwd .)
     // used to yield a relative resolved path, which downstream path.dirname()
     // collapsed to "." in audit rows.
     it('setProjectRootOverride absolutizes relative input so resolver returns an absolute path', async () => {
-      fs.mkdirSync(path.join(tmpDir, '.codexcli'));
+      fs.mkdirSync(path.join(tmpDir, '.reverie'));
 
       const originalCwd = process.cwd();
       process.chdir(tmpDir);
@@ -306,13 +306,13 @@ describe('paths utilities', () => {
     // Issue #102 acceptance: end-to-end MCP-shaped audit row with a relative
     // override yields an absolute project field (not bare ".").
     it('logAudit writes absolute project on MCP rows even when override is relative', async () => {
-      fs.mkdirSync(path.join(tmpDir, '.codexcli'));
+      fs.mkdirSync(path.join(tmpDir, '.reverie'));
       const auditDataDir = path.join(tmpDir, 'data');
       fs.mkdirSync(auditDataDir, { recursive: true });
 
-      const originalDataDir = process.env.CODEX_DATA_DIR;
+      const originalDataDir = process.env.RVR_DATA_DIR;
       const originalCwd = process.cwd();
-      process.env.CODEX_DATA_DIR = auditDataDir;
+      process.env.RVR_DATA_DIR = auditDataDir;
       process.chdir(tmpDir);
 
       vi.resetModules();
@@ -325,7 +325,7 @@ describe('paths utilities', () => {
         setProjectRootOverride('.');
         await logAudit({
           src: 'mcp',
-          tool: 'codex_set',
+          tool: 'reverie_set',
           op: 'write',
           key: 'fix.102.audit',
           success: true,
@@ -341,8 +341,8 @@ describe('paths utilities', () => {
       } finally {
         setProjectRootOverride(null);
         process.chdir(originalCwd);
-        if (originalDataDir !== undefined) process.env.CODEX_DATA_DIR = originalDataDir;
-        else delete process.env.CODEX_DATA_DIR;
+        if (originalDataDir !== undefined) process.env.RVR_DATA_DIR = originalDataDir;
+        else delete process.env.RVR_DATA_DIR;
         clearDataDirectoryCache();
         clearAuditLogCache();
       }
@@ -382,10 +382,10 @@ describe('paths utilities', () => {
   });
 
   describe('findProjectStoreDir', () => {
-    it('returns null when CODEX_NO_PROJECT is set', async () => {
+    it('returns null when RVR_NO_PROJECT is set', async () => {
       vi.resetModules();
-      const originalNoProject = process.env.CODEX_NO_PROJECT;
-      process.env.CODEX_NO_PROJECT = '1';
+      const originalNoProject = process.env.RVR_NO_PROJECT;
+      process.env.RVR_NO_PROJECT = '1';
 
       try {
         const { findProjectStoreDir, clearProjectFileCache } = await import('../utils/paths');
@@ -393,76 +393,76 @@ describe('paths utilities', () => {
         expect(findProjectStoreDir()).toBeNull();
       } finally {
         if (originalNoProject !== undefined) {
-          process.env.CODEX_NO_PROJECT = originalNoProject;
+          process.env.RVR_NO_PROJECT = originalNoProject;
         } else {
-          delete process.env.CODEX_NO_PROJECT;
+          delete process.env.RVR_NO_PROJECT;
         }
       }
     });
 
-    it('honors CODEX_PROJECT pointing at a .codexcli directory', async () => {
-      const projectDir = path.join(tmpDir, '.codexcli');
+    it('honors RVR_PROJECT pointing at a .reverie directory', async () => {
+      const projectDir = path.join(tmpDir, '.reverie');
       fs.mkdirSync(projectDir);
       vi.resetModules();
-      const original = process.env.CODEX_PROJECT;
-      process.env.CODEX_PROJECT = projectDir;
+      const original = process.env.RVR_PROJECT;
+      process.env.RVR_PROJECT = projectDir;
       try {
         const { findProjectStoreDir, clearProjectFileCache } = await import('../utils/paths');
         clearProjectFileCache();
         expect(findProjectStoreDir()).toBe(projectDir);
       } finally {
-        if (original !== undefined) process.env.CODEX_PROJECT = original;
-        else delete process.env.CODEX_PROJECT;
+        if (original !== undefined) process.env.RVR_PROJECT = original;
+        else delete process.env.RVR_PROJECT;
       }
     });
 
-    it('honors CODEX_PROJECT pointing at a containing directory', async () => {
-      fs.mkdirSync(path.join(tmpDir, '.codexcli'));
+    it('honors RVR_PROJECT pointing at a containing directory', async () => {
+      fs.mkdirSync(path.join(tmpDir, '.reverie'));
       vi.resetModules();
-      const original = process.env.CODEX_PROJECT;
-      process.env.CODEX_PROJECT = tmpDir;
+      const original = process.env.RVR_PROJECT;
+      process.env.RVR_PROJECT = tmpDir;
       try {
         const { findProjectStoreDir, clearProjectFileCache } = await import('../utils/paths');
         clearProjectFileCache();
-        expect(findProjectStoreDir()).toBe(path.join(tmpDir, '.codexcli'));
+        expect(findProjectStoreDir()).toBe(path.join(tmpDir, '.reverie'));
       } finally {
-        if (original !== undefined) process.env.CODEX_PROJECT = original;
-        else delete process.env.CODEX_PROJECT;
+        if (original !== undefined) process.env.RVR_PROJECT = original;
+        else delete process.env.RVR_PROJECT;
       }
     });
 
-    it('fails closed when CODEX_PROJECT does not resolve to a directory', async () => {
+    it('fails closed when RVR_PROJECT does not resolve to a directory', async () => {
       vi.resetModules();
-      const original = process.env.CODEX_PROJECT;
-      process.env.CODEX_PROJECT = path.join(tmpDir, 'nonexistent');
+      const original = process.env.RVR_PROJECT;
+      process.env.RVR_PROJECT = path.join(tmpDir, 'nonexistent');
       try {
         const { findProjectStoreDir, clearProjectFileCache } = await import('../utils/paths');
         clearProjectFileCache();
         expect(findProjectStoreDir()).toBeNull();
       } finally {
-        if (original !== undefined) process.env.CODEX_PROJECT = original;
-        else delete process.env.CODEX_PROJECT;
+        if (original !== undefined) process.env.RVR_PROJECT = original;
+        else delete process.env.RVR_PROJECT;
       }
     });
 
-    it('walks up from setProjectRootOverride to find .codexcli directory', async () => {
+    it('walks up from setProjectRootOverride to find .reverie directory', async () => {
       const nested = path.join(tmpDir, 'a', 'b', 'c');
       fs.mkdirSync(nested, { recursive: true });
-      fs.mkdirSync(path.join(tmpDir, '.codexcli'));
+      fs.mkdirSync(path.join(tmpDir, '.reverie'));
 
       vi.resetModules();
       const { findProjectStoreDir, clearProjectFileCache, setProjectRootOverride } = await import('../utils/paths');
       clearProjectFileCache();
       setProjectRootOverride(nested);
       try {
-        expect(findProjectStoreDir()).toBe(path.join(tmpDir, '.codexcli'));
+        expect(findProjectStoreDir()).toBe(path.join(tmpDir, '.reverie'));
       } finally {
         setProjectRootOverride(null);
       }
     });
 
     it('does not match a file named .codexcli (only directories)', async () => {
-      fs.writeFileSync(path.join(tmpDir, '.codexcli'), 'not a dir');
+      fs.writeFileSync(path.join(tmpDir, '.reverie'), 'not a dir');
 
       vi.resetModules();
       const { findProjectStoreDir, clearProjectFileCache, setProjectRootOverride } = await import('../utils/paths');

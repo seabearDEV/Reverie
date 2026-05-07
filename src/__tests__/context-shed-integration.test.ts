@@ -1,4 +1,4 @@
-// Integration tests for the codex_context size-budget shed wiring (#100).
+// Integration tests for the reverie_context size-budget shed wiring (#100).
 // Verifies that showContext (CLI) actually invokes the shed function and
 // surfaces the right notice + JSON fields end-to-end.
 
@@ -80,7 +80,7 @@ describe('showContext shed integration (#100)', () => {
     const output = logged.join('\n');
     expect(output).toContain('[trimmed:');
     expect(output).toContain('files.*');
-    expect(output).toContain('codex_get');
+    expect(output).toContain('reverie_get');
     // project.name preserved (never-shed)
     expect(output).toContain('project.name');
     // files.* shed
@@ -136,7 +136,7 @@ describe('showContext shed integration (#100)', () => {
     const output = logged.join('\n');
     expect(output).toContain('still exceeds budget');
     expect(output).toContain('bootstrap_max_response_bytes');
-    expect(output).toContain('codex_config_set');
+    expect(output).toContain('reverie_config_set');
   });
 
   it('--json output includes pathologicalOverflow flag when triggered', () => {
@@ -151,9 +151,9 @@ describe('showContext shed integration (#100)', () => {
     expect(parsed.degraded).toBe(true);
   });
 
-  it('CODEX_BOOTSTRAP_MAX_BYTES env wins over config', () => {
-    const original = process.env.CODEX_BOOTSTRAP_MAX_BYTES;
-    process.env.CODEX_BOOTSTRAP_MAX_BYTES = '200';
+  it('RVR_BOOTSTRAP_MAX_BYTES env wins over config', () => {
+    const original = process.env.RVR_BOOTSTRAP_MAX_BYTES;
+    process.env.RVR_BOOTSTRAP_MAX_BYTES = '200';
     try {
       // Config says 50KB (no shed expected) but env says 200B (shed expected).
       mockLoadConfig.mockReturnValue({ bootstrap_max_response_bytes: 50 * 1024 } as ReturnType<typeof loadConfig>);
@@ -166,8 +166,8 @@ describe('showContext shed integration (#100)', () => {
       const parsed = JSON.parse(logged.join('\n'));
       expect(parsed.degraded).toBe(true);
     } finally {
-      if (original === undefined) delete process.env.CODEX_BOOTSTRAP_MAX_BYTES;
-      else process.env.CODEX_BOOTSTRAP_MAX_BYTES = original;
+      if (original === undefined) delete process.env.RVR_BOOTSTRAP_MAX_BYTES;
+      else process.env.RVR_BOOTSTRAP_MAX_BYTES = original;
     }
   });
 });

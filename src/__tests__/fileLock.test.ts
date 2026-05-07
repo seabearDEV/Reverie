@@ -55,32 +55,32 @@ describe('withFileLock', () => {
     fs.writeFileSync(lockPath, String(process.pid));
     // Keep mtime fresh so it won't be considered stale
 
-    // Without CODEX_DISABLE_LOCKING set, withFileLock fails closed
-    const previousEnv = process.env.CODEX_DISABLE_LOCKING;
-    delete process.env.CODEX_DISABLE_LOCKING;
+    // Without RVR_DISABLE_LOCKING set, withFileLock fails closed
+    const previousEnv = process.env.RVR_DISABLE_LOCKING;
+    delete process.env.RVR_DISABLE_LOCKING;
     try {
       expect(() => withFileLock(testFile, () => 'should not run'))
         .toThrow(/Unable to acquire lock/);
     } finally {
-      if (previousEnv !== undefined) process.env.CODEX_DISABLE_LOCKING = previousEnv;
+      if (previousEnv !== undefined) process.env.RVR_DISABLE_LOCKING = previousEnv;
       fs.unlinkSync(lockPath);
     }
   });
 
-  it('falls back to lockless execution when CODEX_DISABLE_LOCKING=1', () => {
+  it('falls back to lockless execution when RVR_DISABLE_LOCKING=1', () => {
     // Same setup: a non-stale lock that all retries will fail to break
     const lockPath = testFile + '.lock';
     fs.writeFileSync(lockPath, String(process.pid));
 
-    const previousEnv = process.env.CODEX_DISABLE_LOCKING;
-    process.env.CODEX_DISABLE_LOCKING = '1';
+    const previousEnv = process.env.RVR_DISABLE_LOCKING;
+    process.env.RVR_DISABLE_LOCKING = '1';
     try {
       // With the env var set, the closure runs anyway (test escape hatch)
       const result = withFileLock(testFile, () => 'fallback');
       expect(result).toBe('fallback');
     } finally {
-      if (previousEnv !== undefined) process.env.CODEX_DISABLE_LOCKING = previousEnv;
-      else delete process.env.CODEX_DISABLE_LOCKING;
+      if (previousEnv !== undefined) process.env.RVR_DISABLE_LOCKING = previousEnv;
+      else delete process.env.RVR_DISABLE_LOCKING;
       fs.unlinkSync(lockPath);
     }
   });

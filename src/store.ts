@@ -68,7 +68,7 @@ let migrationDone = false;
 
 /** Ensure the v1.10.0 global store directory exists. */
 function ensureGlobalStoreDirExists(): void {
-  ensureDataDirectoryExists();  // parent (~/.codexcli/) must exist first
+  ensureDataDirectoryExists();  // parent (~/.reverie/) must exist first
   const storeDir = getGlobalStoreDirPath();
   if (!fs.existsSync(storeDir)) {
     fs.mkdirSync(storeDir, { recursive: true, mode: 0o700 });
@@ -80,11 +80,14 @@ function getGlobalStore(): ScopedStore {
     if (!migrationDone) {
       // Two-stage migration chain:
       //   1. Legacy → unified: handles pre-v1.0 data (entries.json + aliases.json + confirm.json)
-      //      and the pre-rename data.json format. Produces a unified .codexcli/data.json.
+      //      and the pre-rename data.json format. Produces a unified data.json in the data dir.
       //   2. Unified → directory (v1.10.0): converts the unified file to the file-per-entry
-      //      layout at ~/.codexcli/store/. This is the new canonical layout.
+      //      layout at ~/.reverie/store/. This is the new canonical layout.
       //
-      // Ensure the parent directory (~/.codexcli/) exists before the
+      // (v1.0.0-beta.1+: the data dir itself is auto-migrated from ~/.codexcli/ to
+      // ~/.reverie/ in ensureDataDirectoryExists() before this chain runs.)
+      //
+      // Ensure the parent directory (~/.reverie/) exists before the
       // directory migration runs, so its file lock (placed at
       // `<storeDir>.lock`, a sibling of the store dir) can be created.
       // Without this, pristine installs would fall through to the
@@ -128,9 +131,12 @@ let projectStore: ScopedStore | null = null;
 let projectStoreDirPath: string | null = null;
 
 function getProjectStore(): ScopedStore | null {
-  // v1.10.0 on-demand migration: if no `.codexcli/` directory is found but a
+  // v1.10.0 on-demand migration: if no `.reverie/` directory is found but a
   // legacy `.codexcli.json` file exists at the same logical location, convert
-  // it in place before resolving the store.
+  // it in place before resolving the store. (Note: legacy `.codexcli/` dirs
+  // are auto-migrated to `.reverie/` inline by paths.ts walk-up resolution,
+  // so by the time we get here, the only legacy form left is the pre-v1.10
+  // single-file `.codexcli.json`.)
   let projectDir = findProjectStoreDir();
 
   if (!projectDir) {
@@ -138,7 +144,9 @@ function getProjectStore(): ScopedStore | null {
     // findProjectFile may return either a file or a directory. We only want to
     // trigger migration if it's specifically a legacy `.codexcli.json` file.
     if (legacyPath && path.basename(legacyPath) === '.codexcli.json') {
-      const newDir = path.join(path.dirname(legacyPath), '.codexcli');
+      // Migrate directly to the canonical `.reverie/` layout (skipping the
+      // intermediate `.codexcli/` directory format that v1.10–v1.0.0-beta.0 used).
+      const newDir = path.join(path.dirname(legacyPath), '.reverie');
       try {
         const result = migrateFileToDirectory(legacyPath, newDir);
         if (result.status === 'migrated') {

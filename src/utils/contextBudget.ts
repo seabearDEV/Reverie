@@ -1,4 +1,4 @@
-// codex_context size-budget shedding (#100). When the projected response
+// reverie_context size-budget shedding (#100). When the projected response
 // exceeds the configured byte budget AND tier !== 'full', drop entries by
 // priority (files.* → arch.* → large context.*) until under budget. Never
 // shed: project.*, conventions.*, commands.*, deps.*, context.next_session.
@@ -131,12 +131,12 @@ export function shedToFitBudget(
  * empty string if nothing was shed.
  *
  *   "[trimmed: files.* (12 entries, 8.2K), arch.* (5 entries, 2.1K) —
- *    fetch via codex_get <key> or codex_context tier:\"full\"]"
+ *    fetch via reverie_get <key> or reverie_context tier:\"full\"]"
  */
 export function formatShedNotice(segments: ShedSegment[]): string {
   if (segments.length === 0) return '';
   const parts = segments.map(s => `${s.label} (${s.keys.length} ${s.keys.length === 1 ? 'entry' : 'entries'}, ${formatBytes(s.bytes)})`);
-  return `[trimmed: ${parts.join(', ')} — fetch via codex_get <key> or codex_context tier:"full"]`;
+  return `[trimmed: ${parts.join(', ')} — fetch via reverie_get <key> or reverie_context tier:"full"]`;
 }
 
 /**
@@ -146,8 +146,8 @@ export function formatShedNotice(segments: ShedSegment[]): string {
  * namespace (per #100 design pathological-case requirement).
  */
 export const PATHOLOGICAL_OVERFLOW_NOTICE =
-  '[warning: codex_context payload still exceeds budget after shedding all sheddable namespaces. ' +
-  'Increase bootstrap_max_response_bytes (codex_config_set) or audit project.*, conventions.*, commands.*, deps.*, and context.next_session for over-long entries.]';
+  '[warning: reverie_context payload still exceeds budget after shedding all sheddable namespaces. ' +
+  'Increase bootstrap_max_response_bytes (reverie_config_set) or audit project.*, conventions.*, commands.*, deps.*, and context.next_session for over-long entries.]';
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n}B`;

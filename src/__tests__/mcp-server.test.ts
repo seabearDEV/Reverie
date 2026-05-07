@@ -271,9 +271,9 @@ vi.mock('../utils/telemetry', () => ({
     deliveryCostTokens: 0, netTokensSaved: 0, calibration: {},
   })),
   classifyOp: vi.fn((tool: string) => {
-    if (['codex_set', 'codex_remove', 'codex_copy', 'codex_rename', 'codex_import', 'codex_reset', 'codex_alias_set', 'codex_alias_remove', 'codex_config_set', 'codex_init'].includes(tool)) return 'write';
-    if (tool === 'codex_run') return 'exec';
-    if (['codex_context', 'codex_get', 'codex_find', 'codex_export', 'codex_alias_list', 'codex_config_get', 'codex_stale', 'codex_lint'].includes(tool)) return 'read';
+    if (['reverie_set', 'reverie_remove', 'reverie_copy', 'reverie_rename', 'reverie_import', 'reverie_reset', 'reverie_alias_set', 'reverie_alias_remove', 'reverie_config_set', 'reverie_init'].includes(tool)) return 'write';
+    if (tool === 'reverie_run') return 'exec';
+    if (['reverie_context', 'reverie_get', 'reverie_find', 'reverie_export', 'reverie_alias_list', 'reverie_config_get', 'reverie_stale', 'reverie_lint'].includes(tool)) return 'read';
     return 'meta';
   }),
   getTelemetryPath: vi.fn(() => '/mock/telemetry.jsonl'),
@@ -327,15 +327,15 @@ describe('MCP Server Tools', () => {
     resetMocks();
   });
 
-  describe('codex_set', () => {
+  describe('reverie_set', () => {
     it('sets a value and returns success', async () => {
-      const result = await toolHandlers['codex_set']({ key: 'server.ip', value: '10.0.0.1' });
+      const result = await toolHandlers['reverie_set']({ key: 'server.ip', value: '10.0.0.1' });
       expect(result.content[0].text).toContain('Set: server.ip = 10.0.0.1');
       expect(result.isError).toBeUndefined();
     });
 
     it('masks plaintext in response when encrypt is true', async () => {
-      const result = await toolHandlers['codex_set']({
+      const result = await toolHandlers['reverie_set']({
         key: 'api.secret', value: 'mysecret', encrypt: true, password: 'pass',
       });
       expect(result.isError).toBeUndefined();
@@ -344,7 +344,7 @@ describe('MCP Server Tools', () => {
     });
 
     it('masks plaintext in response when encrypt is true with alias', async () => {
-      const result = await toolHandlers['codex_set']({
+      const result = await toolHandlers['reverie_set']({
         key: 'api.secret', value: 'mysecret', encrypt: true, password: 'pass', alias: 'sec',
       });
       expect(result.isError).toBeUndefined();
@@ -354,41 +354,41 @@ describe('MCP Server Tools', () => {
     });
   });
 
-  describe('codex_get', () => {
+  describe('reverie_get', () => {
     it('returns all entries', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
-      const result = await toolHandlers['codex_get']({ key: undefined, format: undefined, values: true });
+      const result = await toolHandlers['reverie_get']({ key: undefined, format: undefined, values: true });
       expect(result.content[0].text).toContain('server.ip: 10.0.0.1');
     });
 
     it('returns "No entries" when store is empty', async () => {
-      const result = await toolHandlers['codex_get']({ key: undefined, format: undefined });
+      const result = await toolHandlers['reverie_get']({ key: undefined, format: undefined });
       expect(result.content[0].text).toBe('No entries found.');
     });
 
     it('returns a leaf value', async () => {
       Object.assign(mockData, { db: { host: 'localhost' } });
       Object.assign(mockMetaData, { 'db.host': Date.now() });
-      const result = await toolHandlers['codex_get']({ key: 'db.host', format: undefined });
+      const result = await toolHandlers['reverie_get']({ key: 'db.host', format: undefined });
       expect(result.content[0].text).toBe('db.host: localhost');
     });
 
     it('returns a subtree in flat format', async () => {
       Object.assign(mockData, { db: { host: 'localhost', port: '5432' } });
-      const result = await toolHandlers['codex_get']({ key: 'db', format: undefined, values: true });
+      const result = await toolHandlers['reverie_get']({ key: 'db', format: undefined, values: true });
       expect(result.content[0].text).toContain('db.host: localhost');
       expect(result.content[0].text).toContain('db.port: 5432');
     });
 
     it('returns error for missing key', async () => {
-      const result = await toolHandlers['codex_get']({ key: 'missing', format: undefined });
+      const result = await toolHandlers['reverie_get']({ key: 'missing', format: undefined });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("'missing' not found");
     });
 
     it('uses tree format when requested', async () => {
       Object.assign(mockData, { a: '1' });
-      const result = await toolHandlers['codex_get']({ key: undefined, format: 'tree' });
+      const result = await toolHandlers['reverie_get']({ key: undefined, format: 'tree' });
       expect(result.content[0].text).toBe('tree-output');
     });
 
@@ -396,14 +396,14 @@ describe('MCP Server Tools', () => {
       const encrypted = encryptValue('secret', 'pass');
       Object.assign(mockData, { api: { key: encrypted } });
       Object.assign(mockMetaData, { 'api.key': Date.now() });
-      const result = await toolHandlers['codex_get']({ key: 'api.key', format: undefined });
+      const result = await toolHandlers['reverie_get']({ key: 'api.key', format: undefined });
       expect(result.content[0].text).toBe('api.key: [encrypted]');
     });
 
     it('shows [untracked] for leaf value with no meta', async () => {
       Object.assign(mockData, { db: { host: 'localhost' } });
       // mockMetaData is empty — no timestamp for db.host
-      const result = await toolHandlers['codex_get']({ key: 'db.host', format: undefined });
+      const result = await toolHandlers['reverie_get']({ key: 'db.host', format: undefined });
       expect(result.content[0].text).toBe('db.host: localhost [untracked]');
     });
 
@@ -411,14 +411,14 @@ describe('MCP Server Tools', () => {
       Object.assign(mockData, { db: { host: 'localhost' } });
       const oldTs = Date.now() - 45 * 86400000;
       Object.assign(mockMetaData, { 'db.host': oldTs });
-      const result = await toolHandlers['codex_get']({ key: 'db.host', format: undefined });
+      const result = await toolHandlers['reverie_get']({ key: 'db.host', format: undefined });
       expect(result.content[0].text).toMatch(/^db\.host: localhost \[\d+d\]$/);
     });
 
     it('shows [encrypted] for encrypted values in flat listing', async () => {
       const encrypted = encryptValue('secret', 'pass');
       Object.assign(mockData, { api: { key: encrypted }, plain: { val: 'visible' } });
-      const result = await toolHandlers['codex_get']({ key: undefined, format: undefined, values: true });
+      const result = await toolHandlers['reverie_get']({ key: undefined, format: undefined, values: true });
       expect(result.content[0].text).toContain('api.key: [encrypted]');
       expect(result.content[0].text).toContain('plain.val: visible');
     });
@@ -426,44 +426,44 @@ describe('MCP Server Tools', () => {
     it('shows [encrypted] for encrypted values in subtree flat format', async () => {
       const encrypted = encryptValue('secret', 'pass');
       Object.assign(mockData, { api: { key: encrypted, name: 'myapi' } });
-      const result = await toolHandlers['codex_get']({ key: 'api', format: undefined, values: true });
+      const result = await toolHandlers['reverie_get']({ key: 'api', format: undefined, values: true });
       expect(result.content[0].text).toContain('api.key: [encrypted]');
       expect(result.content[0].text).toContain('api.name: myapi');
     });
   });
 
-  describe('codex_remove', () => {
+  describe('reverie_remove', () => {
     it('removes an existing key', async () => {
       Object.assign(mockData, { foo: 'bar' });
-      const result = await toolHandlers['codex_remove']({ key: 'foo' });
+      const result = await toolHandlers['reverie_remove']({ key: 'foo' });
       expect(result.content[0].text).toContain('Removed: foo');
     });
 
     it('returns error for missing key', async () => {
-      const result = await toolHandlers['codex_remove']({ key: 'nope' });
+      const result = await toolHandlers['reverie_remove']({ key: 'nope' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("'nope' not found");
     });
   });
 
-  describe('codex_rename', () => {
+  describe('reverie_rename', () => {
     it('renames an entry key', async () => {
       Object.assign(mockData, { old: { key: 'value' } });
-      const result = await toolHandlers['codex_rename']({ oldKey: 'old.key', newKey: 'new.key' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'old.key', newKey: 'new.key' });
       expect(result.content[0].text).toContain('Renamed: old.key -> new.key');
       expect(mockData.new?.key).toBe('value');
       expect(mockData.old?.key).toBeUndefined();
     });
 
     it('returns error when source key not found', async () => {
-      const result = await toolHandlers['codex_rename']({ oldKey: 'missing', newKey: 'new' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'missing', newKey: 'new' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("'missing' not found");
     });
 
     it('returns error when destination already exists', async () => {
       Object.assign(mockData, { old: 'value', new: 'existing' });
-      const result = await toolHandlers['codex_rename']({ oldKey: 'old', newKey: 'new' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'old', newKey: 'new' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("'new' already exists");
     });
@@ -471,7 +471,7 @@ describe('MCP Server Tools', () => {
     it('re-points aliases from old key to new key', async () => {
       Object.assign(mockData, { old: 'value' });
       Object.assign(mockAliases, { shortcut: 'old' });
-      const result = await toolHandlers['codex_rename']({ oldKey: 'old', newKey: 'new' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'old', newKey: 'new' });
       expect(result.content[0].text).toContain('Renamed: old -> new');
       expect(mockAliases.shortcut).toBe('new');
     });
@@ -479,7 +479,7 @@ describe('MCP Server Tools', () => {
     it('moves confirm metadata to new key', async () => {
       Object.assign(mockData, { old: 'echo dangerous' });
       Object.assign(mockConfirmKeys, { old: true as const });
-      const result = await toolHandlers['codex_rename']({ oldKey: 'old', newKey: 'new' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'old', newKey: 'new' });
       expect(result.content[0].text).toContain('Renamed: old -> new');
       expect(mockConfirmKeys.old).toBeUndefined();
       expect(mockConfirmKeys.new).toBe(true);
@@ -487,21 +487,21 @@ describe('MCP Server Tools', () => {
 
     it('renames an alias when is_alias is true', async () => {
       Object.assign(mockAliases, { oldAlias: 'some.key' });
-      const result = await toolHandlers['codex_rename']({ oldKey: 'oldAlias', newKey: 'newAlias', is_alias: true });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'oldAlias', newKey: 'newAlias', is_alias: true });
       expect(result.content[0].text).toContain("Alias 'oldAlias' renamed to 'newAlias'");
       expect(mockAliases.newAlias).toBe('some.key');
       expect(mockAliases.oldAlias).toBeUndefined();
     });
 
     it('returns error for missing alias in alias mode', async () => {
-      const result = await toolHandlers['codex_rename']({ oldKey: 'nope', newKey: 'new', is_alias: true });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'nope', newKey: 'new', is_alias: true });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("'nope' not found");
     });
 
     it('returns error when target alias already exists', async () => {
       Object.assign(mockAliases, { oldAlias: 'a.key', newAlias: 'b.key' });
-      const result = await toolHandlers['codex_rename']({ oldKey: 'oldAlias', newKey: 'newAlias', is_alias: true });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'oldAlias', newKey: 'newAlias', is_alias: true });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("'newAlias' already exists");
     });
@@ -509,15 +509,15 @@ describe('MCP Server Tools', () => {
     it('resolves alias before renaming entry', async () => {
       Object.assign(mockData, { actual: { key: 'value' } });
       Object.assign(mockAliases, { shortcut: 'actual.key' });
-      const result = await toolHandlers['codex_rename']({ oldKey: 'shortcut', newKey: 'renamed.key' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'shortcut', newKey: 'renamed.key' });
       expect(result.content[0].text).toContain('Renamed: actual.key -> renamed.key');
     });
   });
 
-  describe('codex_find', () => {
+  describe('reverie_find', () => {
     it('finds matching entries', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
-      const result = await toolHandlers['codex_find']({
+      const result = await toolHandlers['reverie_find']({
         query: 'server',
         aliasesOnly: undefined, entriesOnly: undefined,
       });
@@ -527,7 +527,7 @@ describe('MCP Server Tools', () => {
     it('respects aliasesOnly — skips data entries', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
       Object.assign(mockAliases, { srv: 'server.ip' });
-      const result = await toolHandlers['codex_find']({
+      const result = await toolHandlers['reverie_find']({
         query: 'server',
         aliasesOnly: true, entriesOnly: undefined,
       });
@@ -539,7 +539,7 @@ describe('MCP Server Tools', () => {
     it('respects entriesOnly — skips alias search', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
       Object.assign(mockAliases, { srv: 'server.ip' });
-      const result = await toolHandlers['codex_find']({
+      const result = await toolHandlers['reverie_find']({
         query: 'server',
         aliasesOnly: undefined, entriesOnly: true,
       });
@@ -549,7 +549,7 @@ describe('MCP Server Tools', () => {
     });
 
     it('returns no results message', async () => {
-      const result = await toolHandlers['codex_find']({
+      const result = await toolHandlers['reverie_find']({
         query: 'nonexistent',
         aliasesOnly: undefined, entriesOnly: undefined,
       });
@@ -559,7 +559,7 @@ describe('MCP Server Tools', () => {
     it('shows [encrypted] for encrypted values matched by key', async () => {
       const encrypted = encryptValue('secret', 'pass');
       Object.assign(mockData, { api: { key: encrypted } });
-      const result = await toolHandlers['codex_find']({
+      const result = await toolHandlers['reverie_find']({
         query: 'api',
         aliasesOnly: undefined, entriesOnly: undefined,
       });
@@ -569,7 +569,7 @@ describe('MCP Server Tools', () => {
     it('does not match encrypted values by value content', async () => {
       const encrypted = encryptValue('findme', 'pass');
       Object.assign(mockData, { api: { key: encrypted } });
-      const result = await toolHandlers['codex_find']({
+      const result = await toolHandlers['reverie_find']({
         query: 'findme',
         aliasesOnly: undefined, entriesOnly: undefined,
       });
@@ -577,46 +577,46 @@ describe('MCP Server Tools', () => {
     });
   });
 
-  describe('codex_alias_set', () => {
+  describe('reverie_alias_set', () => {
     it('creates an alias', async () => {
-      const result = await toolHandlers['codex_alias_set']({ alias: 'srv', key: 'server.ip' });
+      const result = await toolHandlers['reverie_alias_set']({ alias: 'srv', key: 'server.ip' });
       expect(result.content[0].text).toContain('Alias set: srv -> server.ip');
     });
   });
 
-  describe('codex_alias_remove', () => {
+  describe('reverie_alias_remove', () => {
     it('removes an existing alias', async () => {
       Object.assign(mockAliases, { srv: 'server.ip' });
-      const result = await toolHandlers['codex_alias_remove']({ alias: 'srv' });
+      const result = await toolHandlers['reverie_alias_remove']({ alias: 'srv' });
       expect(result.content[0].text).toContain('Alias removed: srv');
     });
 
     it('returns error for missing alias', async () => {
-      const result = await toolHandlers['codex_alias_remove']({ alias: 'nope' });
+      const result = await toolHandlers['reverie_alias_remove']({ alias: 'nope' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("'nope' not found");
     });
   });
 
-  describe('codex_alias_list', () => {
+  describe('reverie_alias_list', () => {
     it('lists all aliases', async () => {
       Object.assign(mockAliases, { srv: 'server.ip', db: 'database.host' });
-      const result = await toolHandlers['codex_alias_list']({});
+      const result = await toolHandlers['reverie_alias_list']({});
       expect(result.content[0].text).toContain('srv -> server.ip');
       expect(result.content[0].text).toContain('db -> database.host');
     });
 
     it('returns message when no aliases defined', async () => {
-      const result = await toolHandlers['codex_alias_list']({});
+      const result = await toolHandlers['reverie_alias_list']({});
       expect(result.content[0].text).toBe('No aliases defined.');
     });
   });
 
-  describe('codex_run', () => {
+  describe('reverie_run', () => {
     it('executes a stored command and returns stdout with command prefix', async () => {
       Object.assign(mockData, { cmd: 'echo hello' });
       mockExecSync.mockReturnValue('hello\n');
-      const result = await toolHandlers['codex_run']({ key: 'cmd', dry: undefined });
+      const result = await toolHandlers['reverie_run']({ key: 'cmd', dry: undefined });
       expect(result.content[0].text).toBe('$ echo hello\nhello\n');
       expect(mockExecSync).toHaveBeenCalledWith('echo hello', expect.objectContaining({
         encoding: 'utf-8',
@@ -627,20 +627,20 @@ describe('MCP Server Tools', () => {
 
     it('returns the command with dry: true', async () => {
       Object.assign(mockData, { cmd: 'echo hello' });
-      const result = await toolHandlers['codex_run']({ key: 'cmd', dry: true });
+      const result = await toolHandlers['reverie_run']({ key: 'cmd', dry: true });
       expect(result.content[0].text).toBe('$ echo hello');
       expect(mockExecSync).not.toHaveBeenCalled();
     });
 
     it('returns error for missing key', async () => {
-      const result = await toolHandlers['codex_run']({ key: 'nope', dry: undefined });
+      const result = await toolHandlers['reverie_run']({ key: 'nope', dry: undefined });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("'nope' not found");
     });
 
     it('returns error when value is not a string', async () => {
       Object.assign(mockData, { nested: { a: '1' } });
-      const result = await toolHandlers['codex_run']({ key: 'nested', dry: undefined });
+      const result = await toolHandlers['reverie_run']({ key: 'nested', dry: undefined });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('not a string command');
     });
@@ -653,7 +653,7 @@ describe('MCP Server Tools', () => {
         err.stderr = 'command failed';
         throw err;
       });
-      const result = await toolHandlers['codex_run']({ key: 'cmd', dry: undefined });
+      const result = await toolHandlers['reverie_run']({ key: 'cmd', dry: undefined });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('$ false');
       expect(result.content[0].text).toContain('exit 1');
@@ -664,14 +664,14 @@ describe('MCP Server Tools', () => {
       Object.assign(mockData, { commands: { greet: 'echo hello' } });
       Object.assign(mockAliases, { hi: 'commands.greet' });
       mockExecSync.mockReturnValue('hello\n');
-      const result = await toolHandlers['codex_run']({ key: 'hi', dry: undefined });
+      const result = await toolHandlers['reverie_run']({ key: 'hi', dry: undefined });
       expect(result.content[0].text).toBe('$ echo hello\nhello\n');
     });
 
     it('resolves alias with dry run', async () => {
       Object.assign(mockData, { commands: { greet: 'echo hello' } });
       Object.assign(mockAliases, { hi: 'commands.greet' });
-      const result = await toolHandlers['codex_run']({ key: 'hi', dry: true });
+      const result = await toolHandlers['reverie_run']({ key: 'hi', dry: true });
       expect(result.content[0].text).toBe('$ echo hello');
       expect(mockExecSync).not.toHaveBeenCalled();
     });
@@ -679,7 +679,7 @@ describe('MCP Server Tools', () => {
     it('returns error when value is encrypted', async () => {
       const encrypted = encryptValue('echo secret', 'pass');
       Object.assign(mockData, { cmd: encrypted });
-      const result = await toolHandlers['codex_run']({ key: 'cmd', dry: undefined });
+      const result = await toolHandlers['reverie_run']({ key: 'cmd', dry: undefined });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('encrypted');
       expect(result.content[0].text).toContain('not supported via MCP');
@@ -687,71 +687,71 @@ describe('MCP Server Tools', () => {
     });
   });
 
-  describe('codex_config_get', () => {
+  describe('reverie_config_get', () => {
     it('returns all config settings when no key provided', async () => {
-      const result = await toolHandlers['codex_config_get']({ key: undefined });
+      const result = await toolHandlers['reverie_config_get']({ key: undefined });
       expect(result.content[0].text).toContain('colors: true');
       expect(result.content[0].text).toContain('theme: default');
     });
 
     it('returns a single config value', async () => {
-      const result = await toolHandlers['codex_config_get']({ key: 'theme' });
+      const result = await toolHandlers['reverie_config_get']({ key: 'theme' });
       expect(result.content[0].text).toBe('theme: default');
     });
 
     it('returns error for unknown key', async () => {
-      const result = await toolHandlers['codex_config_get']({ key: 'unknown' });
+      const result = await toolHandlers['reverie_config_get']({ key: 'unknown' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Unknown config key: 'unknown'");
     });
   });
 
-  describe('codex_config_set', () => {
+  describe('reverie_config_set', () => {
     it('sets a valid config key', async () => {
-      const result = await toolHandlers['codex_config_set']({ key: 'theme', value: 'dark' });
+      const result = await toolHandlers['reverie_config_set']({ key: 'theme', value: 'dark' });
       expect(result.content[0].text).toContain('Config set: theme = dark');
     });
 
     it('converts boolean for colors', async () => {
-      const result = await toolHandlers['codex_config_set']({ key: 'colors', value: 'true' });
+      const result = await toolHandlers['reverie_config_set']({ key: 'colors', value: 'true' });
       expect(result.content[0].text).toContain('Config set: colors = true');
     });
 
     it('converts "1" to true for colors', async () => {
-      const result = await toolHandlers['codex_config_set']({ key: 'colors', value: '1' });
+      const result = await toolHandlers['reverie_config_set']({ key: 'colors', value: '1' });
       expect(result.content[0].text).toContain('Config set: colors = 1');
     });
 
     it('returns error for unknown key', async () => {
-      const result = await toolHandlers['codex_config_set']({ key: 'bad', value: 'x' });
+      const result = await toolHandlers['reverie_config_set']({ key: 'bad', value: 'x' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Unknown config key: 'bad'");
     });
   });
 
-  describe('codex_export', () => {
+  describe('reverie_export', () => {
     it('exports data only as valid JSON wrapped in the envelope', async () => {
       Object.assign(mockData, { a: '1' });
-      const result = await toolHandlers['codex_export']({ type: 'entries', pretty: undefined });
+      const result = await toolHandlers['reverie_export']({ type: 'entries', pretty: undefined });
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.$codexcli.type).toBe('entries');
+      expect(parsed.$reverie.type).toBe('entries');
       expect(parsed.entries).toEqual({ a: '1' });
     });
 
     it('exports aliases only as valid JSON wrapped in the envelope', async () => {
       Object.assign(mockAliases, { srv: 'server.ip' });
-      const result = await toolHandlers['codex_export']({ type: 'aliases', pretty: undefined });
+      const result = await toolHandlers['reverie_export']({ type: 'aliases', pretty: undefined });
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.$codexcli.type).toBe('aliases');
+      expect(parsed.$reverie.type).toBe('aliases');
       expect(parsed.aliases).toEqual({ srv: 'server.ip' });
     });
 
     it('exports all as wrapped JSON with entries/aliases/confirm sections', async () => {
       Object.assign(mockData, { a: '1' });
       Object.assign(mockAliases, { x: 'y' });
-      const result = await toolHandlers['codex_export']({ type: 'all', pretty: undefined });
+      const result = await toolHandlers['reverie_export']({ type: 'all', pretty: undefined });
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.$codexcli.type).toBe('all');
+      expect(parsed.$reverie.type).toBe('all');
       expect(parsed.entries).toEqual({ a: '1' });
       expect(parsed.aliases).toEqual({ x: 'y' });
       expect(parsed.confirm).toEqual({});
@@ -759,25 +759,25 @@ describe('MCP Server Tools', () => {
 
     it('pretty-prints when requested', async () => {
       Object.assign(mockData, { a: '1' });
-      const result = await toolHandlers['codex_export']({ type: 'entries', pretty: true });
+      const result = await toolHandlers['reverie_export']({ type: 'entries', pretty: true });
       expect(result.content[0].text).toContain('  "a": "1"');
     });
 
     it('masks encrypted values in data export', async () => {
       const encrypted = encryptValue('secret', 'pass');
       Object.assign(mockData, { api: { key: encrypted }, plain: 'visible' });
-      const result = await toolHandlers['codex_export']({ type: 'entries', pretty: undefined });
+      const result = await toolHandlers['reverie_export']({ type: 'entries', pretty: undefined });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.entries.api.key).toBe('[encrypted]');
       expect(parsed.entries.plain).toBe('visible');
-      expect(parsed.$codexcli.includesEncrypted).toBe(false);
+      expect(parsed.$reverie.includesEncrypted).toBe(false);
       expect(result.content[0].text).not.toContain('encrypted::v1:');
     });
 
     it('masks encrypted values in all export', async () => {
       const encrypted = encryptValue('secret', 'pass');
       Object.assign(mockData, { secret: encrypted });
-      const result = await toolHandlers['codex_export']({ type: 'all', pretty: undefined });
+      const result = await toolHandlers['reverie_export']({ type: 'all', pretty: undefined });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.entries.secret).toBe('[encrypted]');
     });
@@ -785,10 +785,10 @@ describe('MCP Server Tools', () => {
     it('emits real ciphertext when includeEncrypted: true', async () => {
       const encrypted = encryptValue('secret', 'pass');
       Object.assign(mockData, { api: { key: encrypted } });
-      const result = await toolHandlers['codex_export']({ type: 'entries', includeEncrypted: true });
+      const result = await toolHandlers['reverie_export']({ type: 'entries', includeEncrypted: true });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.entries.api.key).toBe(encrypted);
-      expect(parsed.$codexcli.includesEncrypted).toBe(true);
+      expect(parsed.$reverie.includesEncrypted).toBe(true);
       expect(result.content[0].text).toContain('encrypted::v1:');
       expect(result.content[0].text).not.toContain('[encrypted]');
     });
@@ -796,17 +796,17 @@ describe('MCP Server Tools', () => {
     it('emits real ciphertext on all export when includeEncrypted: true', async () => {
       const encrypted = encryptValue('secret', 'pass');
       Object.assign(mockData, { api: { key: encrypted } });
-      const result = await toolHandlers['codex_export']({ type: 'all', includeEncrypted: true });
+      const result = await toolHandlers['reverie_export']({ type: 'all', includeEncrypted: true });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.entries.api.key).toBe(encrypted);
-      expect(parsed.$codexcli.includesEncrypted).toBe(true);
+      expect(parsed.$reverie.includesEncrypted).toBe(true);
     });
   });
 
-  describe('codex_import', () => {
+  describe('reverie_import', () => {
     it('imports data (replace)', async () => {
       Object.assign(mockData, { old: 'val' });
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'entries', data: '{"new":"val"}', merge: false,
       });
       expect(result.content[0].text).toContain('Entries imported successfully');
@@ -815,7 +815,7 @@ describe('MCP Server Tools', () => {
 
     it('imports data (merge)', async () => {
       Object.assign(mockData, { old: 'val' });
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'entries', data: '{"new":"val"}', merge: true,
       });
       expect(result.content[0].text).toContain('Entries merged successfully');
@@ -823,7 +823,7 @@ describe('MCP Server Tools', () => {
 
     it('imports aliases (replace)', async () => {
       Object.assign(mockAliases, { old: 'path.old' });
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'aliases', data: '{"new":"path.new"}', merge: false,
       });
       expect(result.content[0].text).toContain('Aliases imported successfully');
@@ -831,7 +831,7 @@ describe('MCP Server Tools', () => {
     });
 
     it('returns error for invalid JSON', async () => {
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'entries', data: 'not-json', merge: undefined,
       });
       expect(result.isError).toBe(true);
@@ -839,7 +839,7 @@ describe('MCP Server Tools', () => {
     });
 
     it('returns error for non-object JSON', async () => {
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'entries', data: '[1,2,3]', merge: undefined,
       });
       expect(result.isError).toBe(true);
@@ -850,7 +850,7 @@ describe('MCP Server Tools', () => {
       Object.assign(mockData, { old: 'data' });
       Object.assign(mockAliases, { old: 'alias.path' });
       const json = JSON.stringify({ entries: { new: 'data' }, aliases: { new: 'alias.path' } });
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'all', data: json, merge: false,
       });
       expect(result.content[0].text).toContain('Entries, aliases, and confirm keys imported successfully');
@@ -862,7 +862,7 @@ describe('MCP Server Tools', () => {
       Object.assign(mockData, { existing: 'data' });
       Object.assign(mockAliases, { existing: 'alias.path' });
       const json = JSON.stringify({ entries: { added: 'data' }, aliases: { added: 'alias.path' } });
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'all', data: json, merge: true,
       });
       expect(result.content[0].text).toContain('Entries, aliases, and confirm keys merged successfully');
@@ -874,7 +874,7 @@ describe('MCP Server Tools', () => {
       mockConfig.import_max_bytes = 100;
       try {
         const big = JSON.stringify({ k: 'x'.repeat(500) });
-        const result = await toolHandlers['codex_import']({
+        const result = await toolHandlers['reverie_import']({
           type: 'entries', data: big, merge: false,
         });
         expect(result.isError).toBe(true);
@@ -893,7 +893,7 @@ describe('MCP Server Tools', () => {
       Object.assign(mockAliases, { preservedAlias: 'some.path' });
       const json = JSON.stringify({ entries: { ok: 'value' }, aliases: { bad: { not: 'a string' } } });
 
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'all', data: json, merge: false,
       });
 
@@ -905,7 +905,7 @@ describe('MCP Server Tools', () => {
     });
 
     it('returns error when importing all without data/aliases keys', async () => {
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'all', data: '{"foo":"bar"}', merge: undefined,
       });
       expect(result.isError).toBe(true);
@@ -913,13 +913,13 @@ describe('MCP Server Tools', () => {
     });
   });
 
-  describe('codex_export / codex_import round-trip', () => {
+  describe('reverie_export / reverie_import round-trip', () => {
     it('round-trips export all → import all', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
       Object.assign(mockAliases, { srv: 'server.ip' });
 
       // Export
-      const exported = await toolHandlers['codex_export']({ type: 'all', pretty: undefined });
+      const exported = await toolHandlers['reverie_export']({ type: 'all', pretty: undefined });
       const json = exported.content[0].text;
 
       // Clear stores
@@ -929,7 +929,7 @@ describe('MCP Server Tools', () => {
       expect(mockAliases).toEqual({});
 
       // Import
-      const result = await toolHandlers['codex_import']({ type: 'all', data: json, merge: false });
+      const result = await toolHandlers['reverie_import']({ type: 'all', data: json, merge: false });
       expect(result.content[0].text).toContain('Entries, aliases, and confirm keys imported successfully');
       expect(mockData).toEqual({ server: { ip: '10.0.0.1' } });
       expect(mockAliases).toEqual({ srv: 'server.ip' });
@@ -941,12 +941,12 @@ describe('MCP Server Tools', () => {
       const encrypted = encryptValue(plaintext, password);
       Object.assign(mockData, { api: { key: encrypted } });
 
-      const exported = await toolHandlers['codex_export']({ type: 'entries', includeEncrypted: true });
+      const exported = await toolHandlers['reverie_export']({ type: 'entries', includeEncrypted: true });
       const json = exported.content[0].text;
 
       Object.keys(mockData).forEach(k => delete mockData[k]);
 
-      const result = await toolHandlers['codex_import']({ type: 'entries', data: json, merge: false });
+      const result = await toolHandlers['reverie_import']({ type: 'entries', data: json, merge: false });
       expect(result.isError).toBeFalsy();
       expect(mockData.api).toBeDefined();
       const restored = (mockData.api as Record<string, string>).key;
@@ -959,13 +959,13 @@ describe('MCP Server Tools', () => {
       Object.assign(mockData, { api: { key: encrypted } });
 
       // Export WITHOUT includeEncrypted — produces the lossy [encrypted] sentinel
-      const exported = await toolHandlers['codex_export']({ type: 'entries' });
+      const exported = await toolHandlers['reverie_export']({ type: 'entries' });
       const json = exported.content[0].text;
       expect(json).toContain('[encrypted]');
 
       // Import must fail with a clear message instead of silently overwriting
       // the ciphertext in the store with the literal string '[encrypted]'.
-      const result = await toolHandlers['codex_import']({ type: 'entries', data: json, merge: false });
+      const result = await toolHandlers['reverie_import']({ type: 'entries', data: json, merge: false });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('masked encrypted placeholders');
 
@@ -974,17 +974,17 @@ describe('MCP Server Tools', () => {
     });
   });
 
-  describe('codex_reset', () => {
+  describe('reverie_reset', () => {
     it('resets data', async () => {
       Object.assign(mockData, { a: '1' });
-      const result = await toolHandlers['codex_reset']({ type: 'entries' });
+      const result = await toolHandlers['reverie_reset']({ type: 'entries' });
       expect(result.content[0].text).toContain('Entries reset to empty state');
       expect(mockData).toEqual({});
     });
 
     it('resets aliases', async () => {
       Object.assign(mockAliases, { srv: 'server.ip' });
-      const result = await toolHandlers['codex_reset']({ type: 'aliases' });
+      const result = await toolHandlers['reverie_reset']({ type: 'aliases' });
       expect(result.content[0].text).toContain('Aliases reset to empty state');
       expect(mockAliases).toEqual({});
     });
@@ -992,19 +992,19 @@ describe('MCP Server Tools', () => {
     it('resets all', async () => {
       Object.assign(mockData, { a: '1' });
       Object.assign(mockAliases, { srv: 'server.ip' });
-      const result = await toolHandlers['codex_reset']({ type: 'all' });
+      const result = await toolHandlers['reverie_reset']({ type: 'all' });
       expect(result.content[0].text).toContain('Entries, aliases, and confirm keys reset to empty state');
       expect(mockData).toEqual({});
       expect(mockAliases).toEqual({});
     });
   });
 
-  describe('codex_context', () => {
+  describe('reverie_context', () => {
     it('returns flat entries and aliases', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' }, db: { host: 'localhost' } });
       Object.assign(mockAliases, { srv: 'server.ip' });
 
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       const text = result.content[0].text;
       expect(text).toContain('server.ip: 10.0.0.1');
       expect(text).toContain('db.host: localhost');
@@ -1012,14 +1012,14 @@ describe('MCP Server Tools', () => {
     });
 
     it('returns message when no entries stored', async () => {
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       expect(result.content[0].text).toContain('No entries stored');
     });
 
     it('shows entries without aliases section when no aliases exist', async () => {
       Object.assign(mockData, { key: 'value' });
 
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       const text = result.content[0].text;
       expect(text).toContain('key: value');
       expect(text).not.toContain('Aliases:');
@@ -1033,7 +1033,7 @@ describe('MCP Server Tools', () => {
         arch: { pattern: 'MVC' },
         deps: { express: '4.x' },
       });
-      const result = await toolHandlers['codex_context']({ tier: 'essential' });
+      const result = await toolHandlers['reverie_context']({ tier: 'essential' });
       const text = result.content[0].text;
       expect(text).toContain('project.name: test');
       expect(text).toContain('commands.build:');
@@ -1049,7 +1049,7 @@ describe('MCP Server Tools', () => {
         arch: { pattern: 'MVC' },
         context: { note: 'important' },
       });
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       const text = result.content[0].text;
       expect(text).toContain('project.name: test');
       expect(text).toContain('context.note: important');
@@ -1062,7 +1062,7 @@ describe('MCP Server Tools', () => {
         project: { name: 'test' },
         arch: { pattern: 'MVC' },
       });
-      const result = await toolHandlers['codex_context']({ tier: 'full' });
+      const result = await toolHandlers['reverie_context']({ tier: 'full' });
       const text = result.content[0].text;
       expect(text).toContain('project.name: test');
       expect(text).toContain('arch.pattern: MVC');
@@ -1072,7 +1072,7 @@ describe('MCP Server Tools', () => {
     it('shows [untracked] for entries with no meta in context', async () => {
       Object.assign(mockData, { project: { name: 'test' } });
       // mockMetaData is empty — no timestamp
-      const result = await toolHandlers['codex_context']({ tier: 'full' });
+      const result = await toolHandlers['reverie_context']({ tier: 'full' });
       const text = result.content[0].text;
       expect(text).toContain('project.name: test [untracked]');
     });
@@ -1081,7 +1081,7 @@ describe('MCP Server Tools', () => {
       Object.assign(mockData, { project: { name: 'test' } });
       const oldTs = Date.now() - 45 * 86400000;
       Object.assign(mockMetaData, { 'project.name': oldTs });
-      const result = await toolHandlers['codex_context']({ tier: 'full' });
+      const result = await toolHandlers['reverie_context']({ tier: 'full' });
       const text = result.content[0].text;
       expect(text).toMatch(/project\.name: test \[\d+d\]/);
     });
@@ -1089,7 +1089,7 @@ describe('MCP Server Tools', () => {
     it('no tag for fresh entries in context', async () => {
       Object.assign(mockData, { project: { name: 'test' } });
       Object.assign(mockMetaData, { 'project.name': Date.now() });
-      const result = await toolHandlers['codex_context']({ tier: 'full' });
+      const result = await toolHandlers['reverie_context']({ tier: 'full' });
       const text = result.content[0].text;
       expect(text).toContain('project.name: test');
       expect(text).not.toContain('[untracked]');
@@ -1101,7 +1101,7 @@ describe('MCP Server Tools', () => {
         myteam: { workflow: 'agile' },
         arch: { pattern: 'MVC' },
       });
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       const text = result.content[0].text;
       expect(text).toContain('myteam.workflow: agile');
       expect(text).not.toContain('arch.pattern');
@@ -1110,13 +1110,13 @@ describe('MCP Server Tools', () => {
     it('includes aliases regardless of tier', async () => {
       Object.assign(mockData, { project: { name: 'test' } });
       Object.assign(mockAliases, { p: 'project.name' });
-      const result = await toolHandlers['codex_context']({ tier: 'essential' });
+      const result = await toolHandlers['reverie_context']({ tier: 'essential' });
       const text = result.content[0].text;
       expect(text).toContain('p -> project.name');
     });
   });
 
-  describe('codex_run with chain', () => {
+  describe('reverie_run with chain', () => {
     it('resolves chain keys and joins with &&', async () => {
       Object.assign(mockData, {
         cmd: { a: 'echo step-a', b: 'echo step-b' },
@@ -1124,7 +1124,7 @@ describe('MCP Server Tools', () => {
       });
       mockExecSync.mockReturnValue('step-a\nstep-b\n');
 
-      const result = await toolHandlers['codex_run']({ key: 'macros.both', chain: true });
+      const result = await toolHandlers['reverie_run']({ key: 'macros.both', chain: true });
       expect(result.content[0].text).toContain('echo step-a && echo step-b');
     });
 
@@ -1134,7 +1134,7 @@ describe('MCP Server Tools', () => {
         macros: { both: 'cmd.a cmd.b' },
       });
 
-      const result = await toolHandlers['codex_run']({ key: 'macros.both', chain: true, dry: true });
+      const result = await toolHandlers['reverie_run']({ key: 'macros.both', chain: true, dry: true });
       expect(result.content[0].text).toBe('$ echo hi && echo bye');
       expect(mockExecSync).not.toHaveBeenCalled();
     });
@@ -1145,25 +1145,25 @@ describe('MCP Server Tools', () => {
         cmd: { exists: 'echo ok' },
       });
 
-      const result = await toolHandlers['codex_run']({ key: 'macros.bad', chain: true });
+      const result = await toolHandlers['reverie_run']({ key: 'macros.bad', chain: true });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("'cmd.missing' not found");
     });
   });
 
-  describe('codex_find with regex', () => {
+  describe('reverie_find with regex', () => {
     it('matches entries by regex pattern', async () => {
       Object.assign(mockData, {
         server: { prod: { ip: '10.0.0.1' }, dev: { ip: '127.0.0.1' } },
       });
 
-      const result = await toolHandlers['codex_find']({ query: 'prod.*ip', regex: true });
+      const result = await toolHandlers['reverie_find']({ query: 'prod.*ip', regex: true });
       expect(result.content[0].text).toContain('server.prod.ip');
       expect(result.content[0].text).not.toContain('server.dev.ip');
     });
 
     it('returns error for invalid regex', async () => {
-      const result = await toolHandlers['codex_find']({ query: '[invalid', regex: true });
+      const result = await toolHandlers['reverie_find']({ query: '[invalid', regex: true });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid regex');
     });
@@ -1171,7 +1171,7 @@ describe('MCP Server Tools', () => {
     it('supports keysOnly', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
 
-      const result = await toolHandlers['codex_find']({ query: '10.0', keysOnly: true });
+      const result = await toolHandlers['reverie_find']({ query: '10.0', keysOnly: true });
       // 10.0 is only in the value, not the key — so no match with keysOnly
       expect(result.content[0].text).toContain('No results');
     });
@@ -1179,7 +1179,7 @@ describe('MCP Server Tools', () => {
     it('supports valuesOnly', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
 
-      const result = await toolHandlers['codex_find']({ query: 'server', valuesOnly: true });
+      const result = await toolHandlers['reverie_find']({ query: 'server', valuesOnly: true });
       // "server" is only in the key, not the value — so no match with valuesOnly
       expect(result.content[0].text).toContain('No results');
     });
@@ -1187,20 +1187,20 @@ describe('MCP Server Tools', () => {
     it('returns error when keysOnly and valuesOnly are both true', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
 
-      const result = await toolHandlers['codex_find']({ query: 'server', keysOnly: true, valuesOnly: true });
+      const result = await toolHandlers['reverie_find']({ query: 'server', keysOnly: true, valuesOnly: true });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('mutually exclusive');
     });
   });
 
-  describe('codex_stale', () => {
+  describe('reverie_stale', () => {
     it('returns message when no stale entries (default threshold)', async () => {
       Object.assign(mockData, { project: { name: 'test' } });
       // All entries have recent timestamps (within last 30 days)
       const recentTs = Date.now() - 1 * 86400000; // 1 day ago
       Object.assign(mockMetaData, { 'project.name': recentTs });
 
-      const result = await toolHandlers['codex_stale']({});
+      const result = await toolHandlers['reverie_stale']({});
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain('No entries older than 30 days');
     });
@@ -1214,7 +1214,7 @@ describe('MCP Server Tools', () => {
         'project.oldkey': oldTs,
       });
 
-      const result = await toolHandlers['codex_stale']({ days: 30 });
+      const result = await toolHandlers['reverie_stale']({ days: 30 });
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain('project.oldkey');
       expect(result.content[0].text).not.toContain('project.name');
@@ -1228,7 +1228,7 @@ describe('MCP Server Tools', () => {
         'project.b': ts7dAgo,
       });
 
-      const result = await toolHandlers['codex_stale']({ days: 3 });
+      const result = await toolHandlers['reverie_stale']({ days: 3 });
       expect(result.content[0].text).toContain('project.a');
       expect(result.content[0].text).toContain('project.b');
     });
@@ -1237,7 +1237,7 @@ describe('MCP Server Tools', () => {
       Object.assign(mockData, { untracked: 'value' });
       // mockMetaData is empty (no timestamps)
 
-      const result = await toolHandlers['codex_stale']({ days: 0 });
+      const result = await toolHandlers['reverie_stale']({ days: 0 });
       expect(result.content[0].text).toContain('untracked');
     });
 
@@ -1246,25 +1246,25 @@ describe('MCP Server Tools', () => {
       const oldTs = Date.now() - 90 * 86400000;
       Object.assign(mockMetaData, { g: oldTs });
 
-      const result = await toolHandlers['codex_stale']({ days: 30, scope: 'global' });
+      const result = await toolHandlers['reverie_stale']({ days: 30, scope: 'global' });
       expect(result.content[0].text).toContain('g');
     });
   });
 
-  describe('codex_audit', () => {
+  describe('reverie_audit', () => {
     it('returns no entries message when empty', async () => {
-      const result = await toolHandlers['codex_audit']({});
+      const result = await toolHandlers['reverie_audit']({});
       expect(result.content[0].text).toContain('No audit entries found');
     });
 
     it('returns formatted entries when data exists', async () => {
       const { queryAuditLog } = await import('../utils/audit');
       (queryAuditLog as any).mockReturnValueOnce([
-        { ts: Date.now(), session: 'abc', src: 'mcp', tool: 'codex_set', op: 'write', key: 'arch.mcp', scope: 'project', success: true, before: 'old', after: 'new' },
+        { ts: Date.now(), session: 'abc', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'arch.mcp', scope: 'project', success: true, before: 'old', after: 'new' },
       ]);
-      const result = await toolHandlers['codex_audit']({});
+      const result = await toolHandlers['reverie_audit']({});
       expect(result.content[0].text).toContain('Audit Log');
-      expect(result.content[0].text).toContain('codex_set');
+      expect(result.content[0].text).toContain('reverie_set');
       expect(result.content[0].text).toContain('arch.mcp');
       expect(result.content[0].text).toContain('- old');
       expect(result.content[0].text).toContain('+ new');
@@ -1272,7 +1272,7 @@ describe('MCP Server Tools', () => {
 
     it('passes filter params to queryAuditLog', async () => {
       const { queryAuditLog } = await import('../utils/audit');
-      await toolHandlers['codex_audit']({ key: 'arch', period: '7d', writes_only: true, limit: 10 });
+      await toolHandlers['reverie_audit']({ key: 'arch', period: '7d', writes_only: true, limit: 10 });
       expect(queryAuditLog).toHaveBeenCalledWith({ key: 'arch', periodDays: 7, writesOnly: true, limit: 10 });
     });
   });
@@ -1287,13 +1287,13 @@ describe('MCP Server Tools', () => {
       logAuditMock.mockClear();
     });
 
-    it('calls logAudit with before/after for codex_set', async () => {
+    it('calls logAudit with before/after for reverie_set', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
-      await toolHandlers['codex_set']({ key: 'server.ip', value: '10.0.0.2' });
+      await toolHandlers['reverie_set']({ key: 'server.ip', value: '10.0.0.2' });
       expect(logAuditMock).toHaveBeenCalledWith(
         expect.objectContaining({
           src: 'mcp',
-          tool: 'codex_set',
+          tool: 'reverie_set',
           op: 'write',
           key: 'server.ip',
           success: true,
@@ -1304,21 +1304,21 @@ describe('MCP Server Tools', () => {
     });
 
     it('calls logAudit with success: false when handler returns isError', async () => {
-      // Attempt to get a missing key — codex_get returns isError
-      await toolHandlers['codex_get']({ key: 'nonexistent' });
+      // Attempt to get a missing key — reverie_get returns isError
+      await toolHandlers['reverie_get']({ key: 'nonexistent' });
       expect(logAuditMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          tool: 'codex_get',
+          tool: 'reverie_get',
           success: false,
         })
       );
     });
 
-    it('calls logAudit with alias name as key for codex_alias_set', async () => {
-      await toolHandlers['codex_alias_set']({ alias: 'srv', key: 'server.ip' });
+    it('calls logAudit with alias name as key for reverie_alias_set', async () => {
+      await toolHandlers['reverie_alias_set']({ alias: 'srv', key: 'server.ip' });
       expect(logAuditMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          tool: 'codex_alias_set',
+          tool: 'reverie_alias_set',
           op: 'write',
           key: 'srv',
           success: true,
@@ -1326,24 +1326,24 @@ describe('MCP Server Tools', () => {
       );
     });
 
-    it('captures alias target in before for codex_alias_set when alias exists', async () => {
+    it('captures alias target in before for reverie_alias_set when alias exists', async () => {
       Object.assign(mockAliases, { srv: 'server.old' });
-      await toolHandlers['codex_alias_set']({ alias: 'srv', key: 'server.ip' });
+      await toolHandlers['reverie_alias_set']({ alias: 'srv', key: 'server.ip' });
       expect(logAuditMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          tool: 'codex_alias_set',
+          tool: 'reverie_alias_set',
           key: 'srv',
           before: 'server.old',
         })
       );
     });
 
-    it('calls logAudit with alias name as key for codex_alias_remove', async () => {
+    it('calls logAudit with alias name as key for reverie_alias_remove', async () => {
       Object.assign(mockAliases, { srv: 'server.ip' });
-      await toolHandlers['codex_alias_remove']({ alias: 'srv' });
+      await toolHandlers['reverie_alias_remove']({ alias: 'srv' });
       expect(logAuditMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          tool: 'codex_alias_remove',
+          tool: 'reverie_alias_remove',
           op: 'write',
           key: 'srv',
           success: true,
@@ -1352,13 +1352,13 @@ describe('MCP Server Tools', () => {
       );
     });
 
-    it('resolves alias key to actual path before capturing value for codex_remove', async () => {
+    it('resolves alias key to actual path before capturing value for reverie_remove', async () => {
       Object.assign(mockData, { server: { ip: '10.0.0.1' } });
       Object.assign(mockAliases, { srv: 'server.ip' });
-      await toolHandlers['codex_remove']({ key: 'srv' });
+      await toolHandlers['reverie_remove']({ key: 'srv' });
       expect(logAuditMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          tool: 'codex_remove',
+          tool: 'reverie_remove',
           key: 'srv',
           before: '10.0.0.1',
           success: true,
@@ -1366,15 +1366,15 @@ describe('MCP Server Tools', () => {
       );
     });
 
-    it('does not call logAudit for codex_stats', async () => {
+    it('does not call logAudit for reverie_stats', async () => {
       logAuditMock.mockClear();
-      await toolHandlers['codex_stats']({});
+      await toolHandlers['reverie_stats']({});
       expect(logAuditMock).not.toHaveBeenCalled();
     });
 
-    it('does not call logAudit for codex_audit tool itself', async () => {
+    it('does not call logAudit for reverie_audit tool itself', async () => {
       logAuditMock.mockClear();
-      await toolHandlers['codex_audit']({});
+      await toolHandlers['reverie_audit']({});
       expect(logAuditMock).not.toHaveBeenCalled();
     });
   });
@@ -1401,25 +1401,25 @@ describe('MCP Server Tools', () => {
       clearWriteAmpStateFn();
     });
 
-    it('codex_set on 3rd write of same key emits writeAmpWarning to audit + telemetry', async () => {
-      await toolHandlers['codex_set']({ key: 'files.x', value: 'v1' });
-      await toolHandlers['codex_set']({ key: 'files.x', value: 'v2' });
+    it('reverie_set on 3rd write of same key emits writeAmpWarning to audit + telemetry', async () => {
+      await toolHandlers['reverie_set']({ key: 'files.x', value: 'v1' });
+      await toolHandlers['reverie_set']({ key: 'files.x', value: 'v2' });
       logAuditMock.mockClear();
       logToolCallMock.mockClear();
-      const result = await toolHandlers['codex_set']({ key: 'files.x', value: 'v3' });
+      const result = await toolHandlers['reverie_set']({ key: 'files.x', value: 'v3' });
 
       expect(result.content[0].text).toContain('warning: this key has been written 3 times');
 
       expect(logAuditMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          tool: 'codex_set',
+          tool: 'reverie_set',
           writeAmpWarning: true,
           writeAmpCount: 3,
         })
       );
 
       expect(logToolCallMock).toHaveBeenCalledWith(
-        'codex_set',
+        'reverie_set',
         expect.anything(),
         expect.anything(),
         expect.anything(),
@@ -1427,27 +1427,27 @@ describe('MCP Server Tools', () => {
       );
     });
 
-    it('codex_set on 1st/2nd writes does not emit writeAmpWarning', async () => {
-      await toolHandlers['codex_set']({ key: 'files.x', value: 'v1' });
+    it('reverie_set on 1st/2nd writes does not emit writeAmpWarning', async () => {
+      await toolHandlers['reverie_set']({ key: 'files.x', value: 'v1' });
       const audit1 = logAuditMock.mock.calls[logAuditMock.mock.calls.length - 1][0] as Record<string, unknown>;
       expect(audit1.writeAmpWarning).toBeUndefined();
 
-      await toolHandlers['codex_set']({ key: 'files.x', value: 'v2' });
+      await toolHandlers['reverie_set']({ key: 'files.x', value: 'v2' });
       const audit2 = logAuditMock.mock.calls[logAuditMock.mock.calls.length - 1][0] as Record<string, unknown>;
       expect(audit2.writeAmpWarning).toBeUndefined();
     });
 
     it('different keys in same session each get their own counter', async () => {
-      await toolHandlers['codex_set']({ key: 'files.a', value: 'v' });
-      await toolHandlers['codex_set']({ key: 'files.a', value: 'v' });
+      await toolHandlers['reverie_set']({ key: 'files.a', value: 'v' });
+      await toolHandlers['reverie_set']({ key: 'files.a', value: 'v' });
       logAuditMock.mockClear();
-      const result = await toolHandlers['codex_set']({ key: 'files.b', value: 'v' });
+      const result = await toolHandlers['reverie_set']({ key: 'files.b', value: 'v' });
       expect(result.content[0].text).not.toContain('warning:');
       const audit = logAuditMock.mock.calls[0][0] as Record<string, unknown>;
       expect(audit.writeAmpWarning).toBeUndefined();
     });
 
-    it('codex_context emits degraded + shedNamespaces when over budget', async () => {
+    it('reverie_context emits degraded + shedNamespaces when over budget', async () => {
       mockConfig.bootstrap_max_response_bytes = 200;
       const big = 'x'.repeat(300);
       Object.assign(mockData, {
@@ -1455,20 +1455,20 @@ describe('MCP Server Tools', () => {
         files: { a: big, b: big, c: big },
       });
 
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       expect(result.content[0].text).toContain('[trimmed:');
       expect(result.content[0].text).toContain('files.*');
 
       expect(logAuditMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          tool: 'codex_context',
+          tool: 'reverie_context',
           degraded: true,
           shedNamespaces: expect.arrayContaining(['files.*']),
         })
       );
     });
 
-    it('codex_context with tier:"full" bypasses shed even when over budget', async () => {
+    it('reverie_context with tier:"full" bypasses shed even when over budget', async () => {
       mockConfig.bootstrap_max_response_bytes = 200;
       const big = 'x'.repeat(300);
       Object.assign(mockData, {
@@ -1476,7 +1476,7 @@ describe('MCP Server Tools', () => {
         files: { a: big, b: big, c: big },
       });
 
-      const result = await toolHandlers['codex_context']({ tier: 'full' });
+      const result = await toolHandlers['reverie_context']({ tier: 'full' });
       expect(result.content[0].text).not.toContain('[trimmed:');
       expect(result.content[0].text).toContain('files.a');
 
@@ -1485,26 +1485,26 @@ describe('MCP Server Tools', () => {
       );
     });
 
-    it('codex_context surfaces pathological-overflow notice when never-shed exceeds budget', async () => {
+    it('reverie_context surfaces pathological-overflow notice when never-shed exceeds budget', async () => {
       mockConfig.bootstrap_max_response_bytes = 50;
       Object.assign(mockData, {
         project: { name: 'x'.repeat(500) },
         files: { shedme: 'x'.repeat(100) },
       });
 
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       expect(result.content[0].text).toContain('still exceeds budget');
       expect(result.content[0].text).toContain('bootstrap_max_response_bytes');
     });
 
-    it('codex_context under budget produces no degraded signal', async () => {
+    it('reverie_context under budget produces no degraded signal', async () => {
       mockConfig.bootstrap_max_response_bytes = 50 * 1024;
       Object.assign(mockData, { project: { name: 'reverie' } });
 
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       expect(result.content[0].text).not.toContain('[trimmed:');
 
-      const auditCall = logAuditMock.mock.calls.find(c => (c[0] as { tool?: string }).tool === 'codex_context');
+      const auditCall = logAuditMock.mock.calls.find(c => (c[0] as { tool?: string }).tool === 'reverie_context');
       expect(auditCall).toBeDefined();
       const auditRow = auditCall![0] as Record<string, unknown>;
       expect(auditRow.degraded).toBeUndefined();

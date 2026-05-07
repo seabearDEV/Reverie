@@ -74,13 +74,13 @@ function releaseLock(filePath: string): void {
  * the seqlock added in v1.10.x only protects readers from torn states, not
  * writers from racing each other.
  *
- * **Test escape hatch: `CODEX_DISABLE_LOCKING=1`.** Set this env var to fall
+ * **Test escape hatch: `RVR_DISABLE_LOCKING=1`.** Set this env var to fall
  * back to running the closure unlocked when lock acquisition fails. This
  * preserves the pre-v1.11 silent-fallback behavior for tests that intentionally
  * exercise contended-lock scenarios. The env var is read fresh on every call,
  * so tests can flip it on and off without restarting the process.
  *
- * Production code should never set `CODEX_DISABLE_LOCKING`. There are no
+ * Production code should never set `RVR_DISABLE_LOCKING`. There are no
  * known production environments where lock acquisition is expected to fail.
  */
 export function withFileLock<T>(filePath: string, fn: () => T): T {
@@ -89,8 +89,8 @@ export function withFileLock<T>(filePath: string, fn: () => T): T {
     acquireLock(filePath);
     locked = true;
   } catch (err) {
-    if (process.env.CODEX_DISABLE_LOCKING === '1') {
-      debug(`Lock acquisition failed for ${filePath}, CODEX_DISABLE_LOCKING=1 set — proceeding without lock: ${String(err)}`);
+    if (process.env.RVR_DISABLE_LOCKING === '1') {
+      debug(`Lock acquisition failed for ${filePath}, RVR_DISABLE_LOCKING=1 set — proceeding without lock: ${String(err)}`);
     } else {
       throw err;
     }

@@ -527,7 +527,7 @@ function showImportPreview(sections: {
   console.log(color.gray('\nThis is a preview. No data was modified.'));
 }
 
-const PERSISTENCE_VALUE = '.codexcli/ = project knowledge store (any agent, file-per-entry layout). CLAUDE.md = Claude behavioral directives. MEMORY.md = personal user preferences. Rule: if another agent would benefit, it belongs in .codexcli/.';
+const PERSISTENCE_VALUE = '.reverie/ = project knowledge store (any agent, file-per-entry layout). CLAUDE.md = Claude behavioral directives. MEMORY.md = personal user preferences. Rule: if another agent would benefit, it belongs in .reverie/.';
 
 export function handleProjectFile(options: {
   remove?: boolean;
@@ -540,11 +540,12 @@ export function handleProjectFile(options: {
   if (options.remove) {
     const projectPath = findProjectFile();
     if (!projectPath) {
-      printError('No .codexcli project store found in current directory tree.');
+      printError('No .reverie project store found in current directory tree.');
       return;
     }
-    // findProjectFile may return either a legacy .codexcli.json file or a
-    // v1.10.0 .codexcli/ directory. rmSync handles both uniformly.
+    // findProjectFile may return either a `.reverie/` directory (v1.0.0-beta.1+)
+    // or a legacy `.codexcli.json` single-file (pre-v1.10). rmSync handles both
+    // uniformly with `recursive: true`.
     fs.rmSync(projectPath, { recursive: true, force: true });
     clearProjectFileCache();
     printSuccess(`Removed: ${projectPath}`);
@@ -552,7 +553,7 @@ export function handleProjectFile(options: {
   }
 
   const cwd = process.cwd();
-  const target = path.join(cwd, '.codexcli');
+  const target = path.join(cwd, '.reverie');
 
   // Single stat call to determine the target's state.
   let targetStat: ReturnType<typeof fs.statSync> | null = null;
@@ -573,7 +574,7 @@ export function handleProjectFile(options: {
 
   const existed = targetStat !== null;
 
-  // Create .codexcli/ directory with empty sidecars if it doesn't exist
+  // Create .reverie/ directory with empty sidecars if it doesn't exist
   if (!existed) {
     if (!options.dryRun) {
       fs.mkdirSync(target, { recursive: true, mode: 0o700 });

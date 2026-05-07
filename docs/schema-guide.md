@@ -1,16 +1,16 @@
 # Schema Guide
 
-How to structure a `.codexcli.json` file — and why it's structured the way it is.
+How to structure a the `.reverie/` store file — and why it's structured the way it is.
 
 ## The problem this solves
 
 Every time an AI agent opens a project, it faces the same question: *what do I need to know?* Without stored context, agents burn tokens re-exploring the codebase, re-reading README files, and re-discovering architectural decisions. Developers switching between projects face the same problem — they grep, they read, they forget.
 
-`.codexcli.json` solves this by giving every project a structured knowledge file that both humans and AI agents can read. But "structured" only works if the structure is consistent and intentional. This guide explains the design behind that structure.
+the `.reverie/` store solves this by giving every project a structured knowledge file that both humans and AI agents can read. But "structured" only works if the structure is consistent and intentional. This guide explains the design behind that structure.
 
 ## File anatomy
 
-A `.codexcli.json` file has five top-level sections:
+A the `.reverie/` store file has five top-level sections:
 
 ```json
 {
@@ -61,7 +61,7 @@ Every entry gets an automatic timestamp (Unix ms) when created or updated:
 
 You never edit `_meta` directly. It powers two features:
 - **Staleness detection** — `rvr stale` surfaces entries not updated in N days
-- **Age tags** — `codex_context` marks entries older than 30 days so agents know what might be outdated
+- **Age tags** — `reverie_context` marks entries older than 30 days so agents know what might be outdated
 
 ### `aliases` — shortcuts for common lookups
 
@@ -142,7 +142,7 @@ Build, test, lint, deploy, and any other commands worth remembering.
 | `commands.deploy` | Deploy to production |
 | `commands.check` | Full validation pipeline |
 
-**Why it matters:** Agents can execute these via `codex_run`. Developers can run them via `rvr run`. Having commands stored means nobody has to remember or look up the exact invocation.
+**Why it matters:** Agents can execute these via `reverie_run`. Developers can run them via `rvr run`. Having commands stored means nobody has to remember or look up the exact invocation.
 
 **Good:** `"npm run build && npm run lint && npm test"` (the full pipeline, ready to execute)
 **Bad:** `"run the build"` (not executable)
@@ -211,7 +211,7 @@ A directory to the most important files in the project, with enough context to k
 | `files.routes` | Route definitions |
 | `files.store` | Data store implementation |
 
-**Why it matters:** Agents spend significant tokens globbing and grepping to find the right file. A `files.*` entry short-circuits that search — one `codex_get` call instead of ten file searches.
+**Why it matters:** Agents spend significant tokens globbing and grepping to find the right file. A `files.*` entry short-circuits that search — one `reverie_get` call instead of ten file searches.
 
 **Good:** `"src/store.ts — ScopedStore class, mtime caching, auto-migration, meta timestamps, atomic writes via file locking"` (path + what's in it + why it matters)
 **Bad:** `"src/store.ts"` (the path alone isn't enough — agents need to know if this is the file they're looking for)
@@ -270,7 +270,7 @@ If an entry needs multiple paragraphs, it's probably better as a doc file refere
 
 ## Putting it all together
 
-Here's a minimal `.codexcli.json` for a new project:
+Here's a minimal the `.reverie/` store for a new project:
 
 ```json
 {
@@ -296,11 +296,11 @@ Here's a minimal `.codexcli.json` for a new project:
 
 Four namespaces, five entries, and an agent already knows: what the project is, how to build and test it, how errors should look, and why auth works the way it does. That's enough to be useful on day one. Add `arch.*`, `files.*`, and `deps.*` entries as you discover things worth keeping.
 
-The Reverie project's own [.codexcli.json](../.codexcli.json) is the reference implementation — 53 entries across all 7 namespaces, with aliases for common lookups and confirm metadata for the release command. Use it as a model for comprehensive coverage.
+The Reverie project's own [`.reverie/`](../.reverie/) is the reference implementation — entries across all 7 namespaces, with aliases for common lookups and confirm metadata for the release command. Use it as a model for comprehensive coverage.
 
 ## Bootstrap tiers
 
-`codex_context` is the bootstrap entry point — agents call it at session start to load all stored knowledge in one tool result. But "all stored knowledge" can be larger than the agent's tool-result cap (~25k tokens on Claude Code / Desktop, sized similarly on most hosts). The `tier` parameter lets the caller pick how much detail to materialize.
+`reverie_context` is the bootstrap entry point — agents call it at session start to load all stored knowledge in one tool result. But "all stored knowledge" can be larger than the agent's tool-result cap (~25k tokens on Claude Code / Desktop, sized similarly on most hosts). The `tier` parameter lets the caller pick how much detail to materialize.
 
 ### The three tiers
 
@@ -320,11 +320,11 @@ The tiers are inclusive cones: `essential ⊂ standard ⊂ full`. There's no way
 
 ### Relationship to the size budget (#100)
 
-When the projected response would exceed `bootstrap_max_response_bytes` (default 50KB), `codex_context` automatically sheds entries by priority — `files.*` first, then `arch.*`, then large `context.*` (largest-first). `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never shed. A `[trimmed: …]` notice at the top of the response names what was dropped and points at `codex_get <key>` or `tier:"full"` for retrieval.
+When the projected response would exceed `bootstrap_max_response_bytes` (default 50KB), `reverie_context` automatically sheds entries by priority — `files.*` first, then `arch.*`, then large `context.*` (largest-first). `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never shed. A `[trimmed: …]` notice at the top of the response names what was dropped and points at `reverie_get <key>` or `tier:"full"` for retrieval.
 
 `tier: "full"` opts out of degradation entirely. If you ask for the full payload, you get the full payload — even if that means hitting the host cap. The shed only fires for `essential` and `standard`.
 
-If even after shedding everything sheddable the response still exceeds budget (because `project.*`, `conventions.*`, `commands.*`, `deps.*`, or `context.next_session` alone are over), you'll see a second notice: `[warning: codex_context payload still exceeds budget after shedding all sheddable namespaces. Increase bootstrap_max_response_bytes (codex_config_set) or audit project.*, conventions.*, commands.*, deps.*, and context.next_session for over-long entries.]`. That's the signal to either raise the budget or trim long never-shed entries.
+If even after shedding everything sheddable the response still exceeds budget (because `project.*`, `conventions.*`, `commands.*`, `deps.*`, or `context.next_session` alone are over), you'll see a second notice: `[warning: reverie_context payload still exceeds budget after shedding all sheddable namespaces. Increase bootstrap_max_response_bytes (reverie_config_set) or audit project.*, conventions.*, commands.*, deps.*, and context.next_session for over-long entries.]`. That's the signal to either raise the budget or trim long never-shed entries.
 
 ### Configuring the budget
 
@@ -336,7 +336,7 @@ rvr config get bootstrap_max_response_bytes
 rvr config set bootstrap_max_response_bytes 102400
 ```
 
-For test/integration workflows, `CODEX_BOOTSTRAP_MAX_BYTES` env var overrides the config.
+For test/integration workflows, `RVR_BOOTSTRAP_MAX_BYTES` env var overrides the config.
 
 ## Validation
 

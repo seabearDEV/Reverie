@@ -14,13 +14,13 @@ One symptom. Three independent causes. All found by an AI agent using Reverie's 
 
 ### 1. Directory scan on every read
 
-Every `codex_get`, `codex_context`, `codex_stale`, and `codex_stats` call triggered a full `readdir` + per-file `stat` of the store directory. With 40+ entries, parallel bulk calls stacked up and wall time climbed.
+Every `reverie_get`, `reverie_context`, `reverie_stale`, and `reverie_stats` call triggered a full `readdir` + per-file `stat` of the store directory. With 40+ entries, parallel bulk calls stacked up and wall time climbed.
 
 **Fix:** Dir-mtime fast-skip. If the store directory's own `mtime` hasn't changed since the last scan, no atomic write has touched any file inside it (because `atomicWriteFileSync`'s create-tmp + rename bumps the dir mtime). Skip the scan entirely. One `stat` syscall instead of ~80.
 
 ### 2. Full audit log re-read on every query
 
-`audit.jsonl` is append-only and was re-parsed from the top on every `loadAuditLog()` call. After a few hundred operations, `codex_audit` and `codex_stats` dominated wall time.
+`audit.jsonl` is append-only and was re-parsed from the top on every `loadAuditLog()` call. After a few hundred operations, `reverie_audit` and `reverie_stats` dominated wall time.
 
 **Fix:** Incremental tail cache. Cache the parsed entries plus the byte offset of the last read. On subsequent calls, `pread()` just the new tail. Cache resets on shrink or rotation.
 
@@ -34,7 +34,7 @@ This was the subtle one. A telemetry entry with `__proto__` as its namespace hit
 
 Here's what made this different from a normal bug-fix cycle:
 
-1. **Bootstrap.** The agent called `codex_context` at session start and loaded the full project knowledge — architecture, conventions, file locations, gotchas — in one call instead of exploring the codebase from scratch.
+1. **Bootstrap.** The agent called `reverie_context` at session start and loaded the full project knowledge — architecture, conventions, file locations, gotchas — in one call instead of exploring the codebase from scratch.
 
 2. **Diagnose.** Each freeze was found during live MCP testing. The agent read the relevant source files (already knew where to look from `files.telemetry`, `files.audit`, `files.store`) and identified the root cause.
 
@@ -60,7 +60,7 @@ Here's what made this different from a normal bug-fix cycle:
 
 ## What this demonstrates
 
-**Persistent context pays compound interest.** The agent didn't spend tokens re-exploring the codebase each session. It loaded `codex_context`, knew the architecture, knew the conventions, and went straight to the problem. Every insight stored in one session accelerated the next.
+**Persistent context pays compound interest.** The agent didn't spend tokens re-exploring the codebase each session. It loaded `reverie_context`, knew the architecture, knew the conventions, and went straight to the problem. Every insight stored in one session accelerated the next.
 
 **Stored diagnosis prevents re-discovery.** The `context.mcpServerFreezeDiagnosis` entry is a playbook. If a future agent sees a freeze, it checks the three known causes before assuming it's a fourth. That's hours of debugging compressed into a few hundred bytes.
 
@@ -71,7 +71,7 @@ Here's what made this different from a normal bug-fix cycle:
 ```bash
 brew install seabearDEV/reverie/rvr   # or npm install -g reverie
 cd your-project
-rvr init                            # scan codebase, populate .codexcli/
+rvr init                            # scan codebase, populate .reverie/
 ```
 
-Add the MCP server to your AI agent configuration and call `codex_context` at session start. Every session gets smarter.
+Add the MCP server to your AI agent configuration and call `reverie_context` at session start. Every session gets smarter.

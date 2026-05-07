@@ -285,23 +285,23 @@ describe('MCP Server - Advanced Tests', () => {
   // ── Prototype pollution prevention ──────────────────────────────────
 
   describe('prototype pollution prevention', () => {
-    it('codex_set blocks __proto__ key', async () => {
-      const result = await toolHandlers['codex_set']({ key: '__proto__.polluted', value: 'yes' });
+    it('reverie_set blocks __proto__ key', async () => {
+      const result = await toolHandlers['reverie_set']({ key: '__proto__.polluted', value: 'yes' });
       expect(({} as any).polluted).toBeUndefined();
     });
 
-    it('codex_set blocks constructor key', async () => {
-      const result = await toolHandlers['codex_set']({ key: 'constructor.prototype', value: 'bad' });
+    it('reverie_set blocks constructor key', async () => {
+      const result = await toolHandlers['reverie_set']({ key: 'constructor.prototype', value: 'bad' });
       expect(Object.constructor.prototype).not.toBe('bad');
     });
   });
 
-  // ── Edge cases for codex_get ────────────────────────────────────────
+  // ── Edge cases for reverie_get ────────────────────────────────────────
 
-  describe('codex_get edge cases', () => {
+  describe('reverie_get edge cases', () => {
     it('returns depth-limited subtree with depth:1', async () => {
       mockData.server = { prod: { ip: '1.1.1.1' }, dev: { ip: '2.2.2.2' } };
-      const result = await toolHandlers['codex_get']({ key: 'server', depth: 1 });
+      const result = await toolHandlers['reverie_get']({ key: 'server', depth: 1 });
       const text = result.content[0].text;
       expect(text).toContain('server');
     });
@@ -309,57 +309,57 @@ describe('MCP Server - Advanced Tests', () => {
     it('returns all entries when no key provided', async () => {
       mockData.foo = 'bar';
       mockData.baz = 'qux';
-      const result = await toolHandlers['codex_get']({});
+      const result = await toolHandlers['reverie_get']({});
       const text = result.content[0].text;
       expect(text).toContain('foo');
       expect(text).toContain('baz');
     });
 
     it('handles empty data store', async () => {
-      const result = await toolHandlers['codex_get']({});
+      const result = await toolHandlers['reverie_get']({});
       const text = result.content[0].text;
       expect(text.toLowerCase()).toContain('no entries');
     });
 
     it('handles nonexistent key', async () => {
-      const result = await toolHandlers['codex_get']({ key: 'does.not.exist' });
+      const result = await toolHandlers['reverie_get']({ key: 'does.not.exist' });
       expect(result.isError).toBe(true);
     });
   });
 
-  // ── codex_set edge cases ────────────────────────────────────────────
+  // ── reverie_set edge cases ────────────────────────────────────────────
 
-  describe('codex_set edge cases', () => {
+  describe('reverie_set edge cases', () => {
     it('handles very long values', async () => {
       const longValue = 'x'.repeat(10000);
-      const result = await toolHandlers['codex_set']({ key: 'big.value', value: longValue });
+      const result = await toolHandlers['reverie_set']({ key: 'big.value', value: longValue });
       expect(result.content[0].text).toContain('Set:');
     });
 
     it('handles unicode keys and values', async () => {
-      const result = await toolHandlers['codex_set']({ key: 'project.name', value: 'Hello World' });
+      const result = await toolHandlers['reverie_set']({ key: 'project.name', value: 'Hello World' });
       expect(result.content[0].text).toContain('Set:');
     });
 
     it('handles key with many dot segments', async () => {
-      const result = await toolHandlers['codex_set']({ key: 'a.b.c.d.e.f.g', value: 'deep' });
+      const result = await toolHandlers['reverie_set']({ key: 'a.b.c.d.e.f.g', value: 'deep' });
       expect(result.content[0].text).toContain('Set:');
     });
   });
 
-  // ── codex_find edge cases ─────────────────────────────────────────
+  // ── reverie_find edge cases ─────────────────────────────────────────
 
-  describe('codex_find edge cases', () => {
+  describe('reverie_find edge cases', () => {
     it('returns empty results for unmatched search', async () => {
       mockData.foo = 'bar';
-      const result = await toolHandlers['codex_find']({ query: 'zzzzzzz' });
+      const result = await toolHandlers['reverie_find']({ query: 'zzzzzzz' });
       const text = result.content[0].text;
       expect(text).toContain('No results');
     });
 
     it('searches across keys and values', async () => {
       mockData.server = { ip: '192.168.1.100' };
-      const result = await toolHandlers['codex_find']({ query: '192.168' });
+      const result = await toolHandlers['reverie_find']({ query: '192.168' });
       const text = result.content[0].text;
       expect(text).toContain('192.168');
     });
@@ -367,112 +367,112 @@ describe('MCP Server - Advanced Tests', () => {
     it('handles regex search', async () => {
       mockData.server = { port: '8080' };
       mockData.app = { port: '3000' };
-      const result = await toolHandlers['codex_find']({ query: '^\\d{4}$', regex: true });
+      const result = await toolHandlers['reverie_find']({ query: '^\\d{4}$', regex: true });
       const text = result.content[0].text;
       expect(text).toContain('port');
     });
   });
 
-  // ── codex_remove edge cases ─────────────────────────────────────────
+  // ── reverie_remove edge cases ─────────────────────────────────────────
 
-  describe('codex_remove edge cases', () => {
+  describe('reverie_remove edge cases', () => {
     it('returns error when removing nonexistent key', async () => {
-      const result = await toolHandlers['codex_remove']({ key: 'does.not.exist' });
+      const result = await toolHandlers['reverie_remove']({ key: 'does.not.exist' });
       expect(result.isError).toBe(true);
     });
 
     it('removes a subtree', async () => {
       mockData.server = { prod: { ip: '1' }, dev: { ip: '2' } };
-      const result = await toolHandlers['codex_remove']({ key: 'server' });
+      const result = await toolHandlers['reverie_remove']({ key: 'server' });
       expect(result.content[0].text).toContain('Removed');
     });
   });
 
-  // ── codex_rename edge cases ─────────────────────────────────────────
+  // ── reverie_rename edge cases ─────────────────────────────────────────
 
-  describe('codex_rename edge cases', () => {
+  describe('reverie_rename edge cases', () => {
     it('returns error when source key does not exist', async () => {
-      const result = await toolHandlers['codex_rename']({ from: 'missing', to: 'new' });
+      const result = await toolHandlers['reverie_rename']({ from: 'missing', to: 'new' });
       expect(result.isError).toBe(true);
     });
 
     it('returns error when target key already exists', async () => {
       mockData.a = '1';
       mockData.b = '2';
-      const result = await toolHandlers['codex_rename']({ from: 'a', to: 'b' });
+      const result = await toolHandlers['reverie_rename']({ from: 'a', to: 'b' });
       expect(result.isError).toBe(true);
     });
   });
 
-  // ── codex_copy edge cases ───────────────────────────────────────────
+  // ── reverie_copy edge cases ───────────────────────────────────────────
 
-  describe('codex_copy edge cases', () => {
+  describe('reverie_copy edge cases', () => {
     it('copies a value to a new key', async () => {
       mockData.source = 'value';
-      const result = await toolHandlers['codex_copy']({ source: 'source', dest: 'dest' });
+      const result = await toolHandlers['reverie_copy']({ source: 'source', dest: 'dest' });
       expect(result.content[0].text).toContain('Copied');
     });
 
     it('returns error when source does not exist', async () => {
-      const result = await toolHandlers['codex_copy']({ source: 'missing', dest: 'dest' });
+      const result = await toolHandlers['reverie_copy']({ source: 'missing', dest: 'dest' });
       expect(result.isError).toBe(true);
     });
   });
 
-  // ── codex_alias edge cases ──────────────────────────────────────────
+  // ── reverie_alias edge cases ──────────────────────────────────────────
 
-  describe('codex_alias edge cases', () => {
-    it('codex_alias_set creates alias and returns success', async () => {
-      const result = await toolHandlers['codex_alias_set']({ alias: 'srv', key: 'server.ip' });
+  describe('reverie_alias edge cases', () => {
+    it('reverie_alias_set creates alias and returns success', async () => {
+      const result = await toolHandlers['reverie_alias_set']({ alias: 'srv', key: 'server.ip' });
       expect(result.content[0].text).toContain('srv');
     });
 
-    it('codex_alias_remove returns error for nonexistent alias', async () => {
-      const result = await toolHandlers['codex_alias_remove']({ alias: 'nonexistent' });
+    it('reverie_alias_remove returns error for nonexistent alias', async () => {
+      const result = await toolHandlers['reverie_alias_remove']({ alias: 'nonexistent' });
       expect(result.isError).toBe(true);
     });
 
-    it('codex_alias_list with no aliases returns empty message', async () => {
-      const result = await toolHandlers['codex_alias_list']({});
+    it('reverie_alias_list with no aliases returns empty message', async () => {
+      const result = await toolHandlers['reverie_alias_list']({});
       const text = result.content[0].text;
       expect(text.toLowerCase()).toContain('no aliases');
     });
 
-    it('codex_alias_list shows all aliases', async () => {
+    it('reverie_alias_list shows all aliases', async () => {
       mockAliases.srv = 'server.ip';
       mockAliases.db = 'database.url';
-      const result = await toolHandlers['codex_alias_list']({});
+      const result = await toolHandlers['reverie_alias_list']({});
       const text = result.content[0].text;
       expect(text).toContain('srv');
       expect(text).toContain('db');
     });
   });
 
-  // ── codex_run edge cases ────────────────────────────────────────────
+  // ── reverie_run edge cases ────────────────────────────────────────────
 
-  describe('codex_run edge cases', () => {
+  describe('reverie_run edge cases', () => {
     it('returns error when key is not found', async () => {
-      const result = await toolHandlers['codex_run']({ key: 'missing.cmd' });
+      const result = await toolHandlers['reverie_run']({ key: 'missing.cmd' });
       expect(result.isError).toBe(true);
     });
 
     it('returns error when value is a subtree', async () => {
       mockData.commands = { build: 'npm build', test: 'npm test' };
-      const result = await toolHandlers['codex_run']({ key: 'commands' });
+      const result = await toolHandlers['reverie_run']({ key: 'commands' });
       expect(result.isError).toBe(true);
     });
 
     it('executes command and returns stdout', async () => {
       mockData.commands = { build: 'npm run build' };
       mockExecSync.mockReturnValue('Build succeeded\n');
-      const result = await toolHandlers['codex_run']({ key: 'commands.build' });
+      const result = await toolHandlers['reverie_run']({ key: 'commands.build' });
       expect(result.content[0].text).toContain('Build succeeded');
     });
 
     it('returns confirm token for --confirm keys', async () => {
       mockData.commands = { deploy: 'deploy.sh' };
       mockConfirmKeys['commands.deploy'] = true;
-      const result = await toolHandlers['codex_run']({ key: 'commands.deploy' });
+      const result = await toolHandlers['reverie_run']({ key: 'commands.deploy' });
       // Should return a confirmation prompt, not execute
       const text = result.content[0].text;
       expect(text.toLowerCase()).toMatch(/confirm|token/);
@@ -480,46 +480,46 @@ describe('MCP Server - Advanced Tests', () => {
 
     it('dry run returns command without executing', async () => {
       mockData.commands = { build: 'npm run build' };
-      const result = await toolHandlers['codex_run']({ key: 'commands.build', dry: true });
+      const result = await toolHandlers['reverie_run']({ key: 'commands.build', dry: true });
       const text = result.content[0].text;
       expect(text).toContain('npm run build');
       expect(mockExecSync).not.toHaveBeenCalled();
     });
   });
 
-  // ── codex_config edge cases ─────────────────────────────────────────
+  // ── reverie_config edge cases ─────────────────────────────────────────
 
-  describe('codex_config edge cases', () => {
-    it('codex_config_get returns all config when no key specified', async () => {
-      const result = await toolHandlers['codex_config_get']({});
+  describe('reverie_config edge cases', () => {
+    it('reverie_config_get returns all config when no key specified', async () => {
+      const result = await toolHandlers['reverie_config_get']({});
       const text = result.content[0].text;
       expect(text).toContain('colors');
     });
 
-    it('codex_config_set rejects invalid config key', async () => {
-      const result = await toolHandlers['codex_config_set']({ key: 'invalid_key', value: 'val' });
+    it('reverie_config_set rejects invalid config key', async () => {
+      const result = await toolHandlers['reverie_config_set']({ key: 'invalid_key', value: 'val' });
       expect(result.isError).toBe(true);
     });
 
-    it('codex_config_get with specific key returns value', async () => {
-      const result = await toolHandlers['codex_config_get']({ key: 'colors' });
+    it('reverie_config_get with specific key returns value', async () => {
+      const result = await toolHandlers['reverie_config_get']({ key: 'colors' });
       const text = result.content[0].text;
       expect(text).toContain('true');
     });
   });
 
-  // ── codex_context edge cases ────────────────────────────────────────
+  // ── reverie_context edge cases ────────────────────────────────────────
 
-  describe('codex_context edge cases', () => {
+  describe('reverie_context edge cases', () => {
     it('returns message when no data stored', async () => {
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       const text = result.content[0].text;
       expect(text.toLowerCase()).toContain('no entries');
     });
 
     it('returns formatted context with entries', async () => {
       mockData.project = { name: 'test' };
-      const result = await toolHandlers['codex_context']({});
+      const result = await toolHandlers['reverie_context']({});
       const text = result.content[0].text;
       expect(text).toContain('project.name');
       expect(text).toContain('test');
@@ -528,18 +528,18 @@ describe('MCP Server - Advanced Tests', () => {
     it('supports tier parameter', async () => {
       mockData.project = { name: 'test' };
       mockData.arch = { pattern: 'MVC' };
-      const result = await toolHandlers['codex_context']({ tier: 'essential' });
+      const result = await toolHandlers['reverie_context']({ tier: 'essential' });
       // essential tier only includes project.* commands.* conventions.*
       const text = result.content[0].text;
       expect(text).toContain('project');
     });
   });
 
-  // ── codex_import/export edge cases ──────────────────────────────────
+  // ── reverie_import/export edge cases ──────────────────────────────────
 
-  describe('codex_import edge cases', () => {
+  describe('reverie_import edge cases', () => {
     it('imports entries from JSON data', async () => {
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'entries',
         data: JSON.stringify({ project: { name: 'imported' } }),
       });
@@ -547,7 +547,7 @@ describe('MCP Server - Advanced Tests', () => {
     });
 
     it('returns error for invalid JSON', async () => {
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'entries',
         data: 'not json!!!',
       });
@@ -555,7 +555,7 @@ describe('MCP Server - Advanced Tests', () => {
     });
 
     it('returns error for array JSON', async () => {
-      const result = await toolHandlers['codex_import']({
+      const result = await toolHandlers['reverie_import']({
         type: 'entries',
         data: '[1,2,3]',
       });
@@ -563,28 +563,28 @@ describe('MCP Server - Advanced Tests', () => {
     });
   });
 
-  describe('codex_export edge cases', () => {
+  describe('reverie_export edge cases', () => {
     it('exports entries as JSON', async () => {
       mockData.foo = 'bar';
-      const result = await toolHandlers['codex_export']({ type: 'entries' });
+      const result = await toolHandlers['reverie_export']({ type: 'entries' });
       const text = result.content[0].text;
       // Should contain JSON
       expect(() => JSON.parse(text)).not.toThrow();
     });
 
     it('exports empty data', async () => {
-      const result = await toolHandlers['codex_export']({ type: 'entries' });
+      const result = await toolHandlers['reverie_export']({ type: 'entries' });
       const text = result.content[0].text;
       expect(() => JSON.parse(text)).not.toThrow();
     });
   });
 
-  // ── codex_reset edge cases ──────────────────────────────────────────
+  // ── reverie_reset edge cases ──────────────────────────────────────────
 
-  describe('codex_reset edge cases', () => {
+  describe('reverie_reset edge cases', () => {
     it('resets entries to empty', async () => {
       mockData.foo = 'bar';
-      const result = await toolHandlers['codex_reset']({ type: 'entries' });
+      const result = await toolHandlers['reverie_reset']({ type: 'entries' });
       expect(result.content[0].text.toLowerCase()).toContain('reset');
     });
 
@@ -592,30 +592,30 @@ describe('MCP Server - Advanced Tests', () => {
       mockData.foo = 'bar';
       mockAliases.a = 'b';
       mockConfirmKeys.x = true;
-      const result = await toolHandlers['codex_reset']({ type: 'all' });
+      const result = await toolHandlers['reverie_reset']({ type: 'all' });
       expect(result.content[0].text.toLowerCase()).toContain('reset');
     });
 
     it('clears audit log', async () => {
       mockFiles['/mock/audit.jsonl'] = true;
-      const result = await toolHandlers['codex_reset']({ type: 'audit' });
+      const result = await toolHandlers['reverie_reset']({ type: 'audit' });
       expect(result.content[0].text.toLowerCase()).toContain('cleared');
     });
 
     it('clears telemetry log', async () => {
       mockFiles['/mock/telemetry.jsonl'] = true;
-      const result = await toolHandlers['codex_reset']({ type: 'telemetry' });
+      const result = await toolHandlers['reverie_reset']({ type: 'telemetry' });
       expect(result.content[0].text.toLowerCase()).toContain('cleared');
     });
   });
 
-  // ── codex_stale ─────────────────────────────────────────────────────
+  // ── reverie_stale ─────────────────────────────────────────────────────
 
-  describe('codex_stale edge cases', () => {
+  describe('reverie_stale edge cases', () => {
     it('reports no stale entries when all are fresh', async () => {
       mockData.foo = 'bar';
       mockMetaData.foo = Date.now();
-      const result = await toolHandlers['codex_stale']({});
+      const result = await toolHandlers['reverie_stale']({});
       const text = result.content[0].text;
       expect(text.toLowerCase()).toMatch(/no.*older|no stale|all.*fresh|0 stale/);
     });

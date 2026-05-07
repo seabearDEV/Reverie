@@ -102,7 +102,7 @@ describe('objectPath utilities', () => {
     // Round-2 regression: pre-fix, getNestedValue did `obj[keys[0]]` which
     // walked the prototype chain. So `getNestedValue({}, '__proto__')`
     // returned Object.prototype, `getNestedValue({}, 'constructor')` returned
-    // the Object constructor, etc. — and codex_get / codex_copy / codex_rename
+    // the Object constructor, etc. — and reverie_get / reverie_copy / reverie_rename
     // all built bizarre behavior on top of those leaks. With Object.hasOwn
     // gating each hop, every prototype-chain name returns undefined.
     describe('prototype-chain safety', () => {

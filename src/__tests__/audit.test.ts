@@ -27,7 +27,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  delete process.env.CODEX_AGENT_NAME;
+  delete process.env.RVR_AGENT_NAME;
   mockProjectFile = null;
 });
 
@@ -78,7 +78,7 @@ describe('logAudit', () => {
   it('creates audit.jsonl and writes a valid entry', async () => {
     await logAudit({
       src: 'mcp',
-      tool: 'codex_set',
+      tool: 'reverie_set',
       op: 'write',
       key: 'arch.mcp',
       scope: 'project',
@@ -88,7 +88,7 @@ describe('logAudit', () => {
     });
     const content = fs.readFileSync(path.join(tmpDir, 'audit.jsonl'), 'utf8');
     const entry = JSON.parse(content.trim()) as AuditEntry;
-    expect(entry.tool).toBe('codex_set');
+    expect(entry.tool).toBe('reverie_set');
     expect(entry.op).toBe('write');
     expect(entry.key).toBe('arch.mcp');
     expect(entry.success).toBe(true);
@@ -98,11 +98,11 @@ describe('logAudit', () => {
     expect(entry.ts).toBeGreaterThan(0);
   });
 
-  it('captures CODEX_AGENT_NAME env var', async () => {
-    process.env.CODEX_AGENT_NAME = 'cursor';
+  it('captures RVR_AGENT_NAME env var', async () => {
+    process.env.RVR_AGENT_NAME = 'cursor';
     await logAudit({
       src: 'mcp',
-      tool: 'codex_get',
+      tool: 'reverie_get',
       op: 'read',
       success: true,
     });
@@ -113,7 +113,7 @@ describe('logAudit', () => {
   it('leaves agent undefined when env var not set', async () => {
     await logAudit({
       src: 'cli',
-      tool: 'codex_set',
+      tool: 'reverie_set',
       op: 'write',
       success: true,
     });
@@ -125,7 +125,7 @@ describe('logAudit', () => {
     mockProjectFile = '/home/user/myproject/.codexcli.json';
     await logAudit({
       src: 'mcp',
-      tool: 'codex_set',
+      tool: 'reverie_set',
       op: 'write',
       success: true,
     });
@@ -137,7 +137,7 @@ describe('logAudit', () => {
     mockProjectFile = null;
     await logAudit({
       src: 'cli',
-      tool: 'codex_set',
+      tool: 'reverie_set',
       op: 'write',
       success: true,
     });
@@ -146,18 +146,18 @@ describe('logAudit', () => {
   });
 
   it('appends multiple entries', async () => {
-    await logAudit({ src: 'mcp', tool: 'codex_set', op: 'write', success: true });
-    await logAudit({ src: 'cli', tool: 'codex_get', op: 'read', success: true });
+    await logAudit({ src: 'mcp', tool: 'reverie_set', op: 'write', success: true });
+    await logAudit({ src: 'cli', tool: 'reverie_get', op: 'read', success: true });
     const entries = loadAuditLog();
     expect(entries).toHaveLength(2);
   });
 
   it('writes synchronously when sync=true', () => {
-    logAudit({ src: 'cli', tool: 'codex_set', op: 'write', success: true }, true);
+    logAudit({ src: 'cli', tool: 'reverie_set', op: 'write', success: true }, true);
     // File should exist immediately (sync write)
     const entries = loadAuditLog();
     expect(entries.length).toBe(1);
-    expect(entries[0].tool).toBe('codex_set');
+    expect(entries[0].tool).toBe('reverie_set');
     expect(entries[0].src).toBe('cli');
   });
 });
@@ -192,8 +192,8 @@ describe('queryAuditLog', () => {
 
   it('filters by exact key', () => {
     writeEntries([
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'arch.mcp', success: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'project.name', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'arch.mcp', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'project.name', success: true },
     ]);
     const result = queryAuditLog({ key: 'arch.mcp' });
     expect(result).toHaveLength(1);
@@ -202,9 +202,9 @@ describe('queryAuditLog', () => {
 
   it('filters by key prefix', () => {
     writeEntries([
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'arch.mcp', success: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'arch.cli', success: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'project.name', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'arch.mcp', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'arch.cli', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'project.name', success: true },
     ]);
     const result = queryAuditLog({ key: 'arch' });
     expect(result).toHaveLength(2);
@@ -212,8 +212,8 @@ describe('queryAuditLog', () => {
 
   it('filters by period', () => {
     writeEntries([
-      { ts: now - 60 * day, session: 'old', src: 'mcp', tool: 'codex_set', op: 'write', success: true },
-      { ts: now - 1000, session: 'new', src: 'mcp', tool: 'codex_set', op: 'write', success: true },
+      { ts: now - 60 * day, session: 'old', src: 'mcp', tool: 'reverie_set', op: 'write', success: true },
+      { ts: now - 1000, session: 'new', src: 'mcp', tool: 'reverie_set', op: 'write', success: true },
     ]);
     const result = queryAuditLog({ periodDays: 7 });
     expect(result).toHaveLength(1);
@@ -221,9 +221,9 @@ describe('queryAuditLog', () => {
 
   it('filters writes only', () => {
     writeEntries([
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', success: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', success: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_run', op: 'exec', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_run', op: 'exec', success: true },
     ]);
     const result = queryAuditLog({ writesOnly: true });
     expect(result).toHaveLength(1);
@@ -232,9 +232,9 @@ describe('queryAuditLog', () => {
 
   it('returns newest first', () => {
     writeEntries([
-      { ts: now - 3000, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'first', success: true },
-      { ts: now - 1000, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'second', success: true },
-      { ts: now - 2000, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'middle', success: true },
+      { ts: now - 3000, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'first', success: true },
+      { ts: now - 1000, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'second', success: true },
+      { ts: now - 2000, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'middle', success: true },
     ]);
     const result = queryAuditLog({});
     expect(result[0].key).toBe('second');
@@ -244,7 +244,7 @@ describe('queryAuditLog', () => {
 
   it('applies limit', () => {
     writeEntries(Array.from({ length: 10 }, (_, i) => ({
-      ts: now - i * 1000, session: 's1', src: 'mcp' as const, tool: 'codex_set', op: 'write' as const, success: true,
+      ts: now - i * 1000, session: 's1', src: 'mcp' as const, tool: 'reverie_set', op: 'write' as const, success: true,
     })));
     const result = queryAuditLog({ limit: 3 });
     expect(result).toHaveLength(3);
@@ -252,9 +252,9 @@ describe('queryAuditLog', () => {
 
   it('filters by src', () => {
     writeEntries([
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', success: true },
-      { ts: now, session: 's1', src: 'cli', tool: 'codex_set', op: 'write', success: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', success: true },
+      { ts: now, session: 's1', src: 'cli', tool: 'reverie_set', op: 'write', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', success: true },
     ]);
     const mcp = queryAuditLog({ src: 'mcp' });
     expect(mcp).toHaveLength(2);
@@ -267,9 +267,9 @@ describe('queryAuditLog', () => {
 
   it('filters by project', () => {
     writeEntries([
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'a', project: '/home/user/projectA', success: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'b', project: '/home/user/projectB', success: true },
-      { ts: now, session: 's1', src: 'cli', tool: 'codex_set', op: 'write', key: 'c', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'a', project: '/home/user/projectA', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'b', project: '/home/user/projectB', success: true },
+      { ts: now, session: 's1', src: 'cli', tool: 'reverie_set', op: 'write', key: 'c', success: true },
     ]);
     const result = queryAuditLog({ project: '/home/user/projectA' });
     expect(result).toHaveLength(1);
@@ -278,8 +278,8 @@ describe('queryAuditLog', () => {
 
   it('returns all with period 0', () => {
     writeEntries([
-      { ts: now - 365 * day, session: 'old', src: 'mcp', tool: 'codex_set', op: 'write', success: true },
-      { ts: now, session: 'new', src: 'mcp', tool: 'codex_set', op: 'write', success: true },
+      { ts: now - 365 * day, session: 'old', src: 'mcp', tool: 'reverie_set', op: 'write', success: true },
+      { ts: now, session: 'new', src: 'mcp', tool: 'reverie_set', op: 'write', success: true },
     ]);
     const result = queryAuditLog({ periodDays: 0 });
     expect(result).toHaveLength(2);
@@ -287,9 +287,9 @@ describe('queryAuditLog', () => {
 
   it('filters by hitsOnly', () => {
     writeEntries([
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', key: 'a', success: true, hit: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', key: 'b', success: false, hit: false },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'c', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', key: 'a', success: true, hit: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', key: 'b', success: false, hit: false },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'c', success: true },
     ]);
     const result = queryAuditLog({ hitsOnly: true });
     expect(result).toHaveLength(1);
@@ -298,9 +298,9 @@ describe('queryAuditLog', () => {
 
   it('filters by missesOnly', () => {
     writeEntries([
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', key: 'a', success: true, hit: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', key: 'b', success: false, hit: false },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'c', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', key: 'a', success: true, hit: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', key: 'b', success: false, hit: false },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'c', success: true },
     ]);
     const result = queryAuditLog({ missesOnly: true });
     expect(result).toHaveLength(1);
@@ -309,9 +309,9 @@ describe('queryAuditLog', () => {
 
   it('filters by redundantOnly', () => {
     writeEntries([
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'a', success: true, redundant: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_set', op: 'write', key: 'b', success: true },
-      { ts: now, session: 's1', src: 'mcp', tool: 'codex_get', op: 'read', key: 'c', success: true, hit: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'a', success: true, redundant: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_set', op: 'write', key: 'b', success: true },
+      { ts: now, session: 's1', src: 'mcp', tool: 'reverie_get', op: 'read', key: 'c', success: true, hit: true },
     ]);
     const result = queryAuditLog({ redundantOnly: true });
     expect(result).toHaveLength(1);
@@ -323,7 +323,7 @@ describe('token-efficiency metrics', () => {
   it('preserves all metric fields through log/load roundtrip', async () => {
     await logAudit({
       src: 'mcp',
-      tool: 'codex_context',
+      tool: 'reverie_context',
       op: 'read',
       success: true,
       responseSize: 4200,
@@ -345,7 +345,7 @@ describe('token-efficiency metrics', () => {
   it('preserves redundant flag through roundtrip', async () => {
     await logAudit({
       src: 'mcp',
-      tool: 'codex_set',
+      tool: 'reverie_set',
       op: 'write',
       success: true,
       before: 'same',
@@ -361,7 +361,7 @@ describe('token-efficiency metrics', () => {
   it('omits undefined metric fields from JSON', async () => {
     await logAudit({
       src: 'cli',
-      tool: 'codex_set',
+      tool: 'reverie_set',
       op: 'write',
       success: true,
     });

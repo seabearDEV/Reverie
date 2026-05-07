@@ -14,7 +14,7 @@ let tmpDir: string;
 
 const run = (args: string) => {
   // After #99, auto-mode writes refuse when project resolution fails. These
-  // tests run with CODEX_NO_PROJECT=1 to exercise the global store, so
+  // tests run with RVR_NO_PROJECT=1 to exercise the global store, so
   // inject --global for write verbs to make the global target explicit.
   if (/^(set|rm|remove|copy|cp|rename|mv|alias|confirm|edit)\b/.test(args)) {
     args = args.replace(/^(\S+)/, '$1 --global');
@@ -22,7 +22,7 @@ const run = (args: string) => {
     args = args.replace(/^(data \S+)/, '$1 --global');
   }
   return execSync(`node dist/index.js ${args}`, {
-    env: { ...process.env, CODEX_DATA_DIR: tmpDir, CODEX_NO_PROJECT: '1' },
+    env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' },
     timeout: 10000,
   }).toString();
 };
@@ -326,7 +326,7 @@ describe('entries advanced', () => {
   describe('CLI responseSize measurement', () => {
     // Pre-v1.11.x, the CLI wrapper computed responseSize from the `after`
     // value, which was only set for writes — so every CLI READ silently
-    // logged responseSize: undefined. The codex_stats "data served"
+    // logged responseSize: undefined. The reverie_stats "data served"
     // metric only counted MCP traffic. The fix monkey-patches stdout.write
     // in the wrapper and counts actual bytes emitted, matching the MCP
     // semantic.
@@ -352,7 +352,7 @@ describe('entries advanced', () => {
 
       const entries = readTelemetryEntries();
       const getEntries = entries.filter(
-        (e) => e.tool === 'codex_get' && e.src === 'cli'
+        (e) => e.tool === 'reverie_get' && e.src === 'cli'
       );
       expect(getEntries.length).toBeGreaterThan(0);
       const last = getEntries[getEntries.length - 1];
@@ -365,7 +365,7 @@ describe('entries advanced', () => {
 
       const entries = readTelemetryEntries();
       const setEntries = entries.filter(
-        (e) => e.tool === 'codex_set' && e.src === 'cli'
+        (e) => e.tool === 'reverie_set' && e.src === 'cli'
       );
       expect(setEntries.length).toBeGreaterThan(0);
       const last = setEntries[setEntries.length - 1];

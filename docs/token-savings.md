@@ -20,7 +20,7 @@ Reverie tracks how much work it saves AI agents by providing stored knowledge in
   - [The Core Idea](#the-core-idea)
   - [Namespace Multipliers](#namespace-multipliers)
   - [Miss-Path Calibration](#miss-path-calibration)
-  - [Bootstrap (codex_context) Estimation](#bootstrap-codex_context-estimation)
+  - [Bootstrap (reverie_context) Estimation](#bootstrap-reverie_context-estimation)
   - [Worked Example](#worked-example)
 - [Data Collection](#data-collection)
   - [What Gets Logged](#what-gets-logged)
@@ -33,13 +33,13 @@ Reverie tracks how much work it saves AI agents by providing stored knowledge in
 
 AI agents (Claude Code, Copilot, Cursor, ChatGPT, etc.) spend a significant portion of their token budget on **exploration** — reading files, searching codebases, and reasoning about what they find. Every session often repeats the same exploration: "Where is the MCP server?" "What's the build command?" "What conventions does this project follow?"
 
-Reverie stores the answers to these questions. When an agent calls `codex_get files.mcp` and gets back `src/mcp-server.ts — MCP server, 20 tools, audit/telemetry wrapper`, that one call replaces what would have been 3-5 tool calls (glob for files, grep for patterns, read to confirm).
+Reverie stores the answers to these questions. When an agent calls `reverie_get files.mcp` and gets back `src/mcp-server.ts — MCP server, 20 tools, audit/telemetry wrapper`, that one call replaces what would have been 3-5 tool calls (glob for files, grep for patterns, read to confirm).
 
 The question is: **how do we measure that value?**
 
 ## The Stats Output
 
-Running `rvr stats` (or `codex_stats` via MCP) produces a token savings section:
+Running `rvr stats` (or `reverie_stats` via MCP) produces a token savings section:
 
 ```
 Token savings:
@@ -147,7 +147,7 @@ Est. tokens saved: ~47.2K (agent tool calls avoided by using stored knowledge)
 Delivery cost:   ~12.3K tokens (context delivered to agent)
 ```
 
-**What it measures:** The token cost of Reverie itself — the data it pushes into the agent's context window on cache hits. Every `codex_context` or `codex_get` hit returns data that consumes agent tokens.
+**What it measures:** The token cost of Reverie itself — the data it pushes into the agent's context window on cache hits. Every `reverie_context` or `reverie_get` hit returns data that consumes agent tokens.
 
 **How it's calculated:** `sum(responseSize for all hit reads) / 4`
 
@@ -184,7 +184,7 @@ By namespace:
 
 **What it measures:** The exploration savings broken down by namespace, showing how many lookups hit each namespace and the per-lookup cost used for estimation.
 
-**Why it matters:** Tells you which namespaces are delivering the most value. If `files.*` dominates, the file map is the most valuable part of your knowledge base. If `bootstrap` dominates, agents are getting the most value from the initial `codex_context` call.
+**Why it matters:** Tells you which namespaces are delivering the most value. If `files.*` dominates, the file map is the most valuable part of your knowledge base. If `bootstrap` dominates, agents are getting the most value from the initial `reverie_context` call.
 
 ### Duplicate Writes Avoided
 
@@ -200,7 +200,7 @@ Duplicate writes avoided: ~900 (6 writes already up to date)
 
 ### The Core Idea
 
-When an agent calls `codex_get files.mcp` and gets an answer, it skips the exploration it would have done otherwise. We estimate the cost of that skipped exploration based on the **namespace** of the entry, because different types of knowledge require different amounts of work to discover.
+When an agent calls `reverie_get files.mcp` and gets an answer, it skips the exploration it would have done otherwise. We estimate the cost of that skipped exploration based on the **namespace** of the entry, because different types of knowledge require different amounts of work to discover.
 
 ```mermaid
 flowchart LR
@@ -214,7 +214,7 @@ flowchart LR
 
     subgraph with ["With Reverie (~50 tokens)"]
         direction TB
-        C1["1. codex_get files.mcp"] --> C2["'src/mcp-server.ts — MCP server'"]
+        C1["1. reverie_get files.mcp"] --> C2["'src/mcp-server.ts — MCP server'"]
     end
 ```
 
@@ -246,11 +246,11 @@ The values are intentionally conservative. A real `arch.*` lookup might save 5,0
 
 The static multipliers above are educated guesses. Reverie replaces them with **observed costs** as it collects real data from cache misses.
 
-**How it works:** When a `codex_get` or `codex_search` misses (returns no data), Reverie opens a "miss window" for that session and namespace. It tracks subsequent tool calls — the exploration the agent does to find the answer — until one of three things happens:
+**How it works:** When a `reverie_get` or `reverie_search` misses (returns no data), Reverie opens a "miss window" for that session and namespace. It tracks subsequent tool calls — the exploration the agent does to find the answer — until one of three things happens:
 
 | Resolution | Trigger | Meaning |
 |------------|---------|---------|
-| **writeback** | Agent calls `codex_set` to the same namespace | Agent found the answer and stored it — clean signal |
+| **writeback** | Agent calls `reverie_set` to the same namespace | Agent found the answer and stored it — clean signal |
 | **moved_on** | Agent gets a hit on any key | Agent found what it needed elsewhere |
 | **timeout** | 5 minutes elapse with no resolution | Agent abandoned the search or session ended |
 
@@ -260,10 +260,10 @@ The exploration cost for each closed miss window is `sum(responseSize of all cal
 
 ```mermaid
 flowchart TD
-    MISS["codex_get → miss"] --> OPEN["Open miss window"]
+    MISS["reverie_get → miss"] --> OPEN["Open miss window"]
     OPEN --> ACC["Track subsequent calls
     (toolCalls++, explorationBytes += responseSize)"]
-    ACC --> WB{"codex_set to
+    ACC --> WB{"reverie_set to
     same namespace?"}
     WB -->|Yes| CLOSE_WB["Close: writeback
     → high-quality cost sample"]
@@ -283,11 +283,11 @@ flowchart TD
 
 **Why only writebacks?** A `writeback` resolution means the agent completed a full miss→explore→find→store cycle. That's a clean measurement of exploration cost. `moved_on` and `timeout` are noisy — the agent may have partially explored or given up — and are excluded from calibration.
 
-Miss-path records are stored in `~/.codexcli/miss-paths.jsonl` and can be cleared with `rvr reset miss-paths` or `codex_reset type:"miss-paths"`.
+Miss-path records are stored in `~/.reverie/miss-paths.jsonl` and can be cleared with `rvr reset miss-paths` or `reverie_reset type:"miss-paths"`.
 
-### Bootstrap (codex_context) Estimation
+### Bootstrap (reverie_context) Estimation
 
-The `codex_context` tool is special — it returns many entries at once in a single call. Its exploration cost is calculated differently:
+The `reverie_context` tool is special — it returns many entries at once in a single call. Its exploration cost is calculated differently:
 
 ```
 approx_entries  = response_size_bytes / 80     (each entry averages ~80 bytes)
@@ -299,7 +299,7 @@ exploration_cost = max(
 
 The 200-token-per-entry cost reflects that each entry in the context represents roughly one small lookup the agent would have needed to make. The `max()` ensures the exploration estimate is never lower than the delivery floor.
 
-**Example:** A `codex_context` call returns 8,000 bytes (~100 entries):
+**Example:** A `reverie_context` call returns 8,000 bytes (~100 entries):
 - Delivery floor: `8000 / 4 = 2,000 tokens`
 - Exploration estimate: `100 entries * 200 = 20,000 tokens`
 - Result: `max(2000, 20000) = 20,000 tokens`
@@ -309,7 +309,7 @@ The 200-token-per-entry cost reflects that each entry in the context represents 
 ```mermaid
 flowchart TD
     T["Telemetry JSONL entries"] --> F{"Filter: op=read, hit=true"}
-    F -->|codex_context| B["Bootstrap estimation
+    F -->|reverie_context| B["Bootstrap estimation
     entries ≈ responseSize / 80
     cost = max(bytes/4, entries × 200)"]
     F -->|other reads| CAL{"Calibrated?
@@ -341,12 +341,12 @@ A typical session might look like this:
 
 | Call | Tool | Namespace | Response | Hit? | Exploration Savings |
 |------|------|-----------|----------|------|-------------------|
-| 1 | `codex_context` | (bootstrap) | 8,000B | Yes | 20,000 |
-| 2 | `codex_get` | files | 200B | Yes | 2,000 |
-| 3 | `codex_get` | arch | 300B | Yes | 3,000 |
-| 4 | `codex_get` | missing.key | 30B | No | 0 |
-| 5 | `codex_set` | context | — | — | 0 |
-| 6 | `codex_set` | context | — | Redundant | 150 |
+| 1 | `reverie_context` | (bootstrap) | 8,000B | Yes | 20,000 |
+| 2 | `reverie_get` | files | 200B | Yes | 2,000 |
+| 3 | `reverie_get` | arch | 300B | Yes | 3,000 |
+| 4 | `reverie_get` | missing.key | 30B | No | 0 |
+| 5 | `reverie_set` | context | — | — | 0 |
+| 6 | `reverie_set` | context | — | Redundant | 150 |
 
 **Totals:**
 - Gross exploration avoided: `20,000 + 2,000 + 3,000 + 150 = 25,150 tokens`
@@ -383,7 +383,7 @@ flowchart LR
     end
 
     subgraph analysis ["Analysis"]
-        STATS["rvr stats / codex_stats
+        STATS["rvr stats / reverie_stats
         → token savings"]
     end
 
@@ -399,12 +399,12 @@ flowchart LR
 
 ### What Gets Logged
 
-Every tool call is logged to `~/.codexcli/telemetry.jsonl` as a single JSON line:
+Every tool call is logged to `~/.reverie/telemetry.jsonl` as a single JSON line:
 
 ```json
 {
   "ts": 1712438400000,
-  "tool": "codex_get",
+  "tool": "reverie_get",
   "session": "a1b2c3d4",
   "op": "read",
   "ns": "files",
@@ -422,7 +422,7 @@ Every tool call is logged to `~/.codexcli/telemetry.jsonl` as a single JSON line
 | Field | Description |
 |-------|-------------|
 | `ts` | Unix timestamp (ms) |
-| `tool` | MCP tool name (e.g., `codex_get`, `codex_context`) |
+| `tool` | MCP tool name (e.g., `reverie_get`, `reverie_context`) |
 | `session` | Random ID per MCP server process |
 | `op` | Operation type: `read`, `write`, `exec`, or `meta` |
 | `ns` | Top-level namespace extracted from the key (e.g., `arch` from `arch.mcp`) |
@@ -433,7 +433,7 @@ Every tool call is logged to `~/.codexcli/telemetry.jsonl` as a single JSON line
 | `hit` | Whether the read returned stored data (reads only) |
 | `redundant` | Whether the write was a no-op (writes only) |
 | `responseSize` | UTF-8 byte length of the response text |
-| `agent` | Value of `CODEX_AGENT_NAME` env var (if set) |
+| `agent` | Value of `RVR_AGENT_NAME` env var (if set) |
 
 ### How Hits and Misses Are Determined
 
@@ -471,7 +471,7 @@ All `files.*` lookups get the same 2,000-token multiplier, whether the entry is 
 
 ### Bootstrap entry count is approximated
 
-The `codex_context` estimation divides `responseSize` by 80 to approximate entry count. This works reasonably well for typical entries (~80 bytes of formatted output per line), but breaks down for entries with very long or very short values.
+The `reverie_context` estimation divides `responseSize` by 80 to approximate entry count. This works reasonably well for typical entries (~80 bytes of formatted output per line), but breaks down for entries with very long or very short values.
 
 ### CLI reads don't log responseSize
 
@@ -483,11 +483,11 @@ The gold standard would be measuring actual token usage in sessions with and wit
 
 ### Misses aren't penalized
 
-When an agent calls `codex_get` and gets a miss, it still spent tokens on the call. These "wasted" lookup tokens aren't subtracted from the savings estimate. In practice, misses are rare (typically <15% of reads) and cheap (~50 tokens each), so the impact is small.
+When an agent calls `reverie_get` and gets a miss, it still spent tokens on the call. These "wasted" lookup tokens aren't subtracted from the savings estimate. In practice, misses are rare (typically <15% of reads) and cheap (~50 tokens each), so the impact is small.
 
 ### Multi-entry responses use a single namespace
 
-When `codex_get arch` returns a subtree with 13 entries, the entire response is counted as one hit against the `arch` namespace. The exploration cost for discovering all 13 entries individually would be higher than one `arch` multiplier.
+When `reverie_get arch` returns a subtree with 13 entries, the entire response is counted as one hit against the `arch` namespace. The exploration cost for discovering all 13 entries individually would be higher than one `arch` multiplier.
 
 ## Future Improvements
 
@@ -495,4 +495,4 @@ When `codex_get arch` returns a subtree with 13 entries, the entire response is 
 - **Agent-specific multipliers:** Different agents (Claude Code, Copilot, Cursor) have different exploration patterns and token costs. Per-agent calibration using miss-path data could improve accuracy.
 - **Cross-session deduplication:** Track when the same entry is read across multiple sessions to measure cumulative value over time.
 - **Configurable multipliers:** Allow users to override `EXPLORATION_COST` values for their specific workflows.
-- **Miss-path query tool:** Expose miss-path records via `codex_miss_paths` MCP tool for agents to inspect exploration cost data directly.
+- **Miss-path query tool:** Expose miss-path records via `reverie_miss_paths` MCP tool for agents to inspect exploration cost data directly.

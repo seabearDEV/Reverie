@@ -41,12 +41,12 @@ describe('audit + telemetry session ID consistency (regression for v1.11.x bug)'
   it('logAudit and logToolCall produce the same session field for the same operation (cli)', async () => {
     await logAudit({
       src: 'cli',
-      tool: 'codex_set',
+      tool: 'reverie_set',
       op: 'write',
       key: 'foo.bar',
       success: true,
     });
-    await logToolCall('codex_set', 'foo.bar', 'cli');
+    await logToolCall('reverie_set', 'foo.bar', 'cli');
 
     const auditEntries = loadAuditLog();
     const telemetryEntries = loadTelemetry();
@@ -65,12 +65,12 @@ describe('audit + telemetry session ID consistency (regression for v1.11.x bug)'
     // the MCP path so a future regression here gets caught at unit-test time.
     await logAudit({
       src: 'mcp',
-      tool: 'codex_set',
+      tool: 'reverie_set',
       op: 'write',
       key: 'foo.bar',
       success: true,
     });
-    await logToolCall('codex_set', 'foo.bar', 'mcp');
+    await logToolCall('reverie_set', 'foo.bar', 'mcp');
 
     const auditEntries = loadAuditLog();
     const telemetryEntries = loadTelemetry();
@@ -84,12 +84,12 @@ describe('audit + telemetry session ID consistency (regression for v1.11.x bug)'
     const expected = getSessionId();
     await logAudit({
       src: 'cli',
-      tool: 'codex_get',
+      tool: 'reverie_get',
       op: 'read',
       key: 'foo.bar',
       success: true,
     });
-    await logToolCall('codex_get', 'foo.bar', 'cli');
+    await logToolCall('reverie_get', 'foo.bar', 'cli');
 
     const auditEntries = loadAuditLog();
     const telemetryEntries = loadTelemetry();

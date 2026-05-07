@@ -32,12 +32,12 @@ afterEach(() => {
 // Tools that take a `scope` param. After #99 these refuse on auto+null
 // project resolution, so the helper injects scope:'global' by default to
 // keep the existing tests exercising the global-store path under
-// CODEX_NO_PROJECT='1'. Read-only tools (codex_get, codex_find, etc.)
+// RVR_NO_PROJECT='1'. Read-only tools (reverie_get, reverie_find, etc.)
 // don't need it but tolerate the extra field.
 const SCOPED_TOOLS = new Set([
-  'codex_set', 'codex_remove', 'codex_copy', 'codex_rename',
-  'codex_alias_set', 'codex_alias_remove', 'codex_import', 'codex_reset',
-  'codex_get', 'codex_find', 'codex_alias_list', 'codex_run',
+  'reverie_set', 'reverie_remove', 'reverie_copy', 'reverie_rename',
+  'reverie_alias_set', 'reverie_alias_remove', 'reverie_import', 'reverie_reset',
+  'reverie_get', 'reverie_find', 'reverie_alias_list', 'reverie_run',
 ]);
 
 function callMcpTool(tool: string, params: Record<string, unknown> = {}, opts: { skipScopeInject?: boolean } = {}): { content: { text: string }[]; isError?: boolean } {
@@ -73,7 +73,7 @@ function callMcpTool(tool: string, params: Record<string, unknown> = {}, opts: {
   try {
     const output = execSync(`node dist/mcp-server.js --cwd ${tmpDir}`, {
       input,
-      env: { ...process.env, CODEX_DATA_DIR: tmpDir, CODEX_NO_PROJECT: '1' },
+      env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' },
       timeout: 15000,
       maxBuffer: 1024 * 1024,
     }).toString();
@@ -114,9 +114,9 @@ function readDataFile(): Record<string, unknown> {
 }
 
 describe('MCP Integration (real I/O)', () => {
-  describe('codex_set + codex_get round-trip', () => {
+  describe('reverie_set + reverie_get round-trip', () => {
     it('persists a value and retrieves it', () => {
-      const setResult = callMcpTool('codex_set', { key: 'project.name', value: 'TestProject' });
+      const setResult = callMcpTool('reverie_set', { key: 'project.name', value: 'TestProject' });
       expect(setResult.content[0].text).toContain('Set:');
 
       // Verify on disk
@@ -124,13 +124,13 @@ describe('MCP Integration (real I/O)', () => {
       expect((data.entries as any).project.name).toBe('TestProject');
 
       // Retrieve via MCP
-      const getResult = callMcpTool('codex_get', { key: 'project.name' });
+      const getResult = callMcpTool('reverie_get', { key: 'project.name' });
       expect(getResult.content[0].text).toContain('TestProject');
     });
 
     it('handles nested keys correctly', () => {
-      callMcpTool('codex_set', { key: 'server.prod.ip', value: '10.0.0.1' });
-      callMcpTool('codex_set', { key: 'server.prod.port', value: '8080' });
+      callMcpTool('reverie_set', { key: 'server.prod.ip', value: '10.0.0.1' });
+      callMcpTool('reverie_set', { key: 'server.prod.port', value: '8080' });
 
       const data = readDataFile();
       expect((data.entries as any).server.prod.ip).toBe('10.0.0.1');
@@ -138,33 +138,33 @@ describe('MCP Integration (real I/O)', () => {
     });
   });
 
-  describe('codex_remove', () => {
+  describe('reverie_remove', () => {
     it('removes an entry from disk', () => {
-      callMcpTool('codex_set', { key: 'temp.key', value: 'temp' });
-      callMcpTool('codex_remove', { key: 'temp.key' });
+      callMcpTool('reverie_set', { key: 'temp.key', value: 'temp' });
+      callMcpTool('reverie_remove', { key: 'temp.key' });
 
       const data = readDataFile();
       expect((data.entries as any).temp).toBeUndefined();
     });
 
     it('cleans up empty parent objects', () => {
-      callMcpTool('codex_set', { key: 'a.b.c', value: 'deep' });
-      callMcpTool('codex_remove', { key: 'a.b.c' });
+      callMcpTool('reverie_set', { key: 'a.b.c', value: 'deep' });
+      callMcpTool('reverie_remove', { key: 'a.b.c' });
 
       const data = readDataFile();
       expect((data.entries as any).a).toBeUndefined();
     });
   });
 
-  describe('codex_rename', () => {
+  describe('reverie_rename', () => {
     it('moves value from old key to new key on disk', () => {
-      callMcpTool('codex_set', { key: 'old.key', value: 'moved' });
+      callMcpTool('reverie_set', { key: 'old.key', value: 'moved' });
 
       // Verify it's set
       const before = readDataFile();
       expect((before.entries as any).old.key).toBe('moved');
 
-      callMcpTool('codex_rename', { oldKey: 'old.key', newKey: 'new.key' });
+      callMcpTool('reverie_rename', { oldKey: 'old.key', newKey: 'new.key' });
 
       const data = readDataFile();
       expect((data.entries as any).new?.key).toBe('moved');
@@ -172,10 +172,10 @@ describe('MCP Integration (real I/O)', () => {
     });
   });
 
-  describe('codex_copy', () => {
+  describe('reverie_copy', () => {
     it('duplicates value on disk', () => {
-      callMcpTool('codex_set', { key: 'src', value: 'copied' });
-      callMcpTool('codex_copy', { source: 'src', dest: 'dst' });
+      callMcpTool('reverie_set', { key: 'src', value: 'copied' });
+      callMcpTool('reverie_copy', { source: 'src', dest: 'dst' });
 
       const data = readDataFile();
       expect((data.entries as any).src).toBe('copied');
@@ -183,21 +183,21 @@ describe('MCP Integration (real I/O)', () => {
     });
   });
 
-  describe('codex_find', () => {
+  describe('reverie_find', () => {
     it('finds entries by value content', () => {
-      callMcpTool('codex_set', { key: 'server.ip', value: '192.168.1.100' });
-      callMcpTool('codex_set', { key: 'app.name', value: 'TestApp' });
+      callMcpTool('reverie_set', { key: 'server.ip', value: '192.168.1.100' });
+      callMcpTool('reverie_set', { key: 'app.name', value: 'TestApp' });
 
-      const result = callMcpTool('codex_find', { query: '192.168' });
+      const result = callMcpTool('reverie_find', { query: '192.168' });
       expect(result.content[0].text).toContain('192.168');
       expect(result.content[0].text).not.toContain('TestApp');
     });
   });
 
-  describe('codex_alias lifecycle', () => {
+  describe('reverie_alias lifecycle', () => {
     it('creates alias and persists it on disk', () => {
-      callMcpTool('codex_set', { key: 'commands.build', value: 'npm run build' });
-      callMcpTool('codex_alias_set', { alias: 'bld', key: 'commands.build' });
+      callMcpTool('reverie_set', { key: 'commands.build', value: 'npm run build' });
+      callMcpTool('reverie_alias_set', { alias: 'bld', key: 'commands.build' });
 
       // Alias persisted on disk
       const data = readDataFile();
@@ -212,7 +212,7 @@ describe('MCP Integration (real I/O)', () => {
         confirm: {},
       });
 
-      const listResult = callMcpTool('codex_alias_list', {});
+      const listResult = callMcpTool('reverie_alias_list', {});
       expect(listResult.content[0].text).toContain('tst');
       expect(listResult.content[0].text).toContain('commands.test');
     });
@@ -225,19 +225,19 @@ describe('MCP Integration (real I/O)', () => {
         confirm: {},
       });
 
-      callMcpTool('codex_alias_remove', { alias: 'xy' });
+      callMcpTool('reverie_alias_remove', { alias: 'xy' });
 
       const after = readDataFile();
       expect((after.aliases as any).xy).toBeUndefined();
     });
   });
 
-  describe('codex_context', () => {
+  describe('reverie_context', () => {
     it('returns all stored data in compact format', () => {
-      callMcpTool('codex_set', { key: 'project.name', value: 'Test' });
-      callMcpTool('codex_set', { key: 'commands.build', value: 'make' });
+      callMcpTool('reverie_set', { key: 'project.name', value: 'Test' });
+      callMcpTool('reverie_set', { key: 'commands.build', value: 'make' });
 
-      const result = callMcpTool('codex_context', {});
+      const result = callMcpTool('reverie_context', {});
       const text = result.content[0].text;
       expect(text).toContain('project.name');
       expect(text).toContain('Test');
@@ -246,35 +246,35 @@ describe('MCP Integration (real I/O)', () => {
     });
   });
 
-  describe('codex_import + codex_export round-trip', () => {
+  describe('reverie_import + reverie_export round-trip', () => {
     it('exports and reimports data losslessly', () => {
-      callMcpTool('codex_set', { key: 'a.b', value: 'original' });
-      callMcpTool('codex_set', { key: 'c.d', value: 'other' });
+      callMcpTool('reverie_set', { key: 'a.b', value: 'original' });
+      callMcpTool('reverie_set', { key: 'c.d', value: 'other' });
 
       // Export
-      const exportResult = callMcpTool('codex_export', { type: 'entries' });
+      const exportResult = callMcpTool('reverie_export', { type: 'entries' });
       const exportedJson = exportResult.content[0].text;
       const exported = JSON.parse(exportedJson);
-      expect(exported.$codexcli?.type).toBe('entries');
+      expect(exported.$reverie?.type).toBe('entries');
       expect(exported.entries.a.b).toBe('original');
 
       // Reset
-      callMcpTool('codex_reset', { type: 'entries' });
+      callMcpTool('reverie_reset', { type: 'entries' });
       const afterReset = readDataFile();
       expect(Object.keys((afterReset.entries as any))).toHaveLength(0);
 
       // Import
-      callMcpTool('codex_import', { type: 'entries', data: exportedJson });
+      callMcpTool('reverie_import', { type: 'entries', data: exportedJson });
       const afterImport = readDataFile();
       expect((afterImport.entries as any).a.b).toBe('original');
       expect((afterImport.entries as any).c.d).toBe('other');
     });
   });
 
-  describe('codex_reset', () => {
+  describe('reverie_reset', () => {
     it('clears all entries on disk', () => {
-      callMcpTool('codex_set', { key: 'foo', value: 'bar' });
-      callMcpTool('codex_reset', { type: 'entries' });
+      callMcpTool('reverie_set', { key: 'foo', value: 'bar' });
+      callMcpTool('reverie_reset', { type: 'entries' });
 
       const data = readDataFile();
       expect(Object.keys(data.entries as any)).toHaveLength(0);
@@ -282,17 +282,17 @@ describe('MCP Integration (real I/O)', () => {
   });
 
   describe('_meta staleness tracking', () => {
-    it('codex_set writes _meta timestamp for the key', () => {
-      callMcpTool('codex_set', { key: 'tracked.key', value: 'val' });
+    it('reverie_set writes _meta timestamp for the key', () => {
+      callMcpTool('reverie_set', { key: 'tracked.key', value: 'val' });
 
       const data = readDataFile();
       const meta = data._meta as Record<string, number>;
       expect(meta['tracked.key']).toBeGreaterThan(0);
     });
 
-    it('codex_remove clears _meta for removed key', () => {
-      callMcpTool('codex_set', { key: 'rm.key', value: 'val' });
-      callMcpTool('codex_remove', { key: 'rm.key' });
+    it('reverie_remove clears _meta for removed key', () => {
+      callMcpTool('reverie_set', { key: 'rm.key', value: 'val' });
+      callMcpTool('reverie_remove', { key: 'rm.key' });
 
       const data = readDataFile();
       const meta = data._meta as Record<string, number> | undefined;
@@ -302,14 +302,14 @@ describe('MCP Integration (real I/O)', () => {
 
   describe('audit logging', () => {
     it('logs MCP tool calls to audit.jsonl', () => {
-      callMcpTool('codex_set', { key: 'audit.test', value: 'logged' });
+      callMcpTool('reverie_set', { key: 'audit.test', value: 'logged' });
 
       const auditPath = path.join(tmpDir, 'audit.jsonl');
       // Audit may be async — give it a moment
       if (fs.existsSync(auditPath)) {
         const lines = fs.readFileSync(auditPath, 'utf8').trim().split('\n');
         const entries = lines.map(l => JSON.parse(l));
-        const setEntry = entries.find((e: any) => e.tool === 'codex_set' && e.key === 'audit.test');
+        const setEntry = entries.find((e: any) => e.tool === 'reverie_set' && e.key === 'audit.test');
         if (setEntry) {
           expect(setEntry.src).toBe('mcp');
           expect(setEntry.success).toBe(true);
@@ -321,13 +321,13 @@ describe('MCP Integration (real I/O)', () => {
 
   describe('telemetry logging', () => {
     it('logs MCP tool calls to telemetry.jsonl', () => {
-      callMcpTool('codex_set', { key: 'telemetry.test', value: 'logged' });
+      callMcpTool('reverie_set', { key: 'telemetry.test', value: 'logged' });
 
       const telemetryPath = path.join(tmpDir, 'telemetry.jsonl');
       if (fs.existsSync(telemetryPath)) {
         const lines = fs.readFileSync(telemetryPath, 'utf8').trim().split('\n');
         const entries = lines.map(l => JSON.parse(l));
-        const setEntry = entries.find((e: any) => e.tool === 'codex_set');
+        const setEntry = entries.find((e: any) => e.tool === 'reverie_set');
         if (setEntry) {
           expect(setEntry.op).toBe('write');
           expect(setEntry.src).toBe('mcp');
@@ -341,42 +341,42 @@ describe('MCP Integration (real I/O)', () => {
   // scope:'global' is explicit, the same call succeeds and is tagged
   // rescuedByExplicitGlobal in telemetry/audit.
   describe('project-resolution refusal (#99)', () => {
-    it('codex_set without scope refuses with the structured error', () => {
-      const result = callMcpTool('codex_set', { key: 'refused.key', value: 'v' }, { skipScopeInject: true });
+    it('reverie_set without scope refuses with the structured error', () => {
+      const result = callMcpTool('reverie_set', { key: 'refused.key', value: 'v' }, { skipScopeInject: true });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Project resolution failed');
-      expect(result.content[0].text).toContain('CODEX_NO_PROJECT');
+      expect(result.content[0].text).toContain('RVR_NO_PROJECT');
       // Second content block carries the JSON diagnostic
       expect(result.content[1]?.text).toContain('PROJECT_UNRESOLVED');
-      expect(result.content[1]?.text).toContain('codexNoProject');
+      expect(result.content[1]?.text).toContain('rvrNoProject');
       // Nothing was written
       const data = readDataFile();
       expect((data.entries as any).refused).toBeUndefined();
     });
 
-    it('codex_set with explicit scope:"global" succeeds (rescue path)', () => {
-      const result = callMcpTool('codex_set', { key: 'rescued.key', value: 'v', scope: 'global' });
+    it('reverie_set with explicit scope:"global" succeeds (rescue path)', () => {
+      const result = callMcpTool('reverie_set', { key: 'rescued.key', value: 'v', scope: 'global' });
       expect(result.isError).toBeFalsy();
       const data = readDataFile();
       expect((data.entries as any).rescued.key).toBe('v');
     });
 
     it('audit logs refusedReason on the refused call and rescuedByExplicitGlobal on the rescued one', () => {
-      callMcpTool('codex_set', { key: 'audit.refused', value: 'v' }, { skipScopeInject: true });
-      callMcpTool('codex_set', { key: 'audit.rescued', value: 'v', scope: 'global' });
+      callMcpTool('reverie_set', { key: 'audit.refused', value: 'v' }, { skipScopeInject: true });
+      callMcpTool('reverie_set', { key: 'audit.rescued', value: 'v', scope: 'global' });
 
       const auditPath = path.join(tmpDir, 'audit.jsonl');
       if (!fs.existsSync(auditPath)) return; // audit is best-effort; if it didn't flush, skip
       const lines = fs.readFileSync(auditPath, 'utf8').trim().split('\n');
       const entries = lines.map(l => JSON.parse(l));
 
-      const refused = entries.find((e: any) => e.tool === 'codex_set' && e.key === 'audit.refused');
+      const refused = entries.find((e: any) => e.tool === 'reverie_set' && e.key === 'audit.refused');
       if (refused) {
         expect(refused.success).toBe(false);
         expect(refused.refusedReason).toBe('project_unresolved');
       }
 
-      const rescued = entries.find((e: any) => e.tool === 'codex_set' && e.key === 'audit.rescued');
+      const rescued = entries.find((e: any) => e.tool === 'reverie_set' && e.key === 'audit.rescued');
       if (rescued) {
         expect(rescued.success).toBe(true);
         expect(rescued.rescuedByExplicitGlobal).toBe(true);

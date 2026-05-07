@@ -44,9 +44,9 @@ export function setNestedValue(obj: CodexData, path: string, value: string): voi
  * `__proto__`, `constructor`, `hasOwnProperty`, `toString`, etc. don't leak
  * inherited properties from Object.prototype.
  *
- * Pre-fix, codex_get __proto__ rendered Object.prototype as an empty subtree,
- * codex_get constructor returned the source of the Object constructor, and
- * codex_copy / codex_rename's existence checks always reported "already exists"
+ * Pre-fix, reverie_get __proto__ rendered Object.prototype as an empty subtree,
+ * reverie_get constructor returned the source of the Object constructor, and
+ * reverie_copy / reverie_rename's existence checks always reported "already exists"
  * for any prototype-chain name.
  */
 export function getNestedValue(obj: CodexData, path: string): CodexValue | undefined {

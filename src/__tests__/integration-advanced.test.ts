@@ -5,7 +5,7 @@ import * as os from 'os';
 
 describe('CLI Integration Tests — Advanced', () => {
   const testDir = path.join(os.tmpdir(), 'reverie-integ-' + Math.random().toString(36).substring(2));
-  const execOpts = { env: { ...process.env, CODEX_DATA_DIR: testDir, CODEX_NO_PROJECT: '1' }, stdio: ['pipe', 'pipe', 'pipe'] as const };
+  const execOpts = { env: { ...process.env, RVR_DATA_DIR: testDir, RVR_NO_PROJECT: '1' }, stdio: ['pipe', 'pipe', 'pipe'] as const };
   const run = (args: string) => {
     // After #99, auto-mode writes refuse without project resolution. Inject
     // --global for write verbs so the global-store path remains exercised.
@@ -70,7 +70,7 @@ describe('CLI Integration Tests — Advanced', () => {
       expect(fs.existsSync(exportFile)).toBe(true);
 
       const exported = JSON.parse(fs.readFileSync(exportFile, 'utf8'));
-      expect(exported.$codexcli?.type).toBe('entries');
+      expect(exported.$reverie?.type).toBe('entries');
       expect(exported.entries.roundtrip).toBeDefined();
 
       // Reset and reimport
@@ -98,7 +98,7 @@ describe('CLI Integration Tests — Advanced', () => {
       expect(fs.existsSync(path.join(testDir, 'all-confirm.json'))).toBe(false);
 
       const exported = JSON.parse(fs.readFileSync(exportFile, 'utf8'));
-      expect(exported.$codexcli?.type).toBe('all');
+      expect(exported.$reverie?.type).toBe('all');
       expect(exported.entries?.rt?.ent).toBe('entryVal');
       expect(exported.aliases?.rtalias).toBe('rt.target');
       expect(exported.confirm?.['rt.cmd']).toBeDefined();
