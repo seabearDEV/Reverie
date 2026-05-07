@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "reverie": {
+      "type": "stdio",
+      "command": "rvr-beta",
+      "args": [
+        "mcp-server",
+        "--cwd",
+        "."
+      ],
+      "env": {}
+    }
+  }
+}
