@@ -13,8 +13,8 @@ describe('getBinaryName', () => {
   });
 
   it('returns basename of argv[0] when argv[1] has no path separator (SEA mode)', () => {
-    process.argv = ['/usr/local/bin/ccli', 'get', 'project.name'];
-    expect(getBinaryName()).toBe('ccli');
+    process.argv = ['/usr/local/bin/rvr', 'get', 'project.name'];
+    expect(getBinaryName()).toBe('rvr');
   });
 
   it('handles Windows-style paths in argv[1]', () => {
@@ -27,13 +27,13 @@ describe('getBinaryName', () => {
     expect(typeof result).toBe('string');
   });
 
-  it('returns ccli when argv[0] is undefined', () => {
+  it('returns rvr when argv[0] is undefined', () => {
     process.argv = [];
-    expect(getBinaryName()).toBe('ccli');
+    expect(getBinaryName()).toBe('rvr');
   });
 
   it('returns basename of argv[0] when argv[1] is undefined', () => {
-    process.argv = ['/usr/local/bin/ccli'];
-    expect(getBinaryName()).toBe('ccli');
+    process.argv = ['/usr/local/bin/rvr'];
+    expect(getBinaryName()).toBe('rvr');
   });
 });

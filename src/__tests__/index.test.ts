@@ -114,7 +114,7 @@ afterEach(() => {
 });
 
 async function loadCLI(...args: string[]) {
-  process.argv = ['node', 'ccli', ...args];
+  process.argv = ['node', 'rvr', ...args];
   await import('../index');
 }
 
@@ -122,8 +122,8 @@ describe('CLI Entry Point (index.ts)', () => {
   // --- Early exit: --get-completions ---
 
   it('--get-completions triggers early exit with completions', async () => {
-    await expect(loadCLI('--get-completions', 'ccli s')).rejects.toThrow('EXIT_0');
-    expect(mockGetCompletions).toHaveBeenCalledWith('ccli s', 6);
+    await expect(loadCLI('--get-completions', 'rvr s')).rejects.toThrow('EXIT_0');
+    expect(mockGetCompletions).toHaveBeenCalledWith('rvr s', 5);
     expect(process.exit).toHaveBeenCalledWith(0);
   });
 
@@ -278,14 +278,6 @@ describe('CLI Entry Point (index.ts)', () => {
   it('config completions install calls installCompletions', async () => {
     await loadCLI('config', 'completions', 'install');
     expect(mockInstallCompletions).toHaveBeenCalled();
-  });
-
-  // --- Backward-compat completions shim ---
-
-  it('completions zsh backward-compat shim outputs zsh script', async () => {
-    await loadCLI('completions', 'zsh');
-    expect(mockGenerateZshScript).toHaveBeenCalled();
-    expect(process.stdout.write).toHaveBeenCalledWith('zsh-script');
   });
 
   // --- Help command ---

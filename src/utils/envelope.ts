@@ -130,7 +130,7 @@ export function tryUnwrapImport(obj: Record<string, unknown>, currentVersion: st
   const warnings: string[] = [];
   if (compareVersions(version, currentVersion) > 0) {
     warnings.push(
-      `Import was produced by a newer codexcli version (${version}, this build is ${currentVersion}). Proceeding, but some fields may not be recognized.`
+      `Import was produced by a newer Reverie version (${version}, this build is ${currentVersion}). Proceeding, but some fields may not be recognized.`
     );
   }
 

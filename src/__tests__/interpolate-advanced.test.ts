@@ -287,10 +287,10 @@ describe('interpolation — advanced edge cases', () => {
 
     it('mixes escaped and live refs', () => {
       mockGetValue.mockImplementation((key: string) => {
-        if (key === 'name') return 'codexcli';
+        if (key === 'name') return 'reverie';
         return undefined;
       });
-      expect(interpolate('\\${literal} and ${name}')).toBe('${literal} and codexcli');
+      expect(interpolate('\\${literal} and ${name}')).toBe('${literal} and reverie');
     });
 
     it('handles multiple escaped refs in one string', () => {

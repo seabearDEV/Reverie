@@ -127,7 +127,7 @@ describe('tryUnwrapImport', () => {
     });
     const result = tryUnwrapImport(wrapped, currentVersion);
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain('newer codexcli version');
+    expect(result.warnings[0]).toContain('newer Reverie version');
   });
 
   it('does not warn for older or equal envelope versions', () => {

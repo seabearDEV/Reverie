@@ -1451,7 +1451,7 @@ describe('MCP Server Tools', () => {
       mockConfig.bootstrap_max_response_bytes = 200;
       const big = 'x'.repeat(300);
       Object.assign(mockData, {
-        project: { name: 'codexcli' },
+        project: { name: 'reverie' },
         files: { a: big, b: big, c: big },
       });
 
@@ -1472,7 +1472,7 @@ describe('MCP Server Tools', () => {
       mockConfig.bootstrap_max_response_bytes = 200;
       const big = 'x'.repeat(300);
       Object.assign(mockData, {
-        project: { name: 'codexcli' },
+        project: { name: 'reverie' },
         files: { a: big, b: big, c: big },
       });
 
@@ -1499,7 +1499,7 @@ describe('MCP Server Tools', () => {
 
     it('codex_context under budget produces no degraded signal', async () => {
       mockConfig.bootstrap_max_response_bytes = 50 * 1024;
-      Object.assign(mockData, { project: { name: 'codexcli' } });
+      Object.assign(mockData, { project: { name: 'reverie' } });
 
       const result = await toolHandlers['codex_context']({});
       expect(result.content[0].text).not.toContain('[trimmed:');

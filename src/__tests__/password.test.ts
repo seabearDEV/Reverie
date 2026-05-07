@@ -8,7 +8,7 @@ describe('readPasswordFile', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codexcli-pwtest-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-pwtest-'));
   });
 
   afterEach(() => {
@@ -54,7 +54,7 @@ describe('askPassword non-interactive paths', () => {
   let stderrWrite: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codexcli-pwtest-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-pwtest-'));
     delete process.env.CCLI_PASSWORD;
     stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   });

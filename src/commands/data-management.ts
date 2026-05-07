@@ -71,7 +71,7 @@ export function exportData(type: string, options: ExportOptions): void {
     // advertised export-all → import-all round-trip (#76). Pass --split
     // to get the legacy per-section files.
     if (type === 'all' && !options.split) {
-      const outputFile = options.output ?? path.join(defaultDir, `codexcli-all-${timestamp}.json`);
+      const outputFile = options.output ?? path.join(defaultDir, `reverie-all-${timestamp}.json`);
       const entries = loadData(scope);
       const entriesPayload = includesEncrypted ? entries : maskEncryptedValues(entries);
       const wrapped = wrapExport({
@@ -104,7 +104,7 @@ export function exportData(type: string, options: ExportOptions): void {
     };
 
     if (type === 'entries' || type === 'all') {
-      const outputFile = getOutputFile('entries', `codexcli-entries-${timestamp}.json`);
+      const outputFile = getOutputFile('entries', `reverie-entries-${timestamp}.json`);
       const entries = loadData(scope);
       const entriesPayload = includesEncrypted ? entries : maskEncryptedValues(entries);
       const wrapped = wrapExport({
@@ -122,7 +122,7 @@ export function exportData(type: string, options: ExportOptions): void {
     }
 
     if (type === 'aliases' || type === 'all') {
-      const outputFile = getOutputFile('aliases', `codexcli-aliases-${timestamp}.json`);
+      const outputFile = getOutputFile('aliases', `reverie-aliases-${timestamp}.json`);
       const wrapped = wrapExport({
         type: 'aliases',
         scope: envelopeScope,
@@ -135,7 +135,7 @@ export function exportData(type: string, options: ExportOptions): void {
     }
 
     if (type === 'confirm' || type === 'all') {
-      const outputFile = getOutputFile('confirm', `codexcli-confirm-${timestamp}.json`);
+      const outputFile = getOutputFile('confirm', `reverie-confirm-${timestamp}.json`);
       const wrapped = wrapExport({
         type: 'confirm',
         scope: envelopeScope,

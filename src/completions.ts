@@ -423,7 +423,7 @@ function getCompletionsUnlimited(compLine: string, compPoint: number): Completio
   const endsWithSpace = lineToPoint.endsWith(' ') || lineToPoint === '';
   const partial = endsWithSpace ? '' : (words.pop() ?? '');
 
-  // words[0] is the program name (ccli); skip it
+  // words[0] is the program name (rvr); skip it
   const args = words.slice(1);
 
   // No command typed yet — complete top-level commands
@@ -537,7 +537,7 @@ function filterPrefix(items: CompletionItem[], prefix: string): CompletionItem[]
 
 export function generateBashScript(): string {
   const bin = getBinaryName();
-  return `# Bash completion for ${bin} (CodexCLI)
+  return `# Bash completion for ${bin} (Reverie)
 _${bin}_completions() {
   # Remove : from word breaks so colon-composed commands (run cd:key) complete correctly
   local _saved_wordbreaks="$COMP_WORDBREAKS"
@@ -575,7 +575,7 @@ complete -o default -F _${bin}_completions ${bin}
 
 export function generateZshScript(): string {
   const bin = getBinaryName();
-  return `# Zsh completion for ${bin} (CodexCLI)
+  return `# Zsh completion for ${bin} (Reverie)
 _${bin}_completions() {
   local line tab=$'\\t' us=$'\\x1f'
   local -A groups
@@ -659,7 +659,7 @@ export function installCompletions(): void {
   if (content.includes(`${bin} completions`) || content.includes(`${bin} config completions`)) {
     console.log(`Completions already installed in ${rcFile}`);
   } else {
-    const completionBlock = `\n# CodexCLI shell completions (${bin})\n${scriptCmd}\n`;
+    const completionBlock = `\n# Reverie shell completions (${bin})\n${scriptCmd}\n`;
     fs.appendFileSync(rcFile, completionBlock, 'utf8');
     console.log(`Completions installed in ${rcFile}`);
   }
@@ -667,7 +667,7 @@ export function installCompletions(): void {
   // Install shell wrapper for `run` / `r` (eval in current shell)
   // Re-read content since completions block may have been appended above
   const wrapperContent = fs.existsSync(rcFile) ? fs.readFileSync(rcFile, 'utf8') : '';
-  const wrapperMarker = `# CodexCLI shell wrapper (${bin})`;
+  const wrapperMarker = `# Reverie shell wrapper (${bin})`;
 
   if (wrapperContent.includes(wrapperMarker)) {
     console.log(`Shell wrapper already installed in ${rcFile}`);
@@ -700,24 +700,15 @@ ${bin}() {
 
   // Install history exclusion
   // Re-read content since earlier blocks may have been appended above
-  let currentContent = fs.existsSync(rcFile) ? fs.readFileSync(rcFile, 'utf8') : '';
+  const currentContent = fs.existsSync(rcFile) ? fs.readFileSync(rcFile, 'utf8') : '';
   const historyMarker = `_${bin}_history_filter`;
 
   if (currentContent.includes(historyMarker) || (!shell.endsWith('/zsh') && currentContent.includes('HISTIGNORE'))) {
     console.log(`History exclusion already configured in ${rcFile}`);
   } else {
-    // Migrate from old HISTORY_IGNORE approach if present (zsh only, production ccli only)
-    if (bin === 'ccli' && shell.endsWith('/zsh') && currentContent.includes('HISTORY_IGNORE')) {
-      currentContent = currentContent
-        .replace(/\n?# CodexCLI - exclude from shell history\n/, '\n')
-        .replace(/\n?HISTORY_IGNORE="\(ccli \*\)"\n?/, '\n');
-      fs.writeFileSync(rcFile, currentContent, 'utf8');
-      console.log('Migrated from old HISTORY_IGNORE to zshaddhistory hook');
-    }
-
     const historyBlock = shell.endsWith('/zsh')
-      ? `\n# CodexCLI - exclude from shell history (${bin} set/s commands may contain sensitive values)\n[[ -z \${functions[add-zsh-hook]} ]] && autoload -Uz add-zsh-hook\n${historyMarker}() { [[ $1 != ${bin}\\ (set|s)\\ * ]] }\nadd-zsh-hook zshaddhistory ${historyMarker}\n`
-      : `\n# CodexCLI - exclude from shell history (${bin} set/s commands may contain sensitive values)\nHISTIGNORE="\${HISTIGNORE:+\$HISTIGNORE:}${bin} set *:${bin} s *"\n`;
+      ? `\n# Reverie - exclude from shell history (${bin} set/s commands may contain sensitive values)\n[[ -z \${functions[add-zsh-hook]} ]] && autoload -Uz add-zsh-hook\n${historyMarker}() { [[ $1 != ${bin}\\ (set|s)\\ * ]] }\nadd-zsh-hook zshaddhistory ${historyMarker}\n`
+      : `\n# Reverie - exclude from shell history (${bin} set/s commands may contain sensitive values)\nHISTIGNORE="\${HISTIGNORE:+\$HISTIGNORE:}${bin} set *:${bin} s *"\n`;
     fs.appendFileSync(rcFile, historyBlock, 'utf8');
     console.log(`History exclusion installed in ${rcFile}`);
   }

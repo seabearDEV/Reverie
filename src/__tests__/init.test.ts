@@ -1,5 +1,5 @@
 /**
- * Integration tests for the enhanced `ccli init` command.
+ * Integration tests for the enhanced `rvr init` command.
  */
 import { execSync } from 'child_process';
 import fs from 'fs';
@@ -9,7 +9,7 @@ import { readDirectoryStore } from './helpers/readStoreState';
 
 let tmpDir: string;
 
-// v1.10.0: `ccli init` creates a `.codexcli/` directory, not a `.codexcli.json`
+// v1.10.0: `rvr init` creates a `.codexcli/` directory, not a `.codexcli.json`
 // file. These helpers read the new layout and reconstitute the legacy shape.
 const readProjectData = (dir: string) =>
   readDirectoryStore(path.join(dir, '.codexcli'));
@@ -47,7 +47,7 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('ccli init — full flow', () => {
+describe('rvr init — full flow', () => {
   it('creates .codexcli/ with scanned entries', () => {
     const output = run('init');
     expect(output).toContain('Created:');
@@ -85,7 +85,7 @@ describe('ccli init — full flow', () => {
   });
 });
 
-describe('ccli init — idempotency', () => {
+describe('rvr init — idempotency', () => {
   it('running twice produces no duplicates', () => {
     run('init');
     const output2 = run('init');
@@ -107,7 +107,7 @@ describe('ccli init — idempotency', () => {
   });
 });
 
-describe('ccli init — flags', () => {
+describe('rvr init — flags', () => {
   it('--no-scan skips codebase analysis', () => {
     run('init --no-scan');
     const data = readProjectData(tmpDir);
@@ -152,7 +152,7 @@ describe('ccli init — flags', () => {
   });
 });
 
-describe('ccli init — empty directory', () => {
+describe('rvr init — empty directory', () => {
   it('creates .codexcli/ and CLAUDE.md even with no project files', () => {
     const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-init-empty-'));
     try {

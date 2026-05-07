@@ -229,7 +229,7 @@ describe('mtime caching', () => {
 
     // External modification (simulate another process) — atomically rename
     // a fresh wrapper file into place. Atomic rename is what realistic
-    // writers use (editors, codexCLI itself, etc.) and it bumps both the
+    // writers use (editors, Reverie itself, etc.) and it bumps both the
     // file mtime and the parent directory mtime, which is what the
     // dir-mtime fast-skip in scanAndSync invalidates on. In-place
     // overwrite would not bump dir mtime and is an unsupported edit

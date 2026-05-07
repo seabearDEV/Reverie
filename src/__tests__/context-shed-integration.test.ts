@@ -33,7 +33,7 @@ vi.mock('../formatting', () => ({
   },
 }));
 vi.mock('../utils/binaryName', () => ({
-  getBinaryName: () => 'ccli',
+  getBinaryName: () => 'rvr',
 }));
 
 import { getEntriesFlat } from '../storage';
@@ -60,19 +60,19 @@ afterEach(() => {
 describe('showContext shed integration (#100)', () => {
   it('does not shed under-budget store (no notice in output)', () => {
     mockGetEntriesFlat.mockReturnValue({
-      'project.name': 'codexcli',
+      'project.name': 'reverie',
       'commands.build': 'npm run build',
     });
     showContext({ plain: true });
     const output = logged.join('\n');
     expect(output).not.toContain('[trimmed:');
-    expect(output).toContain('project.name: codexcli');
+    expect(output).toContain('project.name: reverie');
   });
 
   it('sheds files.* and prepends notice when over budget', () => {
     mockLoadConfig.mockReturnValue({ bootstrap_max_response_bytes: 200 } as ReturnType<typeof loadConfig>);
     mockGetEntriesFlat.mockReturnValue({
-      'project.name': 'codexcli',
+      'project.name': 'reverie',
       'files.a': 'x'.repeat(200),
       'files.b': 'x'.repeat(200),
     });
@@ -90,7 +90,7 @@ describe('showContext shed integration (#100)', () => {
   it('--json output includes degraded + shedNamespaces when shed fires', () => {
     mockLoadConfig.mockReturnValue({ bootstrap_max_response_bytes: 200 } as ReturnType<typeof loadConfig>);
     mockGetEntriesFlat.mockReturnValue({
-      'project.name': 'codexcli',
+      'project.name': 'reverie',
       'files.a': 'x'.repeat(200),
       'files.b': 'x'.repeat(200),
     });
@@ -98,13 +98,13 @@ describe('showContext shed integration (#100)', () => {
     const parsed = JSON.parse(logged.join('\n'));
     expect(parsed.degraded).toBe(true);
     expect(parsed.shedNamespaces).toContain('files.*');
-    expect(parsed.entries['project.name']).toBe('codexcli');
+    expect(parsed.entries['project.name']).toBe('reverie');
     expect(parsed.entries['files.a']).toBeUndefined();
   });
 
   it('--json output omits degraded when no shed fires', () => {
     mockGetEntriesFlat.mockReturnValue({
-      'project.name': 'codexcli',
+      'project.name': 'reverie',
     });
     showContext({ json: true });
     const parsed = JSON.parse(logged.join('\n'));
@@ -115,7 +115,7 @@ describe('showContext shed integration (#100)', () => {
   it('tier:"full" bypasses shed even when over budget', () => {
     mockLoadConfig.mockReturnValue({ bootstrap_max_response_bytes: 200 } as ReturnType<typeof loadConfig>);
     mockGetEntriesFlat.mockReturnValue({
-      'project.name': 'codexcli',
+      'project.name': 'reverie',
       'files.a': 'x'.repeat(200),
       'files.b': 'x'.repeat(200),
     });
@@ -158,7 +158,7 @@ describe('showContext shed integration (#100)', () => {
       // Config says 50KB (no shed expected) but env says 200B (shed expected).
       mockLoadConfig.mockReturnValue({ bootstrap_max_response_bytes: 50 * 1024 } as ReturnType<typeof loadConfig>);
       mockGetEntriesFlat.mockReturnValue({
-        'project.name': 'codexcli',
+        'project.name': 'reverie',
         'files.a': 'x'.repeat(200),
         'files.b': 'x'.repeat(200),
       });

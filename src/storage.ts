@@ -38,7 +38,7 @@ export function handleError(message: string, error: unknown, context?: string): 
     console.error(`${color.red(contextPrefix + message)}: ${errorText}`);
   }
 
-  // Surface failure via the process exit code so scripts wrapping ccli can
+  // Surface failure via the process exit code so scripts wrapping rvr can
   // detect errors. Pre-fix the CLI returned 0 on most error paths.
   process.exitCode = 1;
 }

@@ -1,10 +1,10 @@
 {
-	"name": "codexcli",
+	"name": "@seabear/reverie",
 	"version": "1.14.0",
-	"description": "Persistent, structured knowledge store for software projects — CLI + MCP server for AI agent integration",
+	"description": "Bicameral memory for AI-assisted development — CLI + MCP server bootstrapping persistent project context across sessions",
 	"bin": {
-		"cclid": "dist/index.js",
-		"cclid-mcp": "dist/mcp-server.js"
+		"rvr-dev": "dist/index.js",
+		"rvr-dev-mcp": "dist/mcp-server.js"
 	},
 	"files": [
 		"dist",
@@ -35,7 +35,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/seabearDEV/codexCLI.git"
+		"url": "https://github.com/seabearDEV/reverie.git"
 	},
 	"devDependencies": {
 		"@types/node": "^22.13.8",

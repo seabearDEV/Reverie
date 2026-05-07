@@ -71,9 +71,9 @@ const ENTRY_FILE_SUFFIX = '.json';
  * otherwise be tempted to open an entry file and tweak it. See the codex
  * entry `conventions.editSurface` for the rationale.
  */
-const README_CONTENT = `# codexCLI store — do not hand-edit
+const README_CONTENT = `# Reverie store — do not hand-edit
 
-This directory is managed by codexCLI. Each \`*.json\` file is a single
+This directory is managed by Reverie. Each \`*.json\` file is a single
 store entry written through the CLI or MCP tools.
 
 **Internal sidecar files** (prefix \`_\`, safe to ignore):
@@ -87,8 +87,8 @@ store entry written through the CLI or MCP tools.
 
 **Edit via one of:**
 
-- \`ccli set <key> <value>\` (and the rest of the CLI)
-- The codexCLI MCP tools (\`codex_set\`, \`codex_get\`, etc.)
+- \`rvr set <key> <value>\` (and the rest of the CLI)
+- The Reverie MCP tools (\`codex_set\`, \`codex_get\`, etc.)
 - A future UI
 
 Direct edits to these files desync per-entry metadata (created/updated
@@ -816,7 +816,7 @@ export interface DirectoryMigrationResult {
  * The parent directory of `newDirPath` is guaranteed to exist before this
  * is called: for the global store, `getGlobalStore()` runs
  * `ensureDataDirectoryExists()` first; for the project store, the parent
- * is the project root which the user creates explicitly via `ccli init`.
+ * is the project root which the user creates explicitly via `rvr init`.
  * If the parent is somehow missing, `withFileLock` will throw under the
  * v1.11 fail-closed semantics (set `CODEX_DISABLE_LOCKING=1` for tests
  * that intentionally exercise the unlocked path).

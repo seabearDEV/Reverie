@@ -4,7 +4,7 @@ const noTag = (_: string) => '';
 
 describe('shedToFitBudget', () => {
   it('returns kept = entries with empty segments when under budget', () => {
-    const entries = { 'project.name': 'codexcli', 'commands.test': 'npm test' };
+    const entries = { 'project.name': 'reverie', 'commands.test': 'npm test' };
     const result = shedToFitBudget(entries, noTag, 0, 10_000);
     expect(result.kept).toEqual(entries);
     expect(result.segments).toEqual([]);
@@ -12,8 +12,8 @@ describe('shedToFitBudget', () => {
   });
 
   it('exactly-at-budget input does not shed', () => {
-    const entries = { 'project.name': 'codexcli' };
-    const total = entryRenderBytes('project.name', 'codexcli', '');
+    const entries = { 'project.name': 'reverie' };
+    const total = entryRenderBytes('project.name', 'reverie', '');
     const result = shedToFitBudget(entries, noTag, 0, total);
     expect(result.segments).toEqual([]);
     expect(result.kept).toEqual(entries);
@@ -22,24 +22,24 @@ describe('shedToFitBudget', () => {
   it('sheds files.* first when over budget at 1.5x', () => {
     const big = 'x'.repeat(200);
     const entries = {
-      'project.name': 'codexcli',
+      'project.name': 'reverie',
       'files.a': big,
       'files.b': big,
       'files.c': big,
     };
     // Budget below total but above non-files entries.
-    const projectCost = entryRenderBytes('project.name', 'codexcli', '');
+    const projectCost = entryRenderBytes('project.name', 'reverie', '');
     const result = shedToFitBudget(entries, noTag, 0, projectCost + 50);
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0].label).toBe('files.*');
     expect(result.segments[0].keys.length).toBeGreaterThan(0);
-    expect(result.kept['project.name']).toBe('codexcli');
+    expect(result.kept['project.name']).toBe('reverie');
   });
 
   it('sheds files.* then arch.* then large context.* in order at 3x', () => {
     const big = 'x'.repeat(300);
     const entries = {
-      'project.name': 'codexcli',
+      'project.name': 'reverie',
       'files.a': big,
       'arch.b': big,
       'context.c': 'x'.repeat(500), // largest context.* — sheds first within ns
@@ -57,13 +57,13 @@ describe('shedToFitBudget', () => {
 
   it('sheds context.* largest-first within the namespace', () => {
     const entries = {
-      'project.name': 'codexcli',
+      'project.name': 'reverie',
       'context.small': 'a',
       'context.medium': 'a'.repeat(100),
       'context.large': 'a'.repeat(500),
     };
     // Budget tight enough that only context.large gets shed.
-    const baseCost = entryRenderBytes('project.name', 'codexcli', '')
+    const baseCost = entryRenderBytes('project.name', 'reverie', '')
       + entryRenderBytes('context.small', 'a', '')
       + entryRenderBytes('context.medium', 'a'.repeat(100), '');
     const result = shedToFitBudget(entries, noTag, 0, baseCost + 5);
@@ -112,8 +112,8 @@ describe('shedToFitBudget', () => {
   });
 
   it('respects fixedOverheadBytes when computing projection', () => {
-    const entries = { 'project.name': 'codexcli' };
-    const entryCost = entryRenderBytes('project.name', 'codexcli', '');
+    const entries = { 'project.name': 'reverie' };
+    const entryCost = entryRenderBytes('project.name', 'reverie', '');
     // Overhead alone fills the budget — entry would push us over but
     // can't be shed (project.* is never-shed). Pathological flag fires.
     const result = shedToFitBudget(entries, noTag, 100, 100);
@@ -172,7 +172,7 @@ describe('formatShedNotice', () => {
     // Confirm only the namespace appears.
     const big = 'x'.repeat(2000);
     const result = shedToFitBudget(
-      { 'project.name': 'codexcli', 'context.large': big },
+      { 'project.name': 'reverie', 'context.large': big },
       () => '',
       0,
       100,

@@ -82,7 +82,7 @@ describe('Completions', () => {
 
   beforeEach(() => {
     originalArgv1 = process.argv[1];
-    process.argv[1] = '/usr/local/bin/ccli';
+    process.argv[1] = '/usr/local/bin/rvr';
     clearStoreCaches();
     clearConfigCache();
   });
@@ -97,7 +97,7 @@ describe('Completions', () => {
       const origRows = process.stderr.rows;
       Object.defineProperty(process.stderr, 'rows', { value: 80, configurable: true });
       try {
-        const results = getCompletions('ccli ', 5);
+        const results = getCompletions('rvr ', 5);
         const v = values(results);
         expect(v).toContain('set');
         expect(v).toContain('get');
@@ -114,7 +114,7 @@ describe('Completions', () => {
     });
 
     it('returns CompletionItem objects with descriptions and groups', () => {
-      const results = getCompletions('ccli ', 5);
+      const results = getCompletions('rvr ', 5);
       const setItem = findItem(results, 'set');
       expect(setItem).toBeDefined();
       expect(setItem!.description).toBe('Set an entry');
@@ -127,14 +127,14 @@ describe('Completions', () => {
     });
 
     it('filters top-level commands by partial input', () => {
-      const results = getCompletions('ccli se', 7);
+      const results = getCompletions('rvr se', 7);
       const v = values(results);
       expect(v).toContain('set');
       expect(v).not.toContain('get');
     });
 
     it('returns flags for get command when typing a dash', () => {
-      const results = getCompletions('ccli get -', 10);
+      const results = getCompletions('rvr get -', 10);
       const v = values(results);
       expect(v).toContain('--tree');
       expect(v).toContain('--plain');
@@ -142,14 +142,14 @@ describe('Completions', () => {
     });
 
     it('does not return flags for get command without a dash', () => {
-      const results = getCompletions('ccli get ', 9);
+      const results = getCompletions('rvr get ', 9);
       const v = values(results);
       expect(v).not.toContain('--tree');
       expect(v).not.toContain('--plain');
     });
 
     it('returns flags with descriptions and group', () => {
-      const results = getCompletions('ccli get -', 10);
+      const results = getCompletions('rvr get -', 10);
       const treeItem = findItem(results, '--tree');
       expect(treeItem).toBeDefined();
       expect(treeItem!.description).toBe('Display as tree');
@@ -171,69 +171,69 @@ describe('Completions', () => {
     });
 
     it('returns flags for run command when typing a dash', () => {
-      const results = getCompletions('ccli run -', 10);
+      const results = getCompletions('rvr run -', 10);
       const v = values(results);
       expect(v).toContain('--yes');
       expect(v).toContain('--dry');
     });
 
     it('returns flags for r shortcut when typing a dash', () => {
-      const results = getCompletions('ccli r -', 8);
+      const results = getCompletions('rvr r -', 8);
       const v = values(results);
       expect(v).toContain('--yes');
       expect(v).toContain('--dry');
     });
 
     it('returns --encrypt flag for set command when typing a dash', () => {
-      const results = getCompletions('ccli set -', 10);
+      const results = getCompletions('rvr set -', 10);
       const v = values(results);
       expect(v).toContain('--encrypt');
     });
 
     it('returns --encrypt flag for s shortcut when typing a dash', () => {
-      const results = getCompletions('ccli s -', 8);
+      const results = getCompletions('rvr s -', 8);
       const v = values(results);
       expect(v).toContain('--encrypt');
     });
 
     it('returns --decrypt flag for get command when typing a dash', () => {
-      const results = getCompletions('ccli get -', 10);
+      const results = getCompletions('rvr get -', 10);
       const v = values(results);
       expect(v).toContain('--decrypt');
     });
 
     it('returns --decrypt flag for g shortcut when typing a dash', () => {
-      const results = getCompletions('ccli g -', 8);
+      const results = getCompletions('rvr g -', 8);
       const v = values(results);
       expect(v).toContain('--decrypt');
     });
 
     it('returns --decrypt flag for run command when typing a dash', () => {
-      const results = getCompletions('ccli run -', 10);
+      const results = getCompletions('rvr run -', 10);
       const v = values(results);
       expect(v).toContain('--decrypt');
     });
 
     it('returns --decrypt flag for r shortcut when typing a dash', () => {
-      const results = getCompletions('ccli r -', 8);
+      const results = getCompletions('rvr r -', 8);
       const v = values(results);
       expect(v).toContain('--decrypt');
     });
 
     it('returns --source flag for run command when typing a dash', () => {
-      const results = getCompletions('ccli run -', 10);
+      const results = getCompletions('rvr run -', 10);
       const v = values(results);
       expect(v).toContain('--source');
     });
 
     it('returns --source flag for r shortcut when typing a dash', () => {
-      const results = getCompletions('ccli r -', 8);
+      const results = getCompletions('rvr r -', 8);
       const v = values(results);
       expect(v).toContain('--source');
     });
 
     it('returns subcommands for config', () => {
-      const results = getCompletions('ccli config ', 12);
+      const results = getCompletions('rvr config ', 12);
       const v = values(results);
       expect(v).toContain('set');
       expect(v).toContain('get');
@@ -243,7 +243,7 @@ describe('Completions', () => {
     });
 
     it('returns subcommands for data', () => {
-      const results = getCompletions('ccli data ', 10);
+      const results = getCompletions('rvr data ', 10);
       const v = values(results);
       expect(v).toContain('export');
       expect(v).toContain('import');
@@ -251,7 +251,7 @@ describe('Completions', () => {
     });
 
     it('returns nested subcommands for config completions', () => {
-      const results = getCompletions('ccli config completions ', 24);
+      const results = getCompletions('rvr config completions ', 24);
       const v = values(results);
       expect(v).toContain('bash');
       expect(v).toContain('zsh');
@@ -259,19 +259,19 @@ describe('Completions', () => {
     });
 
     it('returns empty array after --output flag (file completion)', () => {
-      const results = getCompletions('ccli data export --output ', 26);
+      const results = getCompletions('rvr data export --output ', 26);
       expect(results).toEqual([]);
     });
 
     it('excludes already-used flags', () => {
-      const results = getCompletions('ccli get --tree ', 16);
+      const results = getCompletions('rvr get --tree ', 16);
       const v = values(results);
       expect(v).not.toContain('--tree');
     });
 
     it('filters top-level commands for unknown partial input', () => {
       // 'r' matches 'run', 'remove', 'r' (alias)
-      const results = getCompletions('ccli r', 6);
+      const results = getCompletions('rvr r', 6);
       const v = values(results);
       expect(v).toContain('run');
       expect(v).toContain('remove');
@@ -280,7 +280,7 @@ describe('Completions', () => {
     });
 
     it('returns export types for data export command', () => {
-      const results = getCompletions('ccli data export ', 17);
+      const results = getCompletions('rvr data export ', 17);
       const v = values(results);
       expect(v).toContain('entries');
       expect(v).toContain('aliases');
@@ -288,7 +288,7 @@ describe('Completions', () => {
     });
 
     it('returns export types with descriptions', () => {
-      const results = getCompletions('ccli data export ', 17);
+      const results = getCompletions('rvr data export ', 17);
       const entriesItem = findItem(results, 'entries');
       expect(entriesItem).toBeDefined();
       expect(entriesItem!.description).toBe('Export type');
@@ -297,7 +297,7 @@ describe('Completions', () => {
     it('includes global flags when typing a dash', () => {
       const origRows = process.stdout.rows;
       process.stdout.rows = 100;
-      const results = getCompletions('ccli get -', 10);
+      const results = getCompletions('rvr get -', 10);
       process.stdout.rows = origRows;
       const v = values(results);
       expect(v).toContain('--debug');
@@ -308,7 +308,7 @@ describe('Completions', () => {
     it('includes global flags with descriptions', () => {
       const origRows = process.stdout.rows;
       process.stdout.rows = 100;
-      const results = getCompletions('ccli get -', 10);
+      const results = getCompletions('rvr get -', 10);
       process.stdout.rows = origRows;
       const debugItem = findItem(results, '--debug');
       expect(debugItem).toBeDefined();
@@ -319,7 +319,7 @@ describe('Completions', () => {
   describe('generateBashScript', () => {
     it('returns a bash completion script', () => {
       const script = generateBashScript();
-      expect(script).toContain('_ccli_completions');
+      expect(script).toContain('_rvr_completions');
       expect(script).toContain('complete');
       expect(script).toContain('COMPREPLY');
     });
@@ -345,7 +345,7 @@ describe('Completions', () => {
   describe('generateZshScript', () => {
     it('returns a zsh completion script using _describe', () => {
       const script = generateZshScript();
-      expect(script).toContain('_ccli_completions');
+      expect(script).toContain('_rvr_completions');
       expect(script).toContain('compdef');
       expect(script).toContain('_describe');
     });
@@ -357,7 +357,7 @@ describe('Completions', () => {
       // Iterates groups with sorted keys
       expect(script).toContain('${(ko)groups}');
       // Uses _describe per group for normal items
-      expect(script).toContain('_describe "$grp_name" _ccli_desc');
+      expect(script).toContain('_describe "$grp_name" _rvr_desc');
       // Uses $'\t' for tab and $'\x1f' unit separator for key-desc delimiting
       expect(script).toContain("$'\\t'");
       expect(script).toContain("$'\\x1f'");
@@ -366,13 +366,13 @@ describe('Completions', () => {
     it('escapes colons in completion values for _describe', () => {
       const script = generateZshScript();
       // Escapes : with \: in key before passing to _describe
-      expect(script).toContain('${_ccli_key//:/\\:}');
+      expect(script).toContain('${_rvr_key//:/\\:}');
     });
 
     it('suppresses trailing space for namespace prefixes ending in dot', () => {
       const script = generateZshScript();
       // Uses compadd -S '' for dot-terminated items (not _describe which lacks -S support)
-      expect(script).toContain("compadd -S '' -- \"${_ccli_dot[@]}\"");
+      expect(script).toContain("compadd -S '' -- \"${_rvr_dot[@]}\"");
     });
   });
 
@@ -383,7 +383,7 @@ describe('Completions', () => {
         aliases: { myip: 'server.ip' },
       });
 
-      const results = getCompletions('ccli get ', 9);
+      const results = getCompletions('rvr get ', 9);
       const v = values(results);
       expect(v).toContain('server.ip');
       expect(v).toContain('myip');
@@ -392,7 +392,7 @@ describe('Completions', () => {
     it('returns data keys with "Entry" description', () => {
       setMockStore({ entries: { server: { ip: '1.2.3.4' } } });
 
-      const results = getCompletions('ccli get ', 9);
+      const results = getCompletions('rvr get ', 9);
       const keyItem = findItem(results, 'server.ip');
       expect(keyItem).toBeDefined();
       expect(keyItem!.description).toBe('Entry');
@@ -401,28 +401,28 @@ describe('Completions', () => {
     it('returns alias names with "Alias" description', () => {
       setMockStore({ aliases: { myip: 'server.ip' } });
 
-      const results = getCompletions('ccli get ', 9);
+      const results = getCompletions('rvr get ', 9);
       const aliasItem = findItem(results, 'myip');
       expect(aliasItem).toBeDefined();
       expect(aliasItem!.description).toBe('Alias');
     });
 
     it('returns config keys for configKey commands', () => {
-      const results = getCompletions('ccli config set ', 16);
+      const results = getCompletions('rvr config set ', 16);
       const v = values(results);
       expect(v).toContain('colors');
       expect(v).toContain('theme');
     });
 
     it('returns config keys with "Config setting" description', () => {
-      const results = getCompletions('ccli config set ', 16);
+      const results = getCompletions('rvr config set ', 16);
       const colorsItem = findItem(results, 'colors');
       expect(colorsItem).toBeDefined();
       expect(colorsItem!.description).toBe('Config setting');
     });
 
     it('returns export types for exportType commands', () => {
-      const results = getCompletions('ccli data export ', 17);
+      const results = getCompletions('rvr data export ', 17);
       const v = values(results);
       expect(v).toContain('entries');
       expect(v).toContain('aliases');
@@ -434,7 +434,7 @@ describe('Completions', () => {
     it('completes to namespace prefix instead of full key', () => {
       setMockStore({ entries: { test: { key1: 'val1', key2: 'val2' } } });
 
-      const results = getCompletions('ccli set te', 11);
+      const results = getCompletions('rvr set te', 11);
       const v = values(results);
       expect(v).toContain('test.');
       expect(v).not.toContain('test.key1');
@@ -444,7 +444,7 @@ describe('Completions', () => {
     it('shows leaf keys when partial includes the namespace dot', () => {
       setMockStore({ entries: { test: { key1: 'val1', key2: 'val2' } } });
 
-      const results = getCompletions('ccli set test.', 14);
+      const results = getCompletions('rvr set test.', 14);
       const v = values(results);
       expect(v).toContain('test.key1');
       expect(v).toContain('test.key2');
@@ -455,7 +455,7 @@ describe('Completions', () => {
         entries: { server: { prod: { ip: '1.2.3.4' }, dev: { ip: '5.6.7.8' } } },
       });
 
-      const results = getCompletions('ccli s ', 7);
+      const results = getCompletions('rvr s ', 7);
       const v = values(results);
       const serverDots = v.filter(val => val === 'server.');
       expect(serverDots).toHaveLength(1);
@@ -466,7 +466,7 @@ describe('Completions', () => {
         entries: { server: { prod: { ip: '1.2.3.4' }, dev: { ip: '5.6.7.8' } } },
       });
 
-      const results = getCompletions('ccli set server.', 16);
+      const results = getCompletions('rvr set server.', 16);
       const v = values(results);
       expect(v).toContain('server.prod.');
       expect(v).toContain('server.dev.');
@@ -476,7 +476,7 @@ describe('Completions', () => {
     it('shows full key at leaf level', () => {
       setMockStore({ entries: { server: { prod: { ip: '1.2.3.4' } } } });
 
-      const results = getCompletions('ccli set server.prod.', 21);
+      const results = getCompletions('rvr set server.prod.', 21);
       const v = values(results);
       expect(v).toContain('server.prod.ip');
     });
@@ -487,7 +487,7 @@ describe('Completions', () => {
         aliases: { myalias: 'test.key1' },
       });
 
-      const results = getCompletions('ccli set m', 10);
+      const results = getCompletions('rvr set m', 10);
       const v = values(results);
       expect(v).toContain('myalias');
     });
@@ -495,7 +495,7 @@ describe('Completions', () => {
     it('marks truncated values as Namespace', () => {
       setMockStore({ entries: { test: { key1: 'val1' } } });
 
-      const results = getCompletions('ccli set te', 11);
+      const results = getCompletions('rvr set te', 11);
       const item = findItem(results, 'test.');
       expect(item).toBeDefined();
       expect(item!.description).toBe('Namespace');
@@ -504,7 +504,7 @@ describe('Completions', () => {
     it('does not affect get command (still returns full keys)', () => {
       setMockStore({ entries: { test: { key1: 'val1' } } });
 
-      const results = getCompletions('ccli get te', 11);
+      const results = getCompletions('rvr get te', 11);
       const v = values(results);
       expect(v).toContain('test.key1');
       expect(v).not.toContain('test.');
@@ -513,7 +513,7 @@ describe('Completions', () => {
     it('get command includes namespace prefixes (without dot)', () => {
       setMockStore({ entries: { test: { key1: 'val1', key2: 'val2' } } });
 
-      const results = getCompletions('ccli get te', 11);
+      const results = getCompletions('rvr get te', 11);
       const v = values(results);
       expect(v).toContain('test');
       expect(v).toContain('test.key1');
@@ -525,7 +525,7 @@ describe('Completions', () => {
     it('get includes nested namespace prefixes', () => {
       setMockStore({ entries: { server: { prod: { ip: '1.2.3.4' } } } });
 
-      const results = getCompletions('ccli g s', 8);
+      const results = getCompletions('rvr g s', 8);
       const v = values(results);
       expect(v).toContain('server');
       expect(v).toContain('server.prod');
@@ -545,40 +545,40 @@ describe('Completions', () => {
     });
 
     it('completes segment after : for run command', () => {
-      const results = getCompletions('ccli run cd:paths.', 18);
+      const results = getCompletions('rvr run cd:paths.', 18);
       const v = values(results);
       expect(v).toContain('cd:paths.home');
       expect(v).toContain('cd:paths.github');
     });
 
     it('completes segment after : for r shortcut', () => {
-      const results = getCompletions('ccli r cd:paths.', 16);
+      const results = getCompletions('rvr r cd:paths.', 16);
       const v = values(results);
       expect(v).toContain('cd:paths.home');
       expect(v).toContain('cd:paths.github');
     });
 
     it('completes first segment without : normally', () => {
-      const results = getCompletions('ccli r cd', 9);
+      const results = getCompletions('rvr r cd', 9);
       const v = values(results);
       // "cd" is an alias, should match
       expect(v).toContain('cd');
     });
 
     it('completes segment after : with alias', () => {
-      const results = getCompletions('ccli r cd:c', 11);
+      const results = getCompletions('rvr r cd:c', 11);
       const v = values(results);
       expect(v).toContain('cd:cd');
     });
 
     it('does not apply colon completion to get command', () => {
-      const results = getCompletions('ccli get cd:paths.', 18);
+      const results = getCompletions('rvr get cd:paths.', 18);
       const v = values(results);
       expect(v).not.toContain('cd:paths.home');
     });
 
     it('handles multiple colons (multi-segment composition)', () => {
-      const results = getCompletions('ccli r cd:paths.home:paths.', 26);
+      const results = getCompletions('rvr r cd:paths.home:paths.', 26);
       const v = values(results);
       expect(v).toContain('cd:paths.home:paths.home');
       expect(v).toContain('cd:paths.home:paths.github');
@@ -591,35 +591,35 @@ describe('Completions', () => {
     });
 
     it('returns top-level commands for unknown command', () => {
-      const results = getCompletions('ccli zzz ', 9);
+      const results = getCompletions('rvr zzz ', 9);
       const v = values(results);
       expect(v).toContain('set');
       expect(v).toContain('get');
     });
 
     it('returns subcommands when typing partial subcommand', () => {
-      const results = getCompletions('ccli config s', 13);
+      const results = getCompletions('rvr config s', 13);
       const v = values(results);
       expect(v).toContain('set');
       expect(v).not.toContain('get');
     });
 
     it('returns subcommand list with trailing space', () => {
-      const results = getCompletions('ccli config ', 12);
+      const results = getCompletions('rvr config ', 12);
       const v = values(results);
       expect(v).toContain('set');
       expect(v).toContain('get');
     });
 
     it('returns empty for --output flag (file completion)', () => {
-      const results = getCompletions('ccli data export --output ', 26);
+      const results = getCompletions('rvr data export --output ', 26);
       expect(results).toEqual([]);
     });
   });
 
   describe('default argType (null) branch', () => {
     it('returns flags for find command when typing a dash', () => {
-      const results = getCompletions('ccli find -', 11);
+      const results = getCompletions('rvr find -', 11);
       const v = values(results);
       expect(v).toContain('--entries');
       expect(v).toContain('--aliases');
@@ -627,7 +627,7 @@ describe('Completions', () => {
     });
 
     it('returns no completions for find command without a dash', () => {
-      const results = getCompletions('ccli find ', 10);
+      const results = getCompletions('rvr find ', 10);
       const v = values(results);
       // find has argType: null, so no data keys or flags
       expect(v).not.toContain('--entries');
@@ -637,7 +637,7 @@ describe('Completions', () => {
 
   describe('partial subcommand that matches nothing', () => {
     it('returns empty result for unmatched subcommand prefix', () => {
-      const results = getCompletions('ccli config x', 13);
+      const results = getCompletions('rvr config x', 13);
       expect(results).toEqual([]);
     });
   });
@@ -660,7 +660,7 @@ describe('Completions', () => {
       (fs.existsSync as Mock).mockReturnValue(true);
 
       // Should not throw, just return empty results without data keys
-      const results = getCompletions('ccli get ', 9);
+      const results = getCompletions('rvr get ', 9);
       expect(Array.isArray(results)).toBe(true);
       expect(results).toHaveLength(0);
     });
@@ -672,7 +672,7 @@ describe('Completions', () => {
       (fs.existsSync as Mock).mockReturnValue(true);
 
       // rm uses dataKey which loads both entries and aliases
-      const results = getCompletions('ccli rm ', 8);
+      const results = getCompletions('rvr rm ', 8);
       expect(Array.isArray(results)).toBe(true);
       expect(results).toHaveLength(0);
     });
@@ -712,7 +712,7 @@ describe('Completions', () => {
       expect(fs.appendFileSync).toHaveBeenCalled();
       const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
       expect(appendCall[0]).toContain('.zshrc');
-      expect(appendCall[1]).toContain('ccli config completions zsh');
+      expect(appendCall[1]).toContain('rvr config completions zsh');
     });
 
     it('installs bash completions on Linux', () => {
@@ -760,7 +760,7 @@ describe('Completions', () => {
     it('skips if completions, shell wrapper, and history exclusion already installed', () => {
       process.env.SHELL = '/bin/zsh';
       (fs.existsSync as Mock).mockReturnValue(true);
-      (fs.readFileSync as Mock).mockReturnValue('eval "$(ccli config completions zsh)"\n# CodexCLI shell wrapper (ccli)\n_ccli_history_filter');
+      (fs.readFileSync as Mock).mockReturnValue('eval "$(rvr config completions zsh)"\n# Reverie shell wrapper (rvr)\n_rvr_history_filter');
 
       installCompletions();
 
@@ -772,7 +772,7 @@ describe('Completions', () => {
       expect(showedAlready).toBe(true);
     });
 
-    it('installs shell wrapper for ccli run', () => {
+    it('installs shell wrapper for rvr run', () => {
       process.env.SHELL = '/bin/zsh';
       (fs.existsSync as Mock).mockReturnValue(false);
 
@@ -780,19 +780,19 @@ describe('Completions', () => {
 
       const appendCalls = (fs.appendFileSync as Mock).mock.calls;
       const wrapperAppend = appendCalls.find((call: unknown[]) =>
-        typeof call[1] === 'string' && call[1].includes('# CodexCLI shell wrapper (ccli)')
+        typeof call[1] === 'string' && call[1].includes('# Reverie shell wrapper (rvr)')
       );
       expect(wrapperAppend).toBeDefined();
-      expect(wrapperAppend[1]).toContain('command ccli');
+      expect(wrapperAppend[1]).toContain('command rvr');
       expect(wrapperAppend[1]).toContain('--source');
-      expect(wrapperAppend[1]).toContain('eval "$__ccli_cmd"');
+      expect(wrapperAppend[1]).toContain('eval "$__rvr_cmd"');
     });
 
     it('skips shell wrapper if already installed', () => {
       process.env.SHELL = '/bin/zsh';
       (fs.existsSync as Mock).mockReturnValue(true);
       (fs.readFileSync as Mock).mockReturnValue(
-        'eval "$(ccli config completions zsh)"\n# CodexCLI shell wrapper (ccli)\nccli() {\n}\n_ccli_history_filter'
+        'eval "$(rvr config completions zsh)"\n# Reverie shell wrapper (rvr)\nccli() {\n}\n_rvr_history_filter'
       );
 
       installCompletions();
@@ -804,33 +804,5 @@ describe('Completions', () => {
       expect(showedAlready).toBe(true);
     });
 
-    it('migrates from old HISTORY_IGNORE to zshaddhistory hook', () => {
-      process.env.SHELL = '/bin/zsh';
-      (fs.existsSync as Mock).mockReturnValue(true);
-      const oldContent = 'eval "$(ccli config completions zsh)"\n# CodexCLI shell wrapper (ccli)\n\n# CodexCLI - exclude from shell history\nHISTORY_IGNORE="(ccli *)"';
-      (fs.readFileSync as Mock).mockReturnValue(oldContent);
-
-      installCompletions();
-
-      // Should have written the file to remove old HISTORY_IGNORE
-      expect(fs.writeFileSync).toHaveBeenCalled();
-      const writeCall = (fs.writeFileSync as Mock).mock.calls[0];
-      expect(writeCall[1]).not.toContain('HISTORY_IGNORE');
-
-      // Should have appended the new hook
-      const appendCalls = (fs.appendFileSync as Mock).mock.calls;
-      const historyAppend = appendCalls.find((call: unknown[]) =>
-        typeof call[1] === 'string' && call[1].includes('_ccli_history_filter')
-      );
-      expect(historyAppend).toBeDefined();
-      expect(historyAppend[1]).toContain('add-zsh-hook zshaddhistory');
-
-      // Should log migration message
-      const logCalls = consoleSpy.mock.calls;
-      const showedMigrated = logCalls.some((call: unknown[]) =>
-        call.some((arg: unknown) => typeof arg === 'string' && arg.includes('Migrated'))
-      );
-      expect(showedMigrated).toBe(true);
-    });
   });
 });

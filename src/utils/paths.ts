@@ -8,7 +8,7 @@ import { getBinaryName } from './binaryName';
  */
 function isDev(): boolean {
   return process.env.NODE_ENV === 'development' ||
-         getBinaryName() === 'cclid' ||
+         getBinaryName() === 'rvr-dev' ||
          Boolean(process.argv[1]?.includes('ts-node')) ||
          Boolean(process.env.npm_lifecycle_script?.includes('ts-node'));
 }
@@ -69,7 +69,7 @@ export function getDataDirectory(): string {
     } catch {
       process.stderr.write(
         `Warning: data directory ${dataDirectoryCache} is not writable. ` +
-        `codexCLI may fail to save changes.\n`
+        `Reverie may fail to save changes.\n`
       );
     }
     dataDirWritabilityWarned = true;
@@ -79,7 +79,7 @@ export function getDataDirectory(): string {
 }
 
 /**
- * True if `CODEX_DATA_DIR` is set to a non-empty value. Used by `ccli info`
+ * True if `CODEX_DATA_DIR` is set to a non-empty value. Used by `rvr info`
  * (and tests) to label the data path with its source.
  */
 export function isDataDirectoryFromEnv(): boolean {

@@ -109,7 +109,7 @@ function consumeConfirmToken(token: string, key: string): string | null {
 const llmInstructions = getEffectiveInstructions();
 
 const server = new McpServer(
-  { name: "codexcli", version: pkgVersion },
+  { name: "reverie", version: pkgVersion },
   { ...(llmInstructions && { instructions: llmInstructions }) },
 );
 
@@ -1037,7 +1037,7 @@ server.tool(
 // --- codex_config_get ---
 server.tool(
   "codex_config_get",
-  "Get a CodexCLI user-preference setting (colors, theme, pager). Distinct from codex_get, which retrieves stored project knowledge.",
+  "Get a Reverie user-preference setting (colors, theme, pager). Distinct from codex_get, which retrieves stored project knowledge.",
   {
     key: z.string().optional().describe("Config key (colors, theme). Omit for all settings."),
   },
@@ -1063,7 +1063,7 @@ server.tool(
 // --- codex_config_set ---
 server.tool(
   "codex_config_set",
-  "Set a CodexCLI user-preference setting (colors, theme, pager). Distinct from codex_set, which stores project knowledge.",
+  "Set a Reverie user-preference setting (colors, theme, pager). Distinct from codex_set, which stores project knowledge.",
   {
     key: z.string().describe("Config key to set (colors, theme)"),
     value: z.string().describe("Value to set"),
@@ -1610,7 +1610,7 @@ server.tool(
       }
 
       const lines: string[] = [];
-      lines.push(`CodexCLI Usage Stats (${stats.period === 'all' ? 'all time' : `last ${stats.period}`})`);
+      lines.push(`Reverie Usage Stats (${stats.period === 'all' ? 'all time' : `last ${stats.period}`})`);
       lines.push('');
       lines.push(`MCP sessions:    ${stats.mcpSessions}`);
       lines.push(`MCP calls:       ${stats.mcpCalls}`);
@@ -1891,9 +1891,9 @@ export async function startMcpServer(): Promise<void> {
   await applyClientRootsOverride();
 }
 
-// Auto-start when run directly (e.g. `node dist/mcp-server.js` or `cclid-mcp`)
+// Auto-start when run directly (e.g. `node dist/mcp-server.js`, `rvr-dev-mcp`, or production `rvr-mcp`)
 // When imported by index.ts for the `mcp-server` subcommand, the caller invokes startMcpServer() explicitly.
-if (process.argv[1] && (process.argv[1].endsWith('mcp-server.js') || process.argv[1].endsWith('cclid-mcp'))) {
+if (process.argv[1] && (process.argv[1].endsWith('mcp-server.js') || process.argv[1].endsWith('rvr-dev-mcp') || process.argv[1].endsWith('rvr-mcp'))) {
   startMcpServer().catch((err) => {
     process.stderr.write(`MCP server error: ${err}\n`);
     process.exit(1);

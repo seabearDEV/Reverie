@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 describe('CLI Integration Tests — Advanced', () => {
-  const testDir = path.join(os.tmpdir(), 'codexcli-integ-' + Math.random().toString(36).substring(2));
+  const testDir = path.join(os.tmpdir(), 'reverie-integ-' + Math.random().toString(36).substring(2));
   const execOpts = { env: { ...process.env, CODEX_DATA_DIR: testDir, CODEX_NO_PROJECT: '1' }, stdio: ['pipe', 'pipe', 'pipe'] as const };
   const run = (args: string) => {
     // After #99, auto-mode writes refuse without project resolution. Inject

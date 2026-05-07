@@ -28,15 +28,15 @@ if (completionFlagIndex !== -1) {
 }
 
 // Initialize the CLI
-const codexCLI = new Command();
-codexCLI.name(getBinaryName());
-codexCLI.version(version);
-codexCLI.description('A CLI tool for storing and retrieving code snippets, commands, and knowledge');
+const reverie = new Command();
+reverie.name(getBinaryName());
+reverie.version(version);
+reverie.description('Bicameral memory for AI-assisted development — persistent project context across sessions');
 
-codexCLI.helpCommand(false);
+reverie.helpCommand(false);
 
 // Add global debug option
-codexCLI.option('--debug', 'Enable debug mode')
+reverie.option('--debug', 'Enable debug mode')
   .hook('preAction', (thisCommand) => {
     if (thisCommand.opts().debug) {
       process.env.DEBUG = 'true';
@@ -44,7 +44,7 @@ codexCLI.option('--debug', 'Enable debug mode')
   });
 
 // Set command
-codexCLI
+reverie
   .command('set <key> [value...]')
   .alias('s')
   .description('Set an entry, or batch set with key=val pairs')
@@ -140,7 +140,7 @@ codexCLI
   });
 
 // Get command
-codexCLI
+reverie
   .command('get [key]')
   .alias('g')
   .description('List keys or retrieve entries (-v for values)')
@@ -167,7 +167,7 @@ codexCLI
   });
 
 // Run command
-codexCLI
+reverie
   .command('run <keys...>')
   .alias('r')
   .description('Execute stored command(s) (use : to compose, multiple keys &&-chain)')
@@ -189,7 +189,7 @@ codexCLI
   });
 
 // Copy command
-codexCLI
+reverie
   .command('copy <source> <dest>')
   .alias('cp')
   .description('Copy an entry to a new key')
@@ -205,7 +205,7 @@ codexCLI
   });
 
 // Find command
-codexCLI
+reverie
   .command('find <term>')
   .alias('f')
   .description('Find entries by key or value')
@@ -228,7 +228,7 @@ codexCLI
   });
 
 // Edit command
-codexCLI
+reverie
   .command('edit <key>')
   .alias('e')
   .description('Open an entry in $EDITOR for editing')
@@ -244,7 +244,7 @@ codexCLI
   });
 
 // Rename command
-codexCLI
+reverie
   .command('rename <old> <new>')
   .alias('rn')
   .description('Rename an entry key or alias')
@@ -268,7 +268,7 @@ codexCLI
   });
 
 // Remove command
-codexCLI
+reverie
   .command('remove <key>')
   .alias('rm')
   .description('Remove an entry')
@@ -300,7 +300,7 @@ codexCLI
 
 // ── Alias subcommand group ────────────────────────────────────────────
 
-const aliasCommand = codexCLI
+const aliasCommand = reverie
   .command('alias')
   .description('Manage key aliases');
 
@@ -385,7 +385,7 @@ aliasCommand
 
 // ── Confirm subcommand group ─────────────────────────────────────────
 
-const confirmCommand = codexCLI
+const confirmCommand = reverie
   .command('confirm')
   .description('Manage run confirmation requirements');
 
@@ -438,7 +438,7 @@ confirmCommand
 
 // ── Context command ──────────────────────────────────────────────────
 
-codexCLI
+reverie
   .command('context')
   .description('Show a compact summary of stored project knowledge')
   .option('-t, --tier <tier>', 'Context tier: essential, standard, full', 'standard')
@@ -455,7 +455,7 @@ codexCLI
 
 // ── Info command (top-level) ─────────────────────────────────────────
 
-codexCLI
+reverie
   .command('info')
   .description('Show version, stats, and storage paths')
   .action(() => {
@@ -472,7 +472,7 @@ async function handleSearch(term: string, options: { entries?: boolean, aliases?
   );
 }
 
-codexCLI
+reverie
   .command('search <term>', { hidden: true })
   .description('Find entries by key or value (alias for find)')
   .option('-e, --entries', 'Search only in data entries')
@@ -488,7 +488,7 @@ codexCLI
   });
 
 // Stale entries command
-codexCLI
+reverie
   .command('stale [days]')
   .description('Show entries not updated in N days (default: 30)')
   .option('-j, --json', 'Output as JSON')
@@ -539,7 +539,7 @@ codexCLI
   });
 
 // Lint command
-codexCLI
+reverie
   .command('lint')
   .description('Check entries against the recommended namespace schema')
   .option('-j, --json', 'Output as JSON')
@@ -553,7 +553,7 @@ codexCLI
   });
 
 // Topology command
-codexCLI
+reverie
   .command('topology')
   .description('Co-occurrence analysis on the audit log — which entries get read together')
   .option('-p, --period <period>', 'Time period: 7d, 30d, 90d, all', '30d')
@@ -569,7 +569,7 @@ codexCLI
   });
 
 // Configuration commands
-const configCommand = codexCLI
+const configCommand = reverie
   .command('config')
   .description('Manage configuration settings')
   .action(async () => {
@@ -645,7 +645,7 @@ completionsCommand
   });
 
 // Data management command group
-const dataCommand = codexCLI
+const dataCommand = reverie
   .command('data')
   .description('Manage stored data (export, import, reset)');
 
@@ -706,7 +706,7 @@ dataCommand
   });
 
 // Init command: create/remove project-scoped data file
-codexCLI
+reverie
   .command('init')
   .description('Initialize project with .codexcli.json, codebase scan, and CLAUDE.md')
   .option('--remove', 'Remove the project file')
@@ -724,7 +724,7 @@ codexCLI
   });
 
 // Stats command: telemetry and usage trends
-codexCLI
+reverie
   .command('stats')
   .description('View usage telemetry and effectiveness trends')
   .option('-p, --period <period>', 'Time period: 7d, 30d, 90d, all', '30d')
@@ -747,7 +747,7 @@ codexCLI
       return;
     }
 
-    console.log(color.bold(`\nCodexCLI Usage Stats (${stats.period === 'all' ? 'all time' : `last ${stats.period}`})`));
+    console.log(color.bold(`\nReverie Usage Stats (${stats.period === 'all' ? 'all time' : `last ${stats.period}`})`));
     console.log('');
     console.log(`  MCP sessions:    ${color.white(String(stats.mcpSessions))}`);
     console.log(`  MCP calls:       ${color.white(String(stats.mcpCalls))}`);
@@ -901,7 +901,7 @@ codexCLI
   });
 
 // Audit log command
-codexCLI
+reverie
   .command('audit [key]')
   .description('View the audit log of data mutations')
   .option('-p, --period <period>', 'Time period: 7d, 30d, 90d, all', '30d')
@@ -927,7 +927,7 @@ codexCLI
   });
 
 // MCP server subcommand: allows binary/Homebrew installs to run the MCP server
-codexCLI
+reverie
   .command('mcp-server')
   .description('Start the MCP (Model Context Protocol) server over stdio')
   .option('--cwd <dir>', 'Set working directory (enables project-scoped data detection)')
@@ -944,31 +944,13 @@ codexCLI
     await startMcpServer();
   });
 
-// Hidden backward-compat shim: `ccli completions <bash|zsh|install>` still works
-// (existing users have `eval "$(ccli completions zsh)"` in their RC files)
-const completionsShim = codexCLI
-  .command('completions', { hidden: true })
-  .helpCommand(false);
-
-completionsShim
-  .command('bash')
-  .action(() => { process.stdout.write(generateBashScript()); });
-
-completionsShim
-  .command('zsh')
-  .action(() => { process.stdout.write(generateZshScript()); });
-
-completionsShim
-  .command('install')
-  .action(() => { installCompletions(); });
-
 // First-run: welcome message + optional completions install
 async function handleFirstRun(): Promise<void> {
   if (fs.existsSync(getDataDirectory())) return;
 
   console.log();
   const bin = getBinaryName();
-  console.log(`Welcome to CodexCLI! Run \`${bin} config examples\` to see usage patterns.`);
+  console.log(`Welcome to Reverie! Run \`${bin} config examples\` to see usage patterns.`);
 
   if (!process.stdin.isTTY) {
     console.log();
@@ -994,7 +976,7 @@ async function handleFirstRun(): Promise<void> {
 void (async () => {
   await handleFirstRun();
 
-  // Show rich help for: ccli, ccli --help, ccli -h, ccli help (with optional --debug)
+  // Show rich help for: rvr, rvr --help, rvr -h, rvr help (with optional --debug)
   const userArgs = process.argv.slice(2).filter(a => a !== '--debug');
   const isRootHelp = userArgs.length === 0 ||
     (userArgs.length === 1 && ['--help', '-h', 'help'].includes(userArgs[0]));
@@ -1008,7 +990,7 @@ void (async () => {
     if (userArgs.includes('--help') || userArgs.includes('-h')) {
       const helpFreeArgs = userArgs.filter(a => a !== '--help' && a !== '-h');
       if (helpFreeArgs.length >= 2) {
-        const parentCmd = codexCLI.commands.find(c => c.name() === helpFreeArgs[0]);
+        const parentCmd = reverie.commands.find(c => c.name() === helpFreeArgs[0]);
         if (parentCmd) {
           const subCmd = parentCmd.commands.find(c => c.name() === helpFreeArgs[1]);
           if (subCmd) {
@@ -1017,6 +999,6 @@ void (async () => {
         }
       }
     }
-    codexCLI.parse(process.argv);
+    reverie.parse(process.argv);
   }
 })();

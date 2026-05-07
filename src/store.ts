@@ -109,7 +109,7 @@ function getGlobalStore(): ScopedStore {
         // the failure is actionable rather than silently presenting an empty store.
         if (!fs.existsSync(getGlobalStoreDirPath())) {
           console.warn(
-            `[codexCLI] Warning: store migration failed and no store directory was created. ` +
+            `[Reverie] Warning: store migration failed and no store directory was created. ` +
             `Your existing data may be inaccessible until migration succeeds. ` +
             `Error: ${String(err)}`
           );

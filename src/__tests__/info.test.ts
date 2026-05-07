@@ -148,7 +148,7 @@ describe('showInfo shell completions', () => {
 
   beforeEach(() => {
     originalArgv1 = process.argv[1];
-    process.argv[1] = '/usr/local/bin/ccli';
+    process.argv[1] = '/usr/local/bin/rvr';
     consoleSpy = vi.spyOn(console, 'log').mockImplementation();
     originalShell = process.env.SHELL;
   });
@@ -163,16 +163,16 @@ describe('showInfo shell completions', () => {
     return consoleSpy.mock.calls.map((c: unknown[]) => c.join(' ')).join('\n');
   }
 
-  it('shows installed when rc file contains ccli completions', () => {
+  it('shows installed when rc file contains rvr completions', () => {
     process.env.SHELL = '/bin/zsh';
     (fs.existsSync as Mock).mockReturnValue(true);
-    (fs.readFileSync as Mock).mockReturnValue('eval "$(ccli config completions zsh)"');
+    (fs.readFileSync as Mock).mockReturnValue('eval "$(rvr config completions zsh)"');
 
     showInfo();
     expect(getOutput()).toContain('installed');
   });
 
-  it('shows not installed when rc file does not contain ccli completions', () => {
+  it('shows not installed when rc file does not contain rvr completions', () => {
     process.env.SHELL = '/bin/zsh';
     (fs.existsSync as Mock).mockReturnValue(true);
     (fs.readFileSync as Mock).mockReturnValue('# empty rc');

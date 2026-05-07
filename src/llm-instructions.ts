@@ -1,6 +1,6 @@
 import { getValue } from './storage';
 
-export const DEFAULT_LLM_INSTRUCTIONS = `You are connected to a CodexCLI data store via MCP. This store is a persistent, structured knowledge base for the project you are working on. Use it to learn, record, and share context across sessions and AI agents.
+export const DEFAULT_LLM_INSTRUCTIONS = `You are connected to a Reverie data store via MCP. This store is a persistent, structured knowledge base for the project you are working on. Use it to learn, record, and share context across sessions and AI agents.
 
 HOW TO USE:
 - At session start, call codex_context to load all stored project knowledge in one call.

@@ -9,7 +9,7 @@ const KEY_LENGTH = 32;
 const PREFIX = 'encrypted::v1:';
 
 /**
- * Check whether a string value is an encrypted CodexCLI value.
+ * Check whether a string value is an encrypted Reverie value.
  */
 export function isEncrypted(value: string): boolean {
   return typeof value === 'string' && value.startsWith(PREFIX);
@@ -33,7 +33,7 @@ export function encryptValue(plaintext: string, password: string): string {
 }
 
 /**
- * Decrypt an encrypted CodexCLI value using a password.
+ * Decrypt an encrypted Reverie value using a password.
  * Throws on wrong password or corrupted data.
  */
 export function decryptValue(encrypted: string, password: string): string {

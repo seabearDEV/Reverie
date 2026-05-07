@@ -106,10 +106,10 @@ function buildMessage(d: ResolverDiagnostic): string {
   lines.push('');
   lines.push('Choose one to proceed:');
   if (d.codexNoProject) {
-    lines.push('  - unset CODEX_NO_PROJECT and retry, or run `codex_init` (or `ccli init`) once');
+    lines.push('  - unset CODEX_NO_PROJECT and retry, or run `codex_init` (or `rvr init`) once');
     lines.push('    the env is cleared');
   } else {
-    lines.push('  - run `codex_init` (or `ccli init`) here to create a project store');
+    lines.push('  - run `codex_init` (or `rvr init`) here to create a project store');
   }
   lines.push('  - retry with explicit scope:"global" (MCP) or --scope global (CLI) for an');
   lines.push('    intentional global-store write');

@@ -7,6 +7,6 @@ export function getBinaryName(): string {
   if (arg1 && (arg1.includes('/') || arg1.includes('\\'))) {
     return path.basename(arg1);
   }
-  // SEA binary: argv[0] is the binary itself (e.g. /usr/local/bin/ccli)
-  return path.basename(process.argv[0] ?? 'ccli');
+  // SEA binary: argv[0] is the binary itself (e.g. /usr/local/bin/rvr)
+  return path.basename(process.argv[0] ?? 'rvr');
 }

@@ -697,7 +697,7 @@ describe('sidecar mtime cache', () => {
     store.load();  // prime
 
     // Simulate an external atomic rewrite. Atomic rename (the realistic
-    // pattern used by editors, codexCLI's own writes, etc.) bumps both
+    // pattern used by editors, Reverie's own writes, etc.) bumps both
     // file and parent-directory mtime, which is what scanAndSync's
     // dir-mtime fast-skip invalidates on.
     const aliasesPath = path.join(dir, '_aliases.json');

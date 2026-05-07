@@ -14,7 +14,7 @@ export function printSuccess(message: string): void {
 
 export function printError(message: string): void {
   console.error(color.red('✗ ') + message);
-  // Surface failure via the process exit code so scripts wrapping ccli can
+  // Surface failure via the process exit code so scripts wrapping rvr can
   // detect errors. Pre-fix the CLI returned 0 on most printError paths.
   // Every call site is followed by a `return`/abort, so this matches intent.
   process.exitCode = 1;

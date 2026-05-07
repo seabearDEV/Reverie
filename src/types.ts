@@ -1,5 +1,5 @@
 /**
- * Type definitions for CodexCLI
+ * Type definitions for Reverie
  */
 
 export interface GetOptions {

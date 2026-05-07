@@ -65,7 +65,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     const resolvedKeys: string[] = [];
 
     for (const keyGroup of keys) {
-      // Split on : for composition (e.g. "cd:codexcli" → "cd /path")
+      // Split on : for composition (e.g. "cd:reverie" → "cd /path")
       const segments = keyGroup.replace(/:$/, '').split(':');
       const resolvedSegments: string[] = [];
 
@@ -596,7 +596,7 @@ export async function editEntry(key: string, options: { decrypt?: boolean, globa
       }
     }
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codexcli-edit-'));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-edit-'));
     const tmpFile = path.join(tmpDir, 'value.tmp');
     fs.writeFileSync(tmpFile, value, { encoding: 'utf8', mode: 0o600 });
 
