@@ -152,7 +152,7 @@ export function readPasswordFile(filePath: string): string {
 // Module-local: ensure the RVR_PASSWORD warning only fires once per process
 // even if askPassword is called multiple times (e.g. promptAndEncrypt does a
 // prompt + confirm pair).
-let ccliPasswordWarningShown = false;
+let rvrPasswordWarningShown = false;
 
 export interface AskPasswordOptions {
   /** Path to a file whose first line is the password. Overrides env var. */
@@ -175,11 +175,11 @@ export function askPassword(prompt: string, options?: AskPasswordOptions): Promi
   //    environment and should be cleared after the command.
   const envPassword = process.env.RVR_PASSWORD;
   if (envPassword !== undefined && envPassword !== '') {
-    if (!ccliPasswordWarningShown) {
+    if (!rvrPasswordWarningShown) {
       process.stderr.write(
         color.yellow('⚠ password read from RVR_PASSWORD — clear your environment after use\n'),
       );
-      ccliPasswordWarningShown = true;
+      rvrPasswordWarningShown = true;
     }
     return Promise.resolve(envPassword);
   }

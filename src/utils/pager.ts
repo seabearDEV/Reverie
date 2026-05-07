@@ -5,7 +5,7 @@ import { addResponseBytes } from './responseMeasure';
  * Buffers all stdout output produced by `fn`, then either writes it directly
  * (short output) or pipes it through a pager (long output).
  *
- * Pager resolution: CCLI_PAGER env → PAGER env → "less -FRX"
+ * Pager resolution: RVR_PAGER env → PAGER env → "less -FRX"
  * Skips paging entirely when stdout is not a TTY (piped output).
  */
 export async function withPager(fn: () => void | Promise<void>): Promise<void> {
@@ -57,7 +57,7 @@ export async function withPager(fn: () => void | Promise<void>): Promise<void> {
   }
 
   // Spawn pager
-  const pagerCmd = process.env.CCLI_PAGER ?? process.env.PAGER ?? 'less -FRX';
+  const pagerCmd = process.env.RVR_PAGER ?? process.env.PAGER ?? 'less -FRX';
   const parts = pagerCmd.split(/\s+/);
   const pagerBin = parts[0];
   const pagerArgs = parts.slice(1);

@@ -792,7 +792,7 @@ describe('Completions', () => {
       process.env.SHELL = '/bin/zsh';
       (fs.existsSync as Mock).mockReturnValue(true);
       (fs.readFileSync as Mock).mockReturnValue(
-        'eval "$(rvr config completions zsh)"\n# Reverie shell wrapper (rvr)\nccli() {\n}\n_rvr_history_filter'
+        'eval "$(rvr config completions zsh)"\n# Reverie shell wrapper (rvr)\nrvr() {\n}\n_rvr_history_filter'
       );
 
       installCompletions();

@@ -24,7 +24,7 @@ describe('withPager', () => {
     process.stdout.write = originalWrite;
     Object.defineProperty(process.stdout, 'isTTY', { value: originalIsTTY, configurable: true });
     Object.defineProperty(process.stdout, 'rows', { value: originalRows, configurable: true });
-    delete process.env.CCLI_PAGER;
+    delete process.env.RVR_PAGER;
     delete process.env.PAGER;
     vi.clearAllMocks();
   });
@@ -96,10 +96,10 @@ describe('withPager', () => {
     expect(written.join('')).toContain('line 99');
   });
 
-  it('respects CCLI_PAGER env var', async () => {
+  it('respects RVR_PAGER env var', async () => {
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     Object.defineProperty(process.stdout, 'rows', { value: 5, configurable: true });
-    process.env.CCLI_PAGER = 'more -s';
+    process.env.RVR_PAGER = 'more -s';
 
     const stdinStream = new EventEmitter() as EventEmitter & { end: Mock };
     stdinStream.end = vi.fn();
@@ -118,7 +118,7 @@ describe('withPager', () => {
     expect(mockedSpawn).toHaveBeenCalledWith('more', ['-s'], expect.any(Object));
   });
 
-  it('respects PAGER env var when CCLI_PAGER is not set', async () => {
+  it('respects PAGER env var when RVR_PAGER is not set', async () => {
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     Object.defineProperty(process.stdout, 'rows', { value: 5, configurable: true });
     process.env.PAGER = 'bat --paging=always';

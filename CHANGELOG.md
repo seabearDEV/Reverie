@@ -23,6 +23,7 @@ What's changing:
 - **Brew formula**: `ccli.rb` / `ccli-beta.rb` → `rvr.rb` / `rvr-beta.rb`. Class names `Ccli` / `CcliBeta` → `Rvr` / `RvrBeta`
 - **MCP server identifier**: `codexcli` → `reverie` in client config blocks (the key name in `mcpServers`)
 - **Env var**: `CCLI_PASSWORD` → `RVR_PASSWORD` (CI/scripting password fallback — breaking)
+- **Env var**: `CCLI_PAGER` → `RVR_PAGER` (pager override — breaking; falls through to `PAGER` and then `less -FRX` if unset)
 
 What's **NOT** changing (load-bearing data-layer naming, per `project.identity` convention):
 
