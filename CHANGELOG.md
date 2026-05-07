@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-07
+
+**Reverie 1.0.0 stable.** First public stable release of Reverie — bicameral memory for AI-assisted development. The product began life as codexCLI; the rebrand and Bun-runtime swap landed across v1.0.0-beta.0 → v1.0.0-beta.3, all in the days leading up to this stable cut. See those entries below for the full narrative; this entry summarizes what makes 1.0.0 itself.
+
+### What's in 1.0.0
+
+- **Brand**: Reverie. Binary: `rvr` (stable) / `rvr-beta` (beta channel) / `rvr-dev` (local dev). Repo: `seabearDEV/reverie`. NPM: `@seabear/reverie` (scoped). Homebrew tap: `seabearDEV/homebrew-reverie`. Store directory: `.reverie/`. MCP tools: `reverie_*`. Env vars: `RVR_*`.
+- **Build pipeline**: `bun build --compile` produces single-file binaries for Linux x64, Linux arm64, macOS universal (arm64 + x64 fat binary), and Windows x64. Roughly 50% smaller and ~50× faster to build than the prior Node SEA pipeline.
+- **MCP-first surface**: 19 tools exposed over the Model Context Protocol; `reverie_context` is the canonical bootstrap call for AI agents. Co-equal CLI surface for human inspection and editing.
+- **Migration story**: existing `.codexcli/` project stores and `~/.codexcli/` global stores auto-migrate to `.reverie/` on first run via atomic same-filesystem rename. Pre-rebrand `$codexcli`-keyed export files import unchanged. CLAUDE.md files in dogfooded projects need a one-time `codex_*` → `reverie_*` swap.
+
+### Since v1.0.0-beta.3
+
+- **`fix(completions)`**: zsh completion script now emits `_` instead of `-` in `local`/parameter-name interpolations so hyphenated binary names (`rvr-beta`, `rvr-dev`) parse cleanly. Closes [#111](https://github.com/seabearDEV/reverie/issues/111). Removes the need for the sed-pipe workaround in shellrc files.
+
+### Provenance
+
+The `v1.0.0` git tag previously pointed at a pre-rebrand codexCLI placeholder release (2026-04-04, four `ccli-*` binaries with single-digit download counts). That release and its tag were deleted as part of the stable cut so `v1.0.0` now refers to the canonical Reverie launch. Anyone who downloaded the placeholder binaries should `brew install seabearDEV/homebrew-reverie/rvr` (stable) or `brew upgrade rvr-beta` (beta channel) to get a real Reverie binary.
+
 ## [1.0.0-beta.3] - 2026-05-07
 
 **Hot-fix for v1.0.0-beta.2.** That release was functionally broken: the bun-compiled binary tried to write its data directory to a path baked in at build time (`/Users/runner/work/reverie/reverie/data`, the GitHub Actions runner's source path), causing every save to fail with `EACCES`. The MCP server was non-functional, and `--version` output was corrupted by a welcome banner that fired on every invocation. Three contributing causes, all in beta.2 → beta.3:
