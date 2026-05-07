@@ -31,9 +31,11 @@ jobs:
         with:
           node-version: 24
 
+      - uses: oven-sh/setup-bun@v2
+
       - run: npm ci
 
-      - name: Build SEA binary
+      - name: Build binary
         run: node scripts/sea-build.js ${{ matrix.binary }}
 
       - name: Smoke test
@@ -59,9 +61,10 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v6
-        id: setup-node
         with:
           node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
 
       - run: npm ci
 
@@ -74,23 +77,9 @@ jobs:
           chmod +x dist/rvr-macos-arm64
           ./dist/rvr-macos-arm64 --version
 
-      # ── x64 slice (cross-build using downloaded x64 Node) ────────────────
-      - name: Download Node x64 binary
-        id: node-x64
-        run: |
-          NODE_VERSION="${{ steps.setup-node.outputs.node-version }}"
-          NODE_VERSION="${NODE_VERSION#v}"
-          TARBALL="node-v${NODE_VERSION}-darwin-x64.tar.gz"
-          URL="https://nodejs.org/dist/v${NODE_VERSION}/${TARBALL}"
-          echo "Downloading ${URL}"
-          curl -fsSL "$URL" -o "$TARBALL"
-          tar xzf "$TARBALL"
-          NODE_X64="$(pwd)/node-v${NODE_VERSION}-darwin-x64/bin/node"
-          echo "node_x64=${NODE_X64}" >> "$GITHUB_OUTPUT"
-          file "$NODE_X64"
-
+      # ── x64 slice (bun cross-compiles natively, no Node x64 tarball needed) ──
       - name: Build x64 slice
-        run: node scripts/sea-build.js rvr-macos-x64 --node-binary "${{ steps.node-x64.outputs.node_x64 }}"
+        run: node scripts/sea-build.js rvr-macos-x64
 
       - name: Smoke test x64
         run: |
