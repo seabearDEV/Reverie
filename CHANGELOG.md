@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.0.0-beta.2] - 2026-05-07
+
+Build-system swap from Node SEA + esbuild + postject to `bun build --compile`. Toolchain change is internal — user-facing binaries behave identically (verified end-to-end via the release matrix on `v0.0.0-debug.1`). Smaller, faster, simpler. No source/runtime semantics change.
+
+### Changed
+
+- **Build pipeline**: `scripts/sea-build.js` now shells out to `bun build --compile`. Replaces ~140 lines of esbuild bundle → SEA blob → Node binary copy → postject inject → codesign with a thin wrapper. Auto-infers cross-compile target from output-name (`rvr-macos-x64` → `bun-darwin-x64`); accepts the legacy `--node-binary` flag with a deprecation warning so existing CI invocations don't break.
+- **CI release workflow** (`.github/workflows/release.yml`): adds `oven-sh/setup-bun@v2`, drops the macOS x64 Node tarball download step (bun cross-compiles natively from arm64 runner). End-to-end release-matrix wall time dropped from ~3m to ~1m35s.
+- **Binary size**: `rvr-linux-x64` 103 MB (was ~125 MB), `rvr-macos-universal` 134 MB (fat: arm64 + x64 in one). Bun runtime is more compact than the SEA-injected Node binary.
+- **Build time per binary**: ~100ms (was multi-second).
+
+### Removed
+
+- **devDependencies**: `esbuild` and `postject` (-514 lines of `package-lock.json`). No longer used after the bun swap.
+
+### Fixed
+
+- **`src/storage.ts`**: `export { Scope }` → `export type { Scope }`. Required for raw-TS execution under Bun (`bun src/mcp-server.ts`); doesn't affect compiled output.
+
+### Internal
+
+- Codex (`.reverie/`) store residue swept: 33 entries refreshed to use post-rebrand names (`codex_*` → `reverie_*`, `CODEX_*` → `RVR_*`, `.codexcli/` → `.reverie/`, `ccli` → `rvr`, "the codex" → "Reverie"). The `project.storeResidueC` tracker entry is removed (workstream complete; methodology preserved in commit `b888cea`).
+- Issue [#111](https://github.com/seabearDEV/reverie/issues/111) filed for a zsh-completion-script bug surfaced during shell cleanup (binary names containing `-` produce illegal shell variable identifiers). Workaround in user shellrc; source fix queued separately.
+
 ## [1.0.0-beta.1] - 2026-05-06
 
 Deep rebrand of the data-layer surfaces that v1.0.0-beta.0 deliberately preserved. The Phase 3 carve-out for `codex_*` MCP tools, `.codexcli/` directory, `$codexcli` envelope, `CODEX_*` env vars, and "the codex" lowercase noun has been REVERSED. Every surface a developer or agent touches now uses the Reverie name. See `docs/design-rebrand-deep.md` for the full design rationale.

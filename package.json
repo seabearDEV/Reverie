@@ -1,6 +1,6 @@
 {
 	"name": "@seabear/reverie",
-	"version": "1.0.0-beta.1",
+	"version": "1.0.0-beta.2",
 	"description": "Bicameral memory for AI-assisted development — CLI + MCP server bootstrapping persistent project context across sessions",
 	"bin": {
 		"rvr-dev": "dist/index.js",
