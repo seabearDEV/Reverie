@@ -6,9 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.0.0-beta.0] - 2026-05-06
+
+First prerelease on the new brand. Ships under the beta channel — `brew install seabearDEV/reverie/rvr-beta` — so it can coexist with the legacy `ccli` install and validate the renamed release pipeline against `homebrew-reverie` end-to-end. Source-code-wise this is a rename, not a feature change; behavior matches v1.14.0. The Reverie v1.0.0 stable launch follows once Phase 2 (Bun commit-phase via Option A, short-flag audit) and Phase 4 (commercial infrastructure) land.
+
 ### Rebrand: codexCLI → Reverie
 
-**The product is being renamed from codexCLI to Reverie ahead of the v1.0.0 launch.** The next release ships as Reverie v1.0.0 (new product launch, not codexCLI v2.0.0). Git history continues — this is a rename, not a fork — so existing dogfooding case studies and project memory are preserved.
+**The product has been renamed from codexCLI to Reverie.** Git history continues — this is a rename, not a fork — so existing dogfooding case studies and project memory are preserved.
 
 What's changing:
 
@@ -18,7 +22,7 @@ What's changing:
 - **Homebrew tap**: `seabearDEV/homebrew-ccli` → `seabearDEV/homebrew-reverie`
 - **Brew formula**: `ccli.rb` / `ccli-beta.rb` → `rvr.rb` / `rvr-beta.rb`. Class names `Ccli` / `CcliBeta` → `Rvr` / `RvrBeta`
 - **MCP server identifier**: `codexcli` → `reverie` in client config blocks (the key name in `mcpServers`)
-- **Env var**: `CCLI_PASSWORD` → `RVR_PASSWORD` (CI/scripting password fallback)
+- **Env var**: `CCLI_PASSWORD` → `RVR_PASSWORD` (CI/scripting password fallback — breaking)
 
 What's **NOT** changing (load-bearing data-layer naming, per `project.identity` convention):
 
@@ -35,8 +39,15 @@ For most users, migration is automatic:
 
 - **Existing `.codexcli/` project stores** keep working. Same file format, same on-disk layout. Bootstrap, get, set, run — all unchanged.
 - **GitHub URLs** auto-redirect from `seabearDEV/codexCLI` → `seabearDEV/reverie`. Bookmarks and existing PR/issue links continue to resolve.
-- **Brew installs** transition once the tap is renamed: `brew tap seabearDEV/reverie && brew install rvr`. Existing `brew install seabeardev/ccli/ccli` users will need to migrate when convenient (the old tap URL keeps working via redirect, but installs the legacy `ccli` binary).
+- **Brew installs**: this beta ships under `seabearDEV/reverie/rvr-beta` (new tap). Once v1.0.0 stable lands you can switch to `seabearDEV/reverie/rvr`. Existing `brew install seabeardev/ccli/ccli` users will continue to receive the legacy `ccli` binary from the auto-redirected old tap until they retap.
 - **Removed**: the hidden `ccli completions <bash|zsh|install>` back-compat shim. v1.0.0 is a fresh product launch — re-run `rvr config completions install` to regenerate shell completions for the new binary name.
+
+### Verification (pre-tag)
+
+- typecheck clean (`tsc --noEmit`)
+- lint clean (`eslint src/`)
+- 1392/1392 tests pass under vitest (Node)
+- `npm run build` succeeds (`@seabear/reverie@1.0.0-beta.0`)
 
 ### Phase status (private to project store)
 
@@ -44,7 +55,7 @@ Tracked in `project.releasePlan` in the repo's `.codexcli/`:
 
 - **Phase 1** (pre-flight): COMPLETE — domain/trademark clearance, Bun runtime validate (PASS).
 - **Phase 2** (technical foundation — Bun commit-phase, short-flag audit): pending.
-- **Phase 3** (rebrand sweep — this release): in progress.
+- **Phase 3** (rebrand sweep — this release): COMPLETE.
 - **Phase 4** (commercial infrastructure — SeaBear Studios product page, consulting tier): pending.
 - **Phase 5** (launch announcement, Dogfooding Part Three blog): pending.
 
