@@ -575,6 +575,12 @@ complete -o default -F _${bin}_completions ${bin}
 
 export function generateZshScript(): string {
   const bin = getBinaryName();
+  // zsh disallows `-` in variable identifiers but permits it in command/function
+  // names. Use `binVar` for any `local`/parameter-name interpolation; keep `bin`
+  // for command invocations and function names. Without this split, hyphenated
+  // binaries (e.g. `rvr-beta`, `rvr-dev`) generate `_rvr-beta_val` which fails
+  // to parse with `parse error near '_rvr-beta_val'`. See issue #111.
+  const binVar = bin.replace(/-/g, '_');
   return `# Zsh completion for ${bin} (Reverie)
 _${bin}_completions() {
   local line tab=$'\\t' us=$'\\x1f'
@@ -600,28 +606,28 @@ _${bin}_completions() {
     _files
     return
   fi
-  local grp_name _${bin}_val
-  local -a _${bin}_items _${bin}_dot _${bin}_desc _${bin}_plain
+  local grp_name _${binVar}_val
+  local -a _${binVar}_items _${binVar}_dot _${binVar}_desc _${binVar}_plain
   for grp_name in \${(ko)groups}; do
-    _${bin}_items=("\${(@s:|:)groups[\$grp_name]}")
-    _${bin}_dot=()
-    _${bin}_desc=()
-    _${bin}_plain=()
-    for _${bin}_val in "\${_${bin}_items[@]}"; do
-      local _${bin}_key="\${_${bin}_val%%\${us}*}"
-      local _${bin}_dsc="\${_${bin}_val#*\${us}}"
-      if [[ "\$_${bin}_key" == *. ]]; then
-        _${bin}_dot+=("\$_${bin}_key")
-      elif [[ "\$_${bin}_val" == *\${us}* && -n "\$_${bin}_dsc" ]]; then
-        local _${bin}_escaped="\${_${bin}_key//:/\\:}"
-        _${bin}_desc+=("\${_${bin}_escaped}:\${_${bin}_dsc}")
+    _${binVar}_items=("\${(@s:|:)groups[\$grp_name]}")
+    _${binVar}_dot=()
+    _${binVar}_desc=()
+    _${binVar}_plain=()
+    for _${binVar}_val in "\${_${binVar}_items[@]}"; do
+      local _${binVar}_key="\${_${binVar}_val%%\${us}*}"
+      local _${binVar}_dsc="\${_${binVar}_val#*\${us}}"
+      if [[ "\$_${binVar}_key" == *. ]]; then
+        _${binVar}_dot+=("\$_${binVar}_key")
+      elif [[ "\$_${binVar}_val" == *\${us}* && -n "\$_${binVar}_dsc" ]]; then
+        local _${binVar}_escaped="\${_${binVar}_key//:/\\:}"
+        _${binVar}_desc+=("\${_${binVar}_escaped}:\${_${binVar}_dsc}")
       else
-        _${bin}_plain+=("\$_${bin}_key")
+        _${binVar}_plain+=("\$_${binVar}_key")
       fi
     done
-    (( \${#_${bin}_desc} )) && _describe "\$grp_name" _${bin}_desc
-    (( \${#_${bin}_plain} )) && compadd -- "\${_${bin}_plain[@]}"
-    (( \${#_${bin}_dot} )) && compadd -S '' -- "\${_${bin}_dot[@]}"
+    (( \${#_${binVar}_desc} )) && _describe "\$grp_name" _${binVar}_desc
+    (( \${#_${binVar}_plain} )) && compadd -- "\${_${binVar}_plain[@]}"
+    (( \${#_${binVar}_dot} )) && compadd -S '' -- "\${_${binVar}_dot[@]}"
   done
 }
 compdef _${bin}_completions ${bin}
@@ -632,6 +638,9 @@ compdef _${bin}_completions ${bin}
 
 export function installCompletions(): void {
   const bin = getBinaryName();
+  // Same hyphen-handling as generateZshScript: zsh/bash allow `-` in command and
+  // function names but not in `local`/parameter names. Use binVar in those slots.
+  const binVar = bin.replace(/-/g, '_');
   const shell = process.env.SHELL ?? '';
   let rcFile: string;
   let scriptCmd: string;
@@ -684,11 +693,11 @@ ${bin}() {
     fi
   done
   if [[ "$has_help" == false && ("$subcmd" == "run" || "$subcmd" == "r") ]]; then
-    local __${bin}_cmd __${bin}_exit
-    __${bin}_cmd="$(command ${bin} "$@" --source)"
-    __${bin}_exit=$?
-    [[ $__${bin}_exit -ne 0 ]] && return $__${bin}_exit
-    [[ -n "$__${bin}_cmd" ]] && eval "$__${bin}_cmd"
+    local __${binVar}_cmd __${binVar}_exit
+    __${binVar}_cmd="$(command ${bin} "$@" --source)"
+    __${binVar}_exit=$?
+    [[ $__${binVar}_exit -ne 0 ]] && return $__${binVar}_exit
+    [[ -n "$__${binVar}_cmd" ]] && eval "$__${binVar}_cmd"
   else
     command ${bin} "$@"
   fi
