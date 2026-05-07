@@ -15,11 +15,11 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-latest
-            binary: ccli-linux-x64
+            binary: rvr-linux-x64
           - runner: ubuntu-24.04-arm
-            binary: ccli-linux-arm64
+            binary: rvr-linux-arm64
           - runner: windows-latest
-            binary: ccli-win-x64.exe
+            binary: rvr-win-x64.exe
 
     runs-on: ${{ matrix.runner }}
     name: Build ${{ matrix.binary }}
@@ -53,7 +53,7 @@ jobs:
 
   build-macos:
     runs-on: macos-latest
-    name: Build ccli-macos-universal
+    name: Build rvr-macos-universal
 
     steps:
       - uses: actions/checkout@v6
@@ -67,12 +67,12 @@ jobs:
 
       # ── arm64 slice (native on macos-latest) ─────────────────────────────
       - name: Build arm64 slice
-        run: node scripts/sea-build.js ccli-macos-arm64
+        run: node scripts/sea-build.js rvr-macos-arm64
 
       - name: Smoke test arm64
         run: |
-          chmod +x dist/ccli-macos-arm64
-          ./dist/ccli-macos-arm64 --version
+          chmod +x dist/rvr-macos-arm64
+          ./dist/rvr-macos-arm64 --version
 
       # ── x64 slice (cross-build using downloaded x64 Node) ────────────────
       - name: Download Node x64 binary
@@ -90,31 +90,31 @@ jobs:
           file "$NODE_X64"
 
       - name: Build x64 slice
-        run: node scripts/sea-build.js ccli-macos-x64 --node-binary "${{ steps.node-x64.outputs.node_x64 }}"
+        run: node scripts/sea-build.js rvr-macos-x64 --node-binary "${{ steps.node-x64.outputs.node_x64 }}"
 
       - name: Smoke test x64
         run: |
-          chmod +x dist/ccli-macos-x64
-          arch -x86_64 ./dist/ccli-macos-x64 --version
+          chmod +x dist/rvr-macos-x64
+          arch -x86_64 ./dist/rvr-macos-x64 --version
 
       # ── Universal binary ─────────────────────────────────────────────────
       - name: Create universal binary
         run: |
-          lipo -create dist/ccli-macos-arm64 dist/ccli-macos-x64 -output dist/ccli-macos-universal
-          codesign --remove-signature dist/ccli-macos-universal
-          codesign --sign - dist/ccli-macos-universal
-          file dist/ccli-macos-universal
+          lipo -create dist/rvr-macos-arm64 dist/rvr-macos-x64 -output dist/rvr-macos-universal
+          codesign --remove-signature dist/rvr-macos-universal
+          codesign --sign - dist/rvr-macos-universal
+          file dist/rvr-macos-universal
 
       - name: Smoke test universal (arm64)
-        run: ./dist/ccli-macos-universal --version
+        run: ./dist/rvr-macos-universal --version
 
       - name: Smoke test universal (x86_64)
-        run: arch -x86_64 ./dist/ccli-macos-universal --version
+        run: arch -x86_64 ./dist/rvr-macos-universal --version
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ccli-macos-universal
-          path: dist/ccli-macos-universal
+          name: rvr-macos-universal
+          path: dist/rvr-macos-universal
 
   release:
     needs: [build, build-macos]
@@ -180,52 +180,52 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           # Prerelease tags (anything with a `-`) ship to the @beta formula
           # so they don't bump stable users on `brew upgrade`. Stable tags
-          # ship to the canonical ccli formula. Beta installs use a distinct
-          # binary name (`ccli-beta`) so both formulas can coexist on a
+          # ship to the canonical rvr formula. Beta installs use a distinct
+          # binary name (`rvr-beta`) so both formulas can coexist on a
           # machine without symlink conflicts.
           if [[ "${version}" == *-* ]]; then
-            # Beta channel uses `ccli-beta.rb` (NOT `ccli@beta.rb`).
+            # Beta channel uses `rvr-beta.rb` (NOT `rvr@beta.rb`).
             # Homebrew's `Formulary.class_s` only handles `@<digit>`-versioned
             # formulas (like `python@3.11`, `node@20`); it does NOT handle
-            # `@<letter>` like `@beta`. Trying to load `ccli@beta.rb` errors
-            # with "Expected to find class Ccli@beta" — which isn't even a
+            # `@<letter>` like `@beta`. Trying to load `rvr@beta.rb` errors
+            # with "Expected to find class Rvr@beta" — which isn't even a
             # valid Ruby identifier. The dash form sidesteps brew's class_s
-            # entirely: `ccli-beta.rb` -> `CcliBeta` (separator + capitalize).
+            # entirely: `rvr-beta.rb` -> `RvrBeta` (separator + capitalize).
             echo "channel=beta" >> "$GITHUB_OUTPUT"
-            echo "formula_class=CcliBeta" >> "$GITHUB_OUTPUT"
-            echo "formula_file=ccli-beta.rb" >> "$GITHUB_OUTPUT"
-            echo "binary_name=ccli-beta" >> "$GITHUB_OUTPUT"
+            echo "formula_class=RvrBeta" >> "$GITHUB_OUTPUT"
+            echo "formula_file=rvr-beta.rb" >> "$GITHUB_OUTPUT"
+            echo "binary_name=rvr-beta" >> "$GITHUB_OUTPUT"
           else
             echo "channel=stable" >> "$GITHUB_OUTPUT"
-            echo "formula_class=Ccli" >> "$GITHUB_OUTPUT"
-            echo "formula_file=ccli.rb" >> "$GITHUB_OUTPUT"
-            echo "binary_name=ccli" >> "$GITHUB_OUTPUT"
+            echo "formula_class=Rvr" >> "$GITHUB_OUTPUT"
+            echo "formula_file=rvr.rb" >> "$GITHUB_OUTPUT"
+            echo "binary_name=rvr" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Download release binaries
         run: |
-          base="https://github.com/seabearDEV/codexCLI/releases/download/${GITHUB_REF_NAME}"
-          for bin in ccli-macos-universal ccli-linux-x64 ccli-linux-arm64; do
+          base="https://github.com/seabearDEV/reverie/releases/download/${GITHUB_REF_NAME}"
+          for bin in rvr-macos-universal rvr-linux-x64 rvr-linux-arm64; do
             curl -fsSL "$base/$bin" -o "$bin"
           done
 
       - name: Compute SHA256 checksums
         id: sha
         run: |
-          echo "macos_universal=$(sha256sum ccli-macos-universal | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "linux_x64=$(sha256sum ccli-linux-x64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "linux_arm64=$(sha256sum ccli-linux-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "macos_universal=$(sha256sum rvr-macos-universal | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_x64=$(sha256sum rvr-linux-x64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=$(sha256sum rvr-linux-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repo
         uses: actions/checkout@v6
         with:
-          repository: seabearDEV/homebrew-ccli
+          repository: seabearDEV/homebrew-reverie
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-ccli
+          path: homebrew-reverie
 
       - name: Generate formula
         env:
-          CCLI_VERSION: ${{ steps.version.outputs.version }}
+          RVR_VERSION: ${{ steps.version.outputs.version }}
           CHANNEL: ${{ steps.version.outputs.channel }}
           FORMULA_CLASS: ${{ steps.version.outputs.formula_class }}
           FORMULA_FILE: ${{ steps.version.outputs.formula_file }}
@@ -234,12 +234,12 @@ jobs:
           SHA_LINUX_X64: ${{ steps.sha.outputs.linux_x64 }}
           SHA_LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
         run: |
-          mkdir -p homebrew-ccli/Formula
-          cat > "homebrew-ccli/Formula/$FORMULA_FILE" << EOF
+          mkdir -p homebrew-reverie/Formula
+          cat > "homebrew-reverie/Formula/$FORMULA_FILE" << EOF
           class $FORMULA_CLASS < Formula
-            desc "Command-line information store for quick reference of frequently used data"
-            homepage "https://github.com/seabearDEV/codexCLI"
-            version "$CCLI_VERSION"
+            desc "Bicameral memory for AI-assisted development — CLI + MCP server bootstrapping persistent project context across sessions"
+            homepage "https://github.com/seabearDEV/reverie"
+            version "$RVR_VERSION"
             license "MIT"
 
             livecheck do
@@ -248,22 +248,22 @@ jobs:
             end
 
             on_macos do
-              url "https://github.com/seabearDEV/codexCLI/releases/download/v$CCLI_VERSION/ccli-macos-universal"
+              url "https://github.com/seabearDEV/reverie/releases/download/v$RVR_VERSION/rvr-macos-universal"
               sha256 "$SHA_MACOS_UNIVERSAL"
             end
 
             on_linux do
               if Hardware::CPU.arm?
-                url "https://github.com/seabearDEV/codexCLI/releases/download/v$CCLI_VERSION/ccli-linux-arm64"
+                url "https://github.com/seabearDEV/reverie/releases/download/v$RVR_VERSION/rvr-linux-arm64"
                 sha256 "$SHA_LINUX_ARM64"
               else
-                url "https://github.com/seabearDEV/codexCLI/releases/download/v$CCLI_VERSION/ccli-linux-x64"
+                url "https://github.com/seabearDEV/reverie/releases/download/v$RVR_VERSION/rvr-linux-x64"
                 sha256 "$SHA_LINUX_X64"
               end
             end
 
             def install
-              binary = Dir.glob("ccli-*").first
+              binary = Dir.glob("rvr-*").first
               bin.install binary => "$BINARY_NAME"
             end
 
@@ -275,26 +275,26 @@ jobs:
 
       - name: Clean up obsolete beta formula
         if: steps.version.outputs.channel == 'beta'
-        working-directory: homebrew-ccli
+        working-directory: homebrew-reverie
         run: |
-          # v1.11.1-beta.0 and beta.1 wrote `Formula/ccli@beta.rb`, which
+          # v1.11.1-beta.0 and beta.1 wrote `Formula/rvr@beta.rb`, which
           # brew can't load (its class_s regex only handles @<digit>-versioned
-          # formulas). beta.2 renames to `ccli-beta.rb`. Remove the broken
+          # formulas). beta.2 renames to `rvr-beta.rb`. Remove the broken
           # file from the tap so users running `brew update` stop seeing
           # the load error.
-          if [[ -f Formula/ccli@beta.rb ]]; then
-            git rm Formula/ccli@beta.rb
+          if [[ -f Formula/rvr@beta.rb ]]; then
+            git rm Formula/rvr@beta.rb
           fi
 
       - name: Push updated formula
-        working-directory: homebrew-ccli
+        working-directory: homebrew-reverie
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "Formula/$FORMULA_FILE"
-          git commit -m "Update $CHANNEL channel to $CCLI_VERSION"
+          git commit -m "Update $CHANNEL channel to $RVR_VERSION"
           git push
         env:
-          CCLI_VERSION: ${{ steps.version.outputs.version }}
+          RVR_VERSION: ${{ steps.version.outputs.version }}
           CHANNEL: ${{ steps.version.outputs.channel }}
           FORMULA_FILE: ${{ steps.version.outputs.formula_file }}

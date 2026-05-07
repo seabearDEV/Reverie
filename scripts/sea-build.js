@@ -4,7 +4,7 @@
  * Build a Node SEA (Single Executable Application) binary for the current platform.
  *
  * Usage: node scripts/sea-build.js [output-name] [--node-binary <path>]
- *   output-name defaults to ccli-{platform}-{arch} (e.g. ccli-darwin-arm64)
+ *   output-name defaults to rvr-{platform}-{arch} (e.g. rvr-darwin-arm64)
  *   --node-binary  path to the Node binary to use as the SEA shell (defaults to process.execPath)
  */
 
@@ -37,7 +37,7 @@ for (let i = 0; i < args.length; i++) {
 }
 
 const platformName = platform === 'darwin' ? 'macos' : platform === 'win32' ? 'win' : platform;
-const defaultName = `ccli-${platformName}-${arch}`;
+const defaultName = `rvr-${platformName}-${arch}`;
 outputName = outputName || defaultName;
 
 // Ensure Windows binaries have .exe
@@ -45,7 +45,7 @@ if (platform === 'win32' && !outputName.endsWith('.exe')) {
   outputName += '.exe';
 }
 
-const BUNDLE   = path.join(DIST, 'ccli-bundle.cjs');
+const BUNDLE   = path.join(DIST, 'rvr-bundle.cjs');
 const BLOB     = path.join(DIST, 'sea-prep.blob');
 const CONFIG   = path.join(ROOT, 'sea-config.json');
 const BINARY   = path.join(DIST, outputName);
@@ -56,7 +56,7 @@ function run(cmd, args, opts) {
 }
 
 async function main() {
-  // ── 1. esbuild: bundle src/index.ts → dist/ccli-bundle.cjs ───────────────
+  // ── 1. esbuild: bundle src/index.ts → dist/rvr-bundle.cjs ───────────────
   console.log('\n=== Step 1: esbuild bundle ===');
   fs.mkdirSync(DIST, { recursive: true });
 

@@ -1,5 +1,5 @@
 /**
- * Syscall-count benchmark for CodexCLI performance improvements.
+ * Syscall-count benchmark for Reverie performance improvements.
  *
  * Instruments fs.statSync, fs.readFileSync, fs.writeFileSync, fs.existsSync,
  * fs.renameSync, fs.openSync, fs.closeSync, fs.writeSync, and fs.unlinkSync
@@ -12,8 +12,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-// ── Set up temp data directory BEFORE any codexcli imports ─────────────
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codexcli-bench-'));
+// ── Set up temp data directory BEFORE any reverie imports ─────────────
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-bench-'));
 process.env.CODEX_DATA_DIR = tmpDir;
 // Force non-interactive mode to avoid TTY prompts
 process.stdin.isTTY = false;
@@ -67,7 +67,7 @@ for (const name of TRACKED) {
 function getCallerInfo(): string {
   const stack = new Error().stack ?? '';
   const lines = stack.split('\n');
-  // Skip Error, the proxy fn, installProbes wrapper — find the first codexcli src/ frame
+  // Skip Error, the proxy fn, installProbes wrapper — find the first reverie src/ frame
   for (let i = 3; i < lines.length; i++) {
     const line = lines[i];
     if (line.includes('/src/') && !line.includes('node_modules')) {
@@ -327,7 +327,7 @@ async function main() {
     'TOTAL'.padStart(COL_NUM);
 
   console.log('\n' + '='.repeat(header.length));
-  console.log('CodexCLI Syscall Count Benchmark (post-optimization)');
+  console.log('Reverie Syscall Count Benchmark (post-optimization)');
   console.log('='.repeat(header.length));
   console.log(`Data: ${tmpDir}`);
   console.log(`Entries: 50 (5 namespaces x 10 keys), Aliases: 10\n`);

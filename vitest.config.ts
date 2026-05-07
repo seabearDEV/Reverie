@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    env: { CODEX_DATA_DIR: path.join(os.tmpdir(), 'codexcli-vitest') },
+    env: { CODEX_DATA_DIR: path.join(os.tmpdir(), 'reverie-vitest') },
     root: './src',
     include: ['**/__tests__/**/*.ts', '**/*.{test,spec}.ts'],
     exclude: ['**/__tests__/helpers/**'],
