@@ -6,7 +6,7 @@ import { Scope, loadEntries, saveEntries, loadEntriesMerged, findProjectFile, sa
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite } from './projectResolution';
 
-export { Scope } from './store';
+export type { Scope } from './store';
 
 /**
  * Extract a human-readable message from an unknown error value
