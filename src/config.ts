@@ -14,7 +14,7 @@ interface Config {
 const VALID_THEMES = ['default', 'dark', 'light'] as const;
 export const VALID_CONFIG_KEYS = ['colors', 'theme', 'max_backups', 'import_max_bytes', 'bootstrap_max_response_bytes'] as const;
 
-// 50 MB — a generous ceiling for any realistic codex store. Real stores
+// 50 MB — a generous ceiling for any realistic Reverie store. Real stores
 // are KB-scale; this catches pathological inputs (misplaced heap dump,
 // adversarial payload) before they OOM the process.
 const DEFAULT_IMPORT_MAX_BYTES = 50 * 1024 * 1024;

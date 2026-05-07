@@ -11,8 +11,8 @@
  * so it is a drop-in replacement for `createScopedStore` — consumers above
  * the store layer see the same `UnifiedData` shape on load/save.
  *
- * Design and decisions: see GitHub issue #54 and `arch.storeLayout` in the
- * project codex.
+ * Design and decisions: see GitHub issue #54 and the `arch.storeLayout`
+ * Reverie entry.
  */
 
 import fs from 'fs';
@@ -68,8 +68,8 @@ const ENTRY_FILE_SUFFIX = '.json';
  * Hand-edit warning written to `<store>/_README.md` on store creation. The
  * `_` prefix means isEntryFilename ignores it; it exists purely as an
  * in-context nudge for developers browsing the directory who might
- * otherwise be tempted to open an entry file and tweak it. See the codex
- * entry `conventions.editSurface` for the rationale.
+ * otherwise be tempted to open an entry file and tweak it. See the
+ * `conventions.editSurface` Reverie entry for the rationale.
  */
 const README_CONTENT = `# Reverie store — do not hand-edit
 
