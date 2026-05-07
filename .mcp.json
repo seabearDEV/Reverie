@@ -2,7 +2,7 @@
   "mcpServers": {
     "reverie": {
       "type": "stdio",
-      "command": "rvr-beta",
+      "command": "rvr",
       "args": [
         "mcp-server",
         "--cwd",
