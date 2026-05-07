@@ -1,7 +1,7 @@
 {
-  "value": "Pushing any v* tag fires the full release workflow including update-homebrew (which only needs the `release` job to succeed). Debug-style tag pushes (e.g. v0.0.0-debug.0) will reach the Homebrew step and push a formula commit to seabearDEV/homebrew-ccli — no skip mechanism. Practical workaround: accept the cleanup, the next real prerelease overwrites the bogus formula. Surfaced during #96's debug-tag rerun where commit 59058ca on the tap was a side effect we let self-correct rather than reverting. If you need a truly side-effect-free release-workflow rerun, use a non-`v*` tag pattern or temporarily edit the workflow trigger on the debug branch.",
+  "value": "Pushing any v* tag fires the full release workflow including update-homebrew (which only needs the `release` job to succeed). Debug-style tag pushes (e.g. v0.0.0-debug.0) will reach the Homebrew step and push a formula commit to seabearDEV/homebrew-reverie — no skip mechanism. Practical workaround: accept the cleanup, the next real prerelease overwrites the bogus formula. Surfaced during #96's debug-tag rerun where commit 59058ca on the tap was a side effect we let self-correct rather than reverting. If you need a truly side-effect-free release-workflow rerun, use a non-`v*` tag pattern or temporarily edit the workflow trigger on the debug branch.",
   "meta": {
     "created": 1777392078099,
-    "updated": 1777392078099
+    "updated": 1778164898412
   }
 }

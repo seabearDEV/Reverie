@@ -1,7 +1,7 @@
 {
-  "value": "_meta timestamps per key, auto-updated on write. ccli stale / codex_stale surfaces old entries. codex_context shows age tags >30d.",
+  "value": "_meta timestamps per key, auto-updated on write. rvr stale / reverie_stale surfaces old entries. reverie_context shows age tags >30d.",
   "meta": {
     "created": 1775347257904,
-    "updated": 1775347257904
+    "updated": 1778164832509
   }
 }

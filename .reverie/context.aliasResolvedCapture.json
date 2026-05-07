@@ -1,7 +1,7 @@
 {
-  "value": "aliasResolved is captured differently in MCP vs CLI wrappers and has per-tool semantics the generic code does not handle. MCP wrapper (mcp-server.ts) auto-resolves via resolveKey(extractKey(params)) — works for most tools but extractKey's choice of which param is \"the key\" is tool-specific (e.g. codex_copy returns params.dest ?? params.source, so aliasResolved tracks whether the dest was an alias, not the source — usually wrong for copy). CLI wrapper (instrumentation.ts) requires the callsite to pass both rawKey (original input) and key (resolveKey output) in the context; the check is rawKey && key && rawKey !== key. If a callsite pre-resolves and passes only key (as codex_run did before #93 fix), aliasResolved is always undefined. Several CLI callsites still drop rawKey on pre-resolve — follow-up audit needed if future datasets surface gaps beyond the codex_run one. Discovered during v1.13.0 #93.",
+  "value": "aliasResolved is captured differently in MCP vs CLI wrappers and has per-tool semantics the generic code does not handle. MCP wrapper (mcp-server.ts) auto-resolves via resolveKey(extractKey(params)) — works for most tools but extractKey's choice of which param is \"the key\" is tool-specific (e.g. reverie_copy returns params.dest ?? params.source, so aliasResolved tracks whether the dest was an alias, not the source — usually wrong for copy). CLI wrapper (instrumentation.ts) requires the callsite to pass both rawKey (original input) and key (resolveKey output) in the context; the check is rawKey && key && rawKey !== key. If a callsite pre-resolves and passes only key (as reverie_run did before #93 fix), aliasResolved is always undefined. Several CLI callsites still drop rawKey on pre-resolve — follow-up audit needed if future datasets surface gaps beyond the reverie_run one. Discovered during v1.13.0 #93.",
   "meta": {
     "created": 1776954993371,
-    "updated": 1776954993371
+    "updated": 1778164847029
   }
 }

@@ -1,7 +1,7 @@
 {
-  "value": "CODEX_DATA_DIR redirects global store + audit/telemetry logs to temp dir during tests. Project store (.codexcli.json) can still get test entries if it exists in cwd — always clean before committing.",
+  "value": "RVR_DATA_DIR redirects global store + audit/telemetry logs to temp dir during tests. Project store (.reverie/) can still get test entries if it exists in cwd — always clean before committing.",
   "meta": {
     "created": 1775360216518,
-    "updated": 1775360216518
+    "updated": 1778164572142
   }
 }

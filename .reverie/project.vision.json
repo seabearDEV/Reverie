@@ -1,7 +1,7 @@
 {
-  "value": "Eliminate repetitive codebase exploration by AI agents. Every session starts with full context. Every insight gets stored for the next session. As the knowledge base grows, hit rates improve and agents spend fewer tokens exploring — tracked via per-period trends in codex_stats.",
+  "value": "Eliminate repetitive codebase exploration by AI agents. Every session starts with full context. Every insight gets stored for the next session. As the knowledge base grows, hit rates improve and agents spend fewer tokens exploring — tracked via per-period trends in reverie_stats.",
   "meta": {
     "created": 1775501535503,
-    "updated": 1775501535503
+    "updated": 1778164457317
   }
 }

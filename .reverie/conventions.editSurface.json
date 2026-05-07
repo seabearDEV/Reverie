@@ -1,7 +1,7 @@
 {
-  "value": "Supported edit paths for codex data: ccli (CLI), MCP tools, future UI. Direct editing of .codexcli.json or .codexcli/*.json is unsupported — you will desync metadata (timestamps, future verified/agent fields) and break staleness signals. The wrapper format {value, meta} assumes only the official tools touch it; raw edits skip the meta updates the tools handle automatically.",
+  "value": "Supported edit paths for Reverie data: rvr (CLI), MCP tools, future UI. Direct editing of .reverie/*.json is unsupported — you will desync metadata (timestamps, future verified/agent fields) and break staleness signals. The wrapper format {value, meta} assumes only the official tools touch it; raw edits skip the meta updates the tools handle automatically.",
   "meta": {
     "created": 1775609186846,
-    "updated": 1775609186846
+    "updated": 1778164667343
   }
 }

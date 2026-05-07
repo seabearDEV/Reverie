@@ -1,7 +1,7 @@
 {
-  "value": "Built-in defaults + customizable via system.llm.instructions entry. ccli config llm-instructions to view/edit.",
+  "value": "Built-in defaults + customizable via system.llm.instructions entry. rvr config llm-instructions to view/edit.",
   "meta": {
     "created": 1775358827605,
-    "updated": 1775358827605
+    "updated": 1778164822494
   }
 }

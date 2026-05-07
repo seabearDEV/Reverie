@@ -1,7 +1,7 @@
 {
-  "value": "vitest ^4 — test runner. Globals enabled, coverage via @vitest/coverage-v8. CODEX_DATA_DIR isolates test data.",
+  "value": "vitest ^4 — test runner. Globals enabled, coverage via @vitest/coverage-v8. RVR_DATA_DIR isolates test data.",
   "meta": {
     "created": 1775361270072,
-    "updated": 1775361270072
+    "updated": 1778164579115
   }
 }

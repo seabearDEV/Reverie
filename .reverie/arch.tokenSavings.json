@@ -1,7 +1,7 @@
 {
-  "value": "Observed miss-path costing replaces static EXPLORATION_COST multipliers. Three layers: (1) miss-path windows track exploration cost when codex_get misses, (2) calibrated cost map uses median of observed miss-paths per namespace with static fallback when <5 samples, (3) net savings = gross exploration avoided − delivery cost (responseSize of all read hits). MissPath struct: { ts, session, namespace, key, toolCalls, explorationBytes, resolution }. Resolution types: writeback (clean), moved_on, timeout. Bootstrap savings use entry-count proxy with calibrated per-namespace costs.",
+  "value": "Observed miss-path costing replaces static EXPLORATION_COST multipliers. Three layers: (1) miss-path windows track exploration cost when reverie_get misses, (2) calibrated cost map uses median of observed miss-paths per namespace with static fallback when <5 samples, (3) net savings = gross exploration avoided − delivery cost (responseSize of all read hits). MissPath struct: { ts, session, namespace, key, toolCalls, explorationBytes, resolution }. Resolution types: writeback (clean), moved_on, timeout. Bootstrap savings use entry-count proxy with calibrated per-namespace costs.",
   "meta": {
     "created": 1775517276576,
-    "updated": 1775517276576
+    "updated": 1778164410608
   }
 }

@@ -1,7 +1,7 @@
 {
-  "value": ".codexcli/ = project knowledge store (file-per-entry layout, any agent needs it). CLAUDE.md = Claude behavior directives (how to use the codex, not what it contains). MEMORY.md = personal user preferences only (commit style, interaction prefs). Rule: if another agent would benefit, it goes in .codexcli/.",
+  "value": ".reverie/ = project knowledge store (file-per-entry layout, any agent needs it). CLAUDE.md = Claude behavior directives (how to use Reverie, not what it contains). MEMORY.md = personal user preferences only (commit style, interaction prefs). Rule: if another agent would benefit, it goes in .reverie/.",
   "meta": {
     "created": 1775617717815,
-    "updated": 1775617717815
+    "updated": 1778164672563
   }
 }

@@ -1,7 +1,7 @@
 {
-  "value": "ccli init scans codebase via scanCodebase() in src/commands/scan.ts — 6 composable detectors (detectProject, detectCommands, detectFiles, detectDeps, detectConventions, detectContext). Generates CLAUDE.md via src/commands/claude-md.ts. Seeds conventions.persistence entry for three-file balance. Flags: --no-scan, --no-claude, --force, --dry-run. Idempotent — skips existing keys.",
+  "value": "rvr init scans codebase via scanCodebase() in src/commands/scan.ts — 6 composable detectors (detectProject, detectCommands, detectFiles, detectDeps, detectConventions, detectContext). Generates CLAUDE.md via src/commands/claude-md.ts. Seeds conventions.persistence entry for three-file balance. Flags: --no-scan, --no-claude, --force, --dry-run. Idempotent — skips existing keys.",
   "meta": {
     "created": 1775508051571,
-    "updated": 1775508051571
+    "updated": 1778164828391
   }
 }

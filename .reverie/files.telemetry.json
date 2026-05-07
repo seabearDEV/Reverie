@@ -1,7 +1,7 @@
 {
-  "value": "src/utils/telemetry.ts — logToolCall, computeStats, JSONL telemetry at ~/.codexcli/telemetry.jsonl",
+  "value": "src/utils/telemetry.ts — logToolCall, computeStats, JSONL telemetry at ~/.reverie/store/telemetry.jsonl",
   "meta": {
     "created": 1775356701809,
-    "updated": 1775356701809
+    "updated": 1778164676674
   }
 }

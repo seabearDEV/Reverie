@@ -1,7 +1,7 @@
 {
-  "value": "Three scopes: project, global, auto. Auto uses project if .codexcli/ (or legacy .codexcli.json) exists. Single-key lookups fall through project -> global.",
+  "value": "Three scopes: project, global, auto. Auto uses project if .reverie/ (or legacy .codexcli.json) exists. Single-key lookups fall through project -> global.",
   "meta": {
     "created": 1775617721418,
-    "updated": 1775617721418
+    "updated": 1778164658306
   }
 }

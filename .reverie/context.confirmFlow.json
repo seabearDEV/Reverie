@@ -1,7 +1,7 @@
 {
-  "value": "MCP codex_run uses two-step confirmation for --confirm entries: step 1 returns command preview + one-time confirm_token, step 2 passes token back to execute. Token is single-use, key-scoped, 5min TTL. force:true and dry:true bypass confirm (CLI fallback).",
+  "value": "MCP reverie_run uses two-step confirmation for --confirm entries: step 1 returns command preview + one-time confirm_token, step 2 passes token back to execute. Token is single-use, key-scoped, 5min TTL. force:true and dry:true bypass confirm (CLI fallback).",
   "meta": {
     "created": 1775493255368,
-    "updated": 1775493255368
+    "updated": 1778164415382
   }
 }

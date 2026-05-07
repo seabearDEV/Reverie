@@ -1,7 +1,7 @@
 {
-  "value": "1) Token efficiency — fewer tokens per session. 2) Dogfooding — use codexCLI MCP for own project maintenance. 3) Dual-audience .codexcli.json — useful for devs AND GenAI agents. 4) Agent-agnostic — work across Claude, Copilot, ChatGPT, Cursor, etc.",
+  "value": "1) Token efficiency — fewer tokens per session. 2) Dogfooding — use Reverie MCP for own project maintenance. 3) Dual-audience .reverie/ — useful for devs AND GenAI agents. 4) Agent-agnostic — work across Claude, Copilot, ChatGPT, Cursor, etc.",
   "meta": {
     "created": 1775361263177,
-    "updated": 1775361263177
+    "updated": 1778164681366
   }
 }

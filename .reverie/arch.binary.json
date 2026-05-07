@@ -1,7 +1,7 @@
 {
-  "value": "Production: ccli (Node.js SEA binary). Dev: cclid (npm-linked). getBinaryName() auto-detects — never hardcode.",
+  "value": "Production: rvr (Node.js SEA binary). Dev: rvr-dev (npm-linked). getBinaryName() auto-detects — never hardcode.",
   "meta": {
     "created": 1775347252160,
-    "updated": 1775347252160
+    "updated": 1778164818717
   }
 }

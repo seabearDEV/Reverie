@@ -1,7 +1,7 @@
 {
-  "value": "findProjectFile() resolution order (src/utils/paths.ts): 1) CODEX_NO_PROJECT env → disabled, 2) CODEX_PROJECT env → explicit .codexcli.json file or containing dir; fails closed if missing (no cwd fallback), 3) setProjectRootOverride() programmatic override (set by MCP server from client roots and from CODEX_PROJECT_DIR/--cwd launcher hints), 4) walk up from process.cwd(). MCP server captures roots via listRoots() after connect; falls back silently if client doesn't support roots. Result is cached; clearProjectFileCache() resets.",
+  "value": "findProjectFile() resolution order (src/utils/paths.ts): 1) RVR_NO_PROJECT env → disabled, 2) RVR_PROJECT env → explicit .reverie/ directory or containing dir; fails closed if missing (no cwd fallback), 3) setProjectRootOverride() programmatic override (set by MCP server from client roots and from RVR_PROJECT_DIR/--cwd launcher hints), 4) walk up from process.cwd(). MCP server captures roots via listRoots() after connect; falls back silently if client doesn't support roots. Result is cached; clearProjectFileCache() resets.",
   "meta": {
     "created": 1775530704879,
-    "updated": 1775530704879
+    "updated": 1778164533558
   }
 }

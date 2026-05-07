@@ -1,7 +1,7 @@
 {
-  "value": "All user-facing text uses getBinaryName() — never hardcode ccli",
+  "value": "All user-facing text uses getBinaryName() — never hardcode the binary name.",
   "meta": {
     "created": 1775347266674,
-    "updated": 1775347266674
+    "updated": 1778164835837
   }
 }

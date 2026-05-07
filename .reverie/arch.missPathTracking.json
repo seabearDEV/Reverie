@@ -1,7 +1,7 @@
 {
-  "value": "MissWindowTracker in telemetry.ts: pure state machine tracking exploration cost when codex_get misses. Opens window on hit:false, closes on writeback (codex_set to same ns), moved_on (any hit), or timeout (5min). Persists to miss-paths.jsonl. MCP server wires tracker in wrapper finally block + flushes on beforeExit. getExplorationCost() returns observed median (>=5 writeback samples) or falls back to static EXPLORATION_COST map. computeStats() reports: deliveryCostTokens (bytes served / 4), netTokensSaved (gross - delivery), calibration map (observed vs static per namespace).",
+  "value": "MissWindowTracker in telemetry.ts: pure state machine tracking exploration cost when reverie_get misses. Opens window on hit:false, closes on writeback (reverie_set to same ns), moved_on (any hit), or timeout (5min). Persists to miss-paths.jsonl. MCP server wires tracker in wrapper finally block + flushes on beforeExit. getExplorationCost() returns observed median (>=5 writeback samples) or falls back to static EXPLORATION_COST map. computeStats() reports: deliveryCostTokens (bytes served / 4), netTokensSaved (gross - delivery), calibration map (observed vs static per namespace).",
   "meta": {
     "created": 1775518365836,
-    "updated": 1775518365836
+    "updated": 1778164400856
   }
 }

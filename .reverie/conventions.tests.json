@@ -1,7 +1,7 @@
 {
-  "value": "Vitest with globals. Unit tests mock fs/store. Integration tests use temp dirs via CODEX_DATA_DIR.",
+  "value": "Vitest with globals. Unit tests mock fs/store. Integration tests use temp dirs via RVR_DATA_DIR.",
   "meta": {
     "created": 1775347268052,
-    "updated": 1775347268052
+    "updated": 1778164575552
   }
 }

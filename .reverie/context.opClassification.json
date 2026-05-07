@@ -1,7 +1,7 @@
 {
-  "value": "TelemetryEntry and AuditEntry op union is 'read' | 'write' | 'remove' | 'exec' | 'meta' as of #93. 'remove' is distinct from 'write' because prior conflation (codex_remove logging op:'write') inflated write counts and distorted readWriteRatio. classifyOp routes codex_remove, codex_alias_remove, codex_confirm_remove, codex_reset to 'remove'. Historical audit entries with op:'write' for removes are NOT rewritten — stats for old data remain distorted. --writes_only filter in codex_audit now strictly matches op === 'write' (tighter than before). Any isWrite-style gate that controls before/after capture must include 'remove' (see mcp-server.ts and instrumentation.ts).",
+  "value": "TelemetryEntry and AuditEntry op union is 'read' | 'write' | 'remove' | 'exec' | 'meta' as of #93. 'remove' is distinct from 'write' because prior conflation (reverie_remove logging op:'write') inflated write counts and distorted readWriteRatio. classifyOp routes reverie_remove, reverie_alias_remove, reverie_confirm_remove, reverie_reset to 'remove'. Historical audit entries with op:'write' for removes are NOT rewritten — stats for old data remain distorted. --writes_only filter in reverie_audit now strictly matches op === 'write' (tighter than before). Any isWrite-style gate that controls before/after capture must include 'remove' (see mcp-server.ts and instrumentation.ts).",
   "meta": {
     "created": 1776954998578,
-    "updated": 1776954998578
+    "updated": 1778164887414
   }
 }
