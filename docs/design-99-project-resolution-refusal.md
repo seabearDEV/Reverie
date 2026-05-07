@@ -1,7 +1,7 @@
 # Design: refuse codex_set on project resolution failure (#99)
 
-**Issue:** [#99](https://github.com/seabearDEV/codexCLI/issues/99)
-**Status:** SHIPPED 2026-05-05 via [PR #104](https://github.com/seabearDEV/codexCLI/pull/104) (merge `d9126b4`)
+**Issue:** [#99](https://github.com/seabearDEV/reverie/issues/99)
+**Status:** SHIPPED 2026-05-05 via [PR #104](https://github.com/seabearDEV/reverie/pull/104) (merge `d9126b4`)
 **Driving evidence:** `docs/investigation-bootstrap-overflow-2026-05-05.md`, `docs/dataset-2026-05-05-findings.md`
 **Playbook:** mirrors the #91 design-first treatment
 
@@ -125,7 +125,7 @@ Resolver tried (in order):
   4. Walk up from <cwd>: reached filesystem root without finding .codexcli/
 
 Choose one to proceed:
-  - run `codex_init` (or `ccli init`) here to create a project store
+  - run `codex_init` (or `rvr init`) here to create a project store
   - retry with explicit scope:"global" (MCP) or --scope global (CLI) for an
     intentional global-store write
 ```

@@ -149,7 +149,7 @@ export function readPasswordFile(filePath: string): string {
   return firstLine.trim();
 }
 
-// Module-local: ensure the CCLI_PASSWORD warning only fires once per process
+// Module-local: ensure the RVR_PASSWORD warning only fires once per process
 // even if askPassword is called multiple times (e.g. promptAndEncrypt does a
 // prompt + confirm pair).
 let ccliPasswordWarningShown = false;
@@ -170,14 +170,14 @@ export function askPassword(prompt: string, options?: AskPasswordOptions): Promi
     }
   }
 
-  // 2. CCLI_PASSWORD env var — one-shot fallback for CI/scripting. Emit a
+  // 2. RVR_PASSWORD env var — one-shot fallback for CI/scripting. Emit a
   //    single stderr warning so the user knows the secret is in their
   //    environment and should be cleared after the command.
-  const envPassword = process.env.CCLI_PASSWORD;
+  const envPassword = process.env.RVR_PASSWORD;
   if (envPassword !== undefined && envPassword !== '') {
     if (!ccliPasswordWarningShown) {
       process.stderr.write(
-        color.yellow('⚠ password read from CCLI_PASSWORD — clear your environment after use\n'),
+        color.yellow('⚠ password read from RVR_PASSWORD — clear your environment after use\n'),
       );
       ccliPasswordWarningShown = true;
     }
@@ -187,7 +187,7 @@ export function askPassword(prompt: string, options?: AskPasswordOptions): Promi
   // 3. Interactive TTY prompt (original behavior).
   if (!process.stdin.isTTY) {
     return Promise.reject(new Error(
-      'Password input requires an interactive terminal, --password-file <path>, or the CCLI_PASSWORD env var.',
+      'Password input requires an interactive terminal, --password-file <path>, or the RVR_PASSWORD env var.',
     ));
   }
 

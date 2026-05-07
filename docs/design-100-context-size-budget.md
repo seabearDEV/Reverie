@@ -1,7 +1,7 @@
 # Design: codex_context size budget with graceful tier degradation (#100)
 
-**Issue:** [#100](https://github.com/seabearDEV/codexCLI/issues/100)
-**Status:** SHIPPED 2026-05-05 via [PR #108](https://github.com/seabearDEV/codexCLI/pull/108) (merge `d18923f`)
+**Issue:** [#100](https://github.com/seabearDEV/reverie/issues/100)
+**Status:** SHIPPED 2026-05-05 via [PR #108](https://github.com/seabearDEV/reverie/pull/108) (merge `d18923f`)
 **Driving evidence:** `docs/investigation-bootstrap-overflow-2026-05-05.md` §1, `docs/dataset-2026-05-05-findings.md` §3
 **Playbook:** mirrors the #91 / #99 design-first treatment
 
@@ -78,7 +78,7 @@ Notice format goal: the agent can read the notice and know (a) what was dropped,
 
 ### CLI vs MCP behavior
 
-Both surfaces apply the same shed algorithm. The CLI's `ccli context` command honors the same budget — agents that pipe the CLI output into a model via tools (`gh copilot`, the OpenAI Codex CLI, etc.) hit the same host caps. No CLI-only escape hatch.
+Both surfaces apply the same shed algorithm. The CLI's `rvr context` command honors the same budget — agents that pipe the CLI output into a model via tools (`gh copilot`, the OpenAI Codex CLI, etc.) hit the same host caps. No CLI-only escape hatch.
 
 `tier: "full"` honors user intent on both surfaces — it skips degradation entirely. If a `tier: "full"` payload exceeds the host cap, that is the user's choice and the spill file is the appropriate failure mode (the user explicitly opted in).
 
@@ -149,7 +149,7 @@ Manual verification:
 
 1. Schema + config plumbing (`bootstrap.maxResponseBytes`, env override).
 2. Shed algorithm in isolation (pure function: `(entries, budget, tier) → { kept, shed_summary }`).
-3. Wire into both `codex_context` MCP handler and `ccli context` CLI command.
+3. Wire into both `codex_context` MCP handler and `rvr context` CLI command.
 4. Telemetry/audit field additions.
 5. Tests for all rows in the test plan above.
 6. CHANGELOG entry under `### Added` (or `### Changed` if it counts as behavior change for `tier: "standard"` / `"essential"`).

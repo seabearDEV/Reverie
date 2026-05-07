@@ -109,7 +109,7 @@ All milestoned to v1.14.0 as candidates for the **E. Guardrails / data hygiene**
 
 ## Source files
 
-Raw audit/telemetry/miss-paths preserved locally at `~/Projects/liminal/codexCLI_review/`. Not checked in — the derived counts above are what later sessions need.
+Raw audit/telemetry/miss-paths preserved locally at `~/Projects/liminal/Reverie_review/`. Not checked in — the derived counts above are what later sessions need.
 
 ## Resolution
 

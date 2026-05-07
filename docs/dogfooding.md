@@ -1,6 +1,6 @@
-# Dogfooding: How CodexCLI Found and Fixed Its Own Bugs
+# Dogfooding: How Reverie Found and Fixed Its Own Bugs
 
-CodexCLI is a persistent knowledge store for AI agents. During the v1.11.1 release cycle, we used CodexCLI's own MCP tools to develop, debug, and validate CodexCLI itself. The tool caught three independent MCP server freeze bugs, stored the diagnosis for future sessions, and then stress-tested itself to confirm the fixes held.
+Reverie is a persistent knowledge store for AI agents. During the v1.11.1 release cycle, we used Reverie's own MCP tools to develop, debug, and validate Reverie itself. The tool caught three independent MCP server freeze bugs, stored the diagnosis for future sessions, and then stress-tested itself to confirm the fixes held.
 
 This is the story of that loop.
 
@@ -8,7 +8,7 @@ This is the story of that loop.
 
 v1.11.0 shipped on April 8, 2026 with a file-per-entry storage layout, file locking, and unified audit/telemetry. Within hours of live MCP testing against the new release, the server started freezing mid-session. The symptom was always the same: the server appeared to hang, and reconnecting (`/mcp` in Claude Code) "fixed" it because it spawned a fresh process.
 
-One symptom. Three independent causes. All found by an AI agent using CodexCLI's own tools.
+One symptom. Three independent causes. All found by an AI agent using Reverie's own tools.
 
 ## Three freezes, three fixes
 
@@ -69,9 +69,9 @@ Here's what made this different from a normal bug-fix cycle:
 ## Try it
 
 ```bash
-brew install seabearDEV/ccli/ccli   # or npm install -g codexcli
+brew install seabearDEV/reverie/rvr   # or npm install -g reverie
 cd your-project
-ccli init                            # scan codebase, populate .codexcli/
+rvr init                            # scan codebase, populate .codexcli/
 ```
 
 Add the MCP server to your AI agent configuration and call `codex_context` at session start. Every session gets smarter.

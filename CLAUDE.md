@@ -4,7 +4,7 @@ Call `codex_context` as your first tool call to load all stored project knowledg
 
 ## Prefer MCP tools over direct file reads
 
-Always use codexCLI MCP tools (`codex_get`, `codex_set`, `codex_search`, etc.) to interact with the project store at `.codexcli/`. Direct file reads bypass audit logging, alias resolution, interpolation, and staleness metadata, and hand-editing `.codexcli/*.json` is **unsupported** — it desyncs per-entry meta and breaks staleness signals (see `conventions.editSurface` in the codex). The supported edit paths are CLI, MCP tools, and (eventually) a dedicated UI.
+Always use Reverie MCP tools (`codex_get`, `codex_set`, `codex_search`, etc.) to interact with the project store at `.codexcli/`. Direct file reads bypass audit logging, alias resolution, interpolation, and staleness metadata, and hand-editing `.codexcli/*.json` is **unsupported** — it desyncs per-entry meta and breaks staleness signals (see `conventions.editSurface` in the codex). The supported edit paths are CLI, MCP tools, and (eventually) a dedicated UI.
 
 ## Before exploring code
 

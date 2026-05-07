@@ -1,6 +1,6 @@
-# Token Savings: How CodexCLI Measures AI Agent Efficiency
+# Token Savings: How Reverie Measures AI Agent Efficiency
 
-CodexCLI tracks how much work it saves AI agents by providing stored knowledge instead of forcing them to explore the codebase from scratch. This document explains every metric in `ccli stats`, how the estimates are calculated, why the methodology works, and where it falls short.
+Reverie tracks how much work it saves AI agents by providing stored knowledge instead of forcing them to explore the codebase from scratch. This document explains every metric in `rvr stats`, how the estimates are calculated, why the methodology works, and where it falls short.
 
 ## Table of Contents
 
@@ -33,13 +33,13 @@ CodexCLI tracks how much work it saves AI agents by providing stored knowledge i
 
 AI agents (Claude Code, Copilot, Cursor, ChatGPT, etc.) spend a significant portion of their token budget on **exploration** — reading files, searching codebases, and reasoning about what they find. Every session often repeats the same exploration: "Where is the MCP server?" "What's the build command?" "What conventions does this project follow?"
 
-CodexCLI stores the answers to these questions. When an agent calls `codex_get files.mcp` and gets back `src/mcp-server.ts — MCP server, 20 tools, audit/telemetry wrapper`, that one call replaces what would have been 3-5 tool calls (glob for files, grep for patterns, read to confirm).
+Reverie stores the answers to these questions. When an agent calls `codex_get files.mcp` and gets back `src/mcp-server.ts — MCP server, 20 tools, audit/telemetry wrapper`, that one call replaces what would have been 3-5 tool calls (glob for files, grep for patterns, read to confirm).
 
 The question is: **how do we measure that value?**
 
 ## The Stats Output
 
-Running `ccli stats` (or `codex_stats` via MCP) produces a token savings section:
+Running `rvr stats` (or `codex_stats` via MCP) produces a token savings section:
 
 ```
 Token savings:
@@ -127,7 +127,7 @@ Avg latency:       2ms per call
 
 **What it measures:** The average wall-clock time to execute a tool call, from handler entry to response.
 
-**Why it matters:** CodexCLI should be near-instant. If latency creeps up, it might indicate file locking contention or a very large data store.
+**Why it matters:** Reverie should be near-instant. If latency creeps up, it might indicate file locking contention or a very large data store.
 
 ### Est. Tokens Saved
 
@@ -147,11 +147,11 @@ Est. tokens saved: ~47.2K (agent tool calls avoided by using stored knowledge)
 Delivery cost:   ~12.3K tokens (context delivered to agent)
 ```
 
-**What it measures:** The token cost of CodexCLI itself — the data it pushes into the agent's context window on cache hits. Every `codex_context` or `codex_get` hit returns data that consumes agent tokens.
+**What it measures:** The token cost of Reverie itself — the data it pushes into the agent's context window on cache hits. Every `codex_context` or `codex_get` hit returns data that consumes agent tokens.
 
 **How it's calculated:** `sum(responseSize for all hit reads) / 4`
 
-**Why it matters:** Token savings aren't free. If CodexCLI delivers 50KB of context but only saves the agent from 30KB of exploration, the net effect is negative. Delivery cost creates a natural pressure to keep the knowledge base lean and high-signal. Storing 500 low-value entries inflates delivery cost and erodes net savings.
+**Why it matters:** Token savings aren't free. If Reverie delivers 50KB of context but only saves the agent from 30KB of exploration, the net effect is negative. Delivery cost creates a natural pressure to keep the knowledge base lean and high-signal. Storing 500 low-value entries inflates delivery cost and erodes net savings.
 
 ### Net Savings
 
@@ -204,7 +204,7 @@ When an agent calls `codex_get files.mcp` and gets an answer, it skips the explo
 
 ```mermaid
 flowchart LR
-    subgraph without ["Without CodexCLI (~2,000 tokens)"]
+    subgraph without ["Without Reverie (~2,000 tokens)"]
         direction TB
         W1["1. Glob src/**/*.ts → 50+ files"] --> W2["2. Grep for 'MCP' → 10 matches"]
         W2 --> W3["3. Read src/mcp-server.ts → 1,400 lines"]
@@ -212,7 +212,7 @@ flowchart LR
         W4 --> W5["'This is the MCP server'"]
     end
 
-    subgraph with ["With CodexCLI (~50 tokens)"]
+    subgraph with ["With Reverie (~50 tokens)"]
         direction TB
         C1["1. codex_get files.mcp"] --> C2["'src/mcp-server.ts — MCP server'"]
     end
@@ -244,9 +244,9 @@ The values are intentionally conservative. A real `arch.*` lookup might save 5,0
 
 ### Miss-Path Calibration
 
-The static multipliers above are educated guesses. CodexCLI replaces them with **observed costs** as it collects real data from cache misses.
+The static multipliers above are educated guesses. Reverie replaces them with **observed costs** as it collects real data from cache misses.
 
-**How it works:** When a `codex_get` or `codex_search` misses (returns no data), CodexCLI opens a "miss window" for that session and namespace. It tracks subsequent tool calls — the exploration the agent does to find the answer — until one of three things happens:
+**How it works:** When a `codex_get` or `codex_search` misses (returns no data), Reverie opens a "miss window" for that session and namespace. It tracks subsequent tool calls — the exploration the agent does to find the answer — until one of three things happens:
 
 | Resolution | Trigger | Meaning |
 |------------|---------|---------|
@@ -256,7 +256,7 @@ The static multipliers above are educated guesses. CodexCLI replaces them with *
 
 The exploration cost for each closed miss window is `sum(responseSize of all calls in the window) / 4` — the tokens the agent actually consumed while searching.
 
-**Calibration threshold:** Once a namespace accumulates **5 or more writeback resolutions**, CodexCLI switches from the static multiplier to the **median observed cost** for that namespace. The `[observed, n=12]` tag in the stats output indicates this.
+**Calibration threshold:** Once a namespace accumulates **5 or more writeback resolutions**, Reverie switches from the static multiplier to the **median observed cost** for that namespace. The `[observed, n=12]` tag in the stats output indicates this.
 
 ```mermaid
 flowchart TD
@@ -283,7 +283,7 @@ flowchart TD
 
 **Why only writebacks?** A `writeback` resolution means the agent completed a full miss→explore→find→store cycle. That's a clean measurement of exploration cost. `moved_on` and `timeout` are noisy — the agent may have partially explored or given up — and are excluded from calibration.
 
-Miss-path records are stored in `~/.codexcli/miss-paths.jsonl` and can be cleared with `ccli reset miss-paths` or `codex_reset type:"miss-paths"`.
+Miss-path records are stored in `~/.codexcli/miss-paths.jsonl` and can be cleared with `rvr reset miss-paths` or `codex_reset type:"miss-paths"`.
 
 ### Bootstrap (codex_context) Estimation
 
@@ -383,7 +383,7 @@ flowchart LR
     end
 
     subgraph analysis ["Analysis"]
-        STATS["ccli stats / codex_stats
+        STATS["rvr stats / codex_stats
         → token savings"]
     end
 
@@ -479,7 +479,7 @@ CLI tool calls (as opposed to MCP) don't always log `responseSize`, so CLI-only 
 
 ### No A/B comparison
 
-The gold standard would be measuring actual token usage in sessions with and without CodexCLI. The current approach estimates the counterfactual ("what would the agent have done?") rather than measuring it directly.
+The gold standard would be measuring actual token usage in sessions with and without Reverie. The current approach estimates the counterfactual ("what would the agent have done?") rather than measuring it directly.
 
 ### Misses aren't penalized
 

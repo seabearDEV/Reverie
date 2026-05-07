@@ -60,7 +60,7 @@ Every entry gets an automatic timestamp (Unix ms) when created or updated:
 ```
 
 You never edit `_meta` directly. It powers two features:
-- **Staleness detection** — `ccli stale` surfaces entries not updated in N days
+- **Staleness detection** — `rvr stale` surfaces entries not updated in N days
 - **Age tags** — `codex_context` marks entries older than 30 days so agents know what might be outdated
 
 ### `aliases` — shortcuts for common lookups
@@ -77,7 +77,7 @@ Aliases map short names to full dot-notation paths:
 }
 ```
 
-When you run `ccli get mcp`, the alias resolves to `arch.mcp`. This works in the CLI, MCP tools, and interpolation references. Aliases save keystrokes for entries you access frequently.
+When you run `rvr get mcp`, the alias resolves to `arch.mcp`. This works in the CLI, MCP tools, and interpolation references. Aliases save keystrokes for entries you access frequently.
 
 **Important:** aliases always win in key resolution. If you have both an alias `mcp -> arch.mcp` and an entry at `mcp.something`, the alias takes precedence. Avoid naming aliases the same as top-level namespaces.
 
@@ -93,11 +93,11 @@ Mark commands that should prompt before execution:
 }
 ```
 
-When `ccli run commands.release` is called, the user gets a confirmation prompt before the command executes. This is useful for deploy scripts, destructive operations, or anything you don't want to fire accidentally.
+When `rvr run commands.release` is called, the user gets a confirmation prompt before the command executes. This is useful for deploy scripts, destructive operations, or anything you don't want to fire accidentally.
 
 ### `_schema` — custom namespace validation
 
-By default, `ccli lint` validates that all entries use one of the 8 recommended namespaces. If your project needs additional namespaces, declare them here:
+By default, `rvr lint` validates that all entries use one of the 8 recommended namespaces. If your project needs additional namespaces, declare them here:
 
 ```json
 {
@@ -107,11 +107,11 @@ By default, `ccli lint` validates that all entries use one of the 8 recommended 
 }
 ```
 
-Custom namespaces are merged with the defaults — they extend, not replace. If you don't need custom namespaces, omit `_schema` entirely (the codexCLI project's own file doesn't use it).
+Custom namespaces are merged with the defaults — they extend, not replace. If you don't need custom namespaces, omit `_schema` entirely (the Reverie project's own file doesn't use it).
 
 ## The namespace schema
 
-CodexCLI recommends 8 namespaces. Each has a specific purpose — this matters because agents use namespace names to decide *where to look* and *what to store*.
+Reverie recommends 8 namespaces. Each has a specific purpose — this matters because agents use namespace names to decide *where to look* and *what to store*.
 
 ### `project.*` — identity and goals
 
@@ -142,7 +142,7 @@ Build, test, lint, deploy, and any other commands worth remembering.
 | `commands.deploy` | Deploy to production |
 | `commands.check` | Full validation pipeline |
 
-**Why it matters:** Agents can execute these via `codex_run`. Developers can run them via `ccli run`. Having commands stored means nobody has to remember or look up the exact invocation.
+**Why it matters:** Agents can execute these via `codex_run`. Developers can run them via `rvr run`. Having commands stored means nobody has to remember or look up the exact invocation.
 
 **Good:** `"npm run build && npm run lint && npm test"` (the full pipeline, ready to execute)
 **Bad:** `"run the build"` (not executable)
@@ -233,7 +233,7 @@ Dependencies that are worth documenting because of *why* they were chosen, versi
 
 ### `system.*` — internal configuration
 
-Reserved for CodexCLI's own configuration, like custom LLM instructions.
+Reserved for Reverie's own configuration, like custom LLM instructions.
 
 | Key | Purpose |
 |---|---|
@@ -296,7 +296,7 @@ Here's a minimal `.codexcli.json` for a new project:
 
 Four namespaces, five entries, and an agent already knows: what the project is, how to build and test it, how errors should look, and why auth works the way it does. That's enough to be useful on day one. Add `arch.*`, `files.*`, and `deps.*` entries as you discover things worth keeping.
 
-The codexCLI project's own [.codexcli.json](../.codexcli.json) is the reference implementation — 53 entries across all 7 namespaces, with aliases for common lookups and confirm metadata for the release command. Use it as a model for comprehensive coverage.
+The Reverie project's own [.codexcli.json](../.codexcli.json) is the reference implementation — 53 entries across all 7 namespaces, with aliases for common lookups and confirm metadata for the release command. Use it as a model for comprehensive coverage.
 
 ## Bootstrap tiers
 
@@ -330,27 +330,27 @@ If even after shedding everything sheddable the response still exceeds budget (b
 
 ```bash
 # Read current budget
-ccli config get bootstrap_max_response_bytes
+rvr config get bootstrap_max_response_bytes
 
 # Raise the cap (example: 100KB for hosts with larger tool-result limits)
-ccli config set bootstrap_max_response_bytes 102400
+rvr config set bootstrap_max_response_bytes 102400
 ```
 
 For test/integration workflows, `CODEX_BOOTSTRAP_MAX_BYTES` env var overrides the config.
 
 ## Validation
 
-Run `ccli lint` to check that all entries follow the namespace schema:
+Run `rvr lint` to check that all entries follow the namespace schema:
 
 ```bash
 # Check project entries
-ccli lint
+rvr lint
 
 # Check global entries
-ccli lint -G
+rvr lint -G
 
 # JSON output for CI integration
-ccli lint --json
+rvr lint --json
 ```
 
 Lint warns but doesn't block — it's guidance, not a gate. If your project genuinely needs namespaces outside the defaults, add them via `_schema.namespaces` rather than ignoring the warnings.

@@ -1,6 +1,6 @@
 # Release Checklist
 
-Manual steps for cutting a new codexCLI release. Follow these in order.
+Manual steps for cutting a new Reverie release. Follow these in order.
 
 ## Pre-tag verification
 
@@ -68,21 +68,21 @@ After CI publishes, do these manual checks against the released binary. The exac
 ### Generic smoke (every release)
 
 ```bash
-ccli --version          # prints the new version
-ccli info               # data path, config path, completions status
-ccli set smoke.test "hello"
-ccli get smoke.test     # → hello
-ccli get smoke.test -p  # plain output, no ANSI codes
-ccli find smoke         # finds the entry
-ccli remove smoke.test -f
-ccli context            # shows project context summary
+rvr --version          # prints the new version
+rvr info               # data path, config path, completions status
+rvr set smoke.test "hello"
+rvr get smoke.test     # → hello
+rvr get smoke.test -p  # plain output, no ANSI codes
+rvr find smoke         # finds the entry
+rvr remove smoke.test -f
+rvr context            # shows project context summary
 ```
 
 ### MCP server smoke
 
 ```bash
 # Start the MCP server in dev mode and verify it responds to listTools
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | cclid-mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | rvr-dev-mcp
 ```
 
 ### Per-release breaking changes
@@ -92,22 +92,22 @@ the deprecation/error fires.
 
 #### v1.11.0
 
-- [ ] `ccli get foo --raw` errors with "unknown option" (the deprecated `--raw` was removed)
-- [ ] `ccli get foo -p` works (the new `-p` short for `--plain`)
-- [ ] `ccli context -p` works (same)
-- [ ] `ccli stats -d` errors with "unknown option" (moved to `-D`)
-- [ ] `ccli stats -D` works (the new short for `--detailed`)
-- [ ] `ccli stats -j` works (newly-added consistency short for `--json`)
-- [ ] `CODEX_DATA_DIR=./relative ccli info` errors with "must be an absolute path"
-- [ ] `CODEX_DATA_DIR=/tmp/codex-test ccli info` shows `(CODEX_DATA_DIR)` annotation on the Data line
-- [ ] `ccli get -a` and `ccli rename -a foo bar` and `ccli remove -a foo` still work (legacy back-compat) but don't appear in `ccli get --help`
+- [ ] `rvr get foo --raw` errors with "unknown option" (the deprecated `--raw` was removed)
+- [ ] `rvr get foo -p` works (the new `-p` short for `--plain`)
+- [ ] `rvr context -p` works (same)
+- [ ] `rvr stats -d` errors with "unknown option" (moved to `-D`)
+- [ ] `rvr stats -D` works (the new short for `--detailed`)
+- [ ] `rvr stats -j` works (newly-added consistency short for `--json`)
+- [ ] `CODEX_DATA_DIR=./relative rvr info` errors with "must be an absolute path"
+- [ ] `CODEX_DATA_DIR=/tmp/codex-test rvr info` shows `(CODEX_DATA_DIR)` annotation on the Data line
+- [ ] `rvr get -a` and `rvr rename -a foo bar` and `rvr remove -a foo` still work (legacy back-compat) but don't appear in `rvr get --help`
 
 #### v1.14.0
 
-- [ ] `cd /tmp && CODEX_NO_PROJECT=1 ccli set foo bar` refuses with `PROJECT_UNRESOLVED`-shaped error including resolver-chain diagnostic and recovery actions (#99)
-- [ ] `CODEX_BOOTSTRAP_MAX_BYTES=500 ccli context -p` (in a populated repo) prepends a `[trimmed: …]` notice naming `files.*` / `arch.*` / `context.*` with byte counts; if even after shedding it's still over budget, prepends a second `[warning: codex_context payload still exceeds budget …]` notice with the expanded never-shed list (#100)
-- [ ] `CODEX_BOOTSTRAP_MAX_BYTES=500 ccli context -p --tier full` (in the same repo) bypasses the shed entirely — no trimmed notice, full payload renders (#100)
-- [ ] `ccli config set bootstrap_max_response_bytes 102400` accepts the value; `ccli config get bootstrap_max_response_bytes` returns it; an invalid value (negative, non-integer) is rejected with a clear error
+- [ ] `cd /tmp && CODEX_NO_PROJECT=1 rvr set foo bar` refuses with `PROJECT_UNRESOLVED`-shaped error including resolver-chain diagnostic and recovery actions (#99)
+- [ ] `CODEX_BOOTSTRAP_MAX_BYTES=500 rvr context -p` (in a populated repo) prepends a `[trimmed: …]` notice naming `files.*` / `arch.*` / `context.*` with byte counts; if even after shedding it's still over budget, prepends a second `[warning: codex_context payload still exceeds budget …]` notice with the expanded never-shed list (#100)
+- [ ] `CODEX_BOOTSTRAP_MAX_BYTES=500 rvr context -p --tier full` (in the same repo) bypasses the shed entirely — no trimmed notice, full payload renders (#100)
+- [ ] `rvr config set bootstrap_max_response_bytes 102400` accepts the value; `rvr config get bootstrap_max_response_bytes` returns it; an invalid value (negative, non-integer) is rejected with a clear error
 - [ ] (manual via MCP client) Three `codex_set` calls to the same key within 30 minutes — third response includes a `warning:` line naming the count and time-since-first-write (#101)
 
 ## Rollback (if a release goes wrong)

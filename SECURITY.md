@@ -11,7 +11,7 @@ Only the latest minor release receives security updates.
 
 ## Reporting a Vulnerability
 
-Please report security vulnerabilities through [GitHub's private security advisory feature](https://github.com/seabearDEV/codexCLI/security/advisories/new).
+Please report security vulnerabilities through [GitHub's private security advisory feature](https://github.com/seabearDEV/reverie/security/advisories/new).
 
 **Do not open a public issue for security vulnerabilities.**
 

@@ -50,21 +50,21 @@ describe('readPasswordFile', () => {
 
 describe('askPassword non-interactive paths', () => {
   let tmpDir: string;
-  const originalEnv = process.env.CCLI_PASSWORD;
+  const originalEnv = process.env.RVR_PASSWORD;
   let stderrWrite: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-pwtest-'));
-    delete process.env.CCLI_PASSWORD;
+    delete process.env.RVR_PASSWORD;
     stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     if (originalEnv !== undefined) {
-      process.env.CCLI_PASSWORD = originalEnv;
+      process.env.RVR_PASSWORD = originalEnv;
     } else {
-      delete process.env.CCLI_PASSWORD;
+      delete process.env.RVR_PASSWORD;
     }
     stderrWrite.mockRestore();
   });
@@ -72,25 +72,25 @@ describe('askPassword non-interactive paths', () => {
   it('passwordFile option takes precedence over env and TTY', async () => {
     const file = path.join(tmpDir, 'pw');
     fs.writeFileSync(file, 'from-file', { mode: 0o600 });
-    process.env.CCLI_PASSWORD = 'from-env';
+    process.env.RVR_PASSWORD = 'from-env';
     const result = await askPassword('Password: ', { passwordFile: file });
     expect(result).toBe('from-file');
     // No stderr warning for explicit file flag — the user chose it deliberately.
     const envWarning = stderrWrite.mock.calls.some(
-      (call) => typeof call[0] === 'string' && call[0].includes('CCLI_PASSWORD'),
+      (call) => typeof call[0] === 'string' && call[0].includes('RVR_PASSWORD'),
     );
     expect(envWarning).toBe(false);
   });
 
-  it('CCLI_PASSWORD env var returns the password and emits a stderr warning', async () => {
-    process.env.CCLI_PASSWORD = 'envpass';
+  it('RVR_PASSWORD env var returns the password and emits a stderr warning', async () => {
+    process.env.RVR_PASSWORD = 'envpass';
     const result = await askPassword('Password: ');
     expect(result).toBe('envpass');
     // Warning fires. (May have already fired in an earlier test in this file,
     // thanks to the module-local "shown once" flag — so check for presence-or-
     // absence rather than requiring it every call.)
     const warningTextSeen = stderrWrite.mock.calls.some(
-      (call) => typeof call[0] === 'string' && call[0].includes('CCLI_PASSWORD'),
+      (call) => typeof call[0] === 'string' && call[0].includes('RVR_PASSWORD'),
     );
     // Either this is the first env-read in the process (warning fires) or a
     // later one (no warning). Both are valid — we just assert the env value
@@ -103,7 +103,7 @@ describe('askPassword non-interactive paths', () => {
     const realIsTTY = process.stdin.isTTY;
     Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
     try {
-      await expect(askPassword('Password: ')).rejects.toThrow(/--password-file|CCLI_PASSWORD/);
+      await expect(askPassword('Password: ')).rejects.toThrow(/--password-file|RVR_PASSWORD/);
     } finally {
       Object.defineProperty(process.stdin, 'isTTY', { value: realIsTTY, configurable: true });
     }

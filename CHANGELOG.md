@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Rebrand: codexCLI → Reverie
+
+**The product is being renamed from codexCLI to Reverie ahead of the v1.0.0 launch.** The next release ships as Reverie v1.0.0 (new product launch, not codexCLI v2.0.0). Git history continues — this is a rename, not a fork — so existing dogfooding case studies and project memory are preserved.
+
+What's changing:
+
+- **Package name**: `codexcli` → `@seabear/reverie` (npm)
+- **Binary name**: `ccli` → `rvr` (Homebrew / GitHub Releases binary). Dev binaries: `cclid` → `rvr-dev`, `cclid-mcp` → `rvr-dev-mcp` (npm `bin`)
+- **Repository**: `seabearDEV/codexCLI` → `seabearDEV/reverie` (GitHub auto-redirects from the old URL)
+- **Homebrew tap**: `seabearDEV/homebrew-ccli` → `seabearDEV/homebrew-reverie`
+- **Brew formula**: `ccli.rb` / `ccli-beta.rb` → `rvr.rb` / `rvr-beta.rb`. Class names `Ccli` / `CcliBeta` → `Rvr` / `RvrBeta`
+- **MCP server identifier**: `codexcli` → `reverie` in client config blocks (the key name in `mcpServers`)
+- **Env var**: `CCLI_PASSWORD` → `RVR_PASSWORD` (CI/scripting password fallback)
+
+What's **NOT** changing (load-bearing data-layer naming, per `project.identity` convention):
+
+- **MCP tool names** keep the `codex_*` prefix — `codex_get`, `codex_set`, `codex_context`, `codex_run`, etc. They manipulate the codex data structure, not the product.
+- **The codex** (lowercase) remains the generic noun for the data store / project knowledge layer. Agents talk to "the codex"; users invoke `rvr`.
+- **`.codexcli/` directory** is the per-project store on disk. Existing project stores remain readable without migration. The data format is unchanged.
+- **`~/.codexcli/`** is the global store / audit log location.
+- **`$codexcli` envelope wrapper key** in exports — preserves round-trip compatibility with files exported from older versions.
+- **`CODEX_*` env vars** (`CODEX_DATA_DIR`, `CODEX_PROJECT`, `CODEX_NO_PROJECT`, `CODEX_PROJECT_DIR`, `CODEX_AGENT_NAME`, `CODEX_BOOTSTRAP_MAX_BYTES`, `CODEX_DISABLE_LOCKING`).
+
+### Migration
+
+For most users, migration is automatic:
+
+- **Existing `.codexcli/` project stores** keep working. Same file format, same on-disk layout. Bootstrap, get, set, run — all unchanged.
+- **GitHub URLs** auto-redirect from `seabearDEV/codexCLI` → `seabearDEV/reverie`. Bookmarks and existing PR/issue links continue to resolve.
+- **Brew installs** transition once the tap is renamed: `brew tap seabearDEV/reverie && brew install rvr`. Existing `brew install seabeardev/ccli/ccli` users will need to migrate when convenient (the old tap URL keeps working via redirect, but installs the legacy `ccli` binary).
+- **Removed**: the hidden `ccli completions <bash|zsh|install>` back-compat shim. v1.0.0 is a fresh product launch — re-run `rvr config completions install` to regenerate shell completions for the new binary name.
+
+### Phase status (private to project store)
+
+Tracked in `project.releasePlan` in the repo's `.codexcli/`:
+
+- **Phase 1** (pre-flight): COMPLETE — domain/trademark clearance, Bun runtime validate (PASS).
+- **Phase 2** (technical foundation — Bun commit-phase, short-flag audit): pending.
+- **Phase 3** (rebrand sweep — this release): in progress.
+- **Phase 4** (commercial infrastructure — SeaBear Studios product page, consulting tier): pending.
+- **Phase 5** (launch announcement, Dogfooding Part Three blog): pending.
+
 ## [1.14.0] - 2026-05-05
 
 ### Breaking changes

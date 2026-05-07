@@ -183,7 +183,7 @@ async function promptAndEncrypt(value: string, passwordFile?: string): Promise<s
   // Non-interactive sources (env var, --password-file) read the same value
   // twice and would always match — no confirm step needed. Skip it when a
   // non-interactive source is active so users don't see a redundant prompt.
-  if (passwordFile || process.env.CCLI_PASSWORD) {
+  if (passwordFile || process.env.RVR_PASSWORD) {
     return encryptValue(value, password);
   }
   const confirmPw = await askPassword('Confirm password: ');

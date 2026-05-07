@@ -1,7 +1,7 @@
 # Design: write-amp guard on codex_set (#101)
 
-**Issue:** [#101](https://github.com/seabearDEV/codexCLI/issues/101)
-**Status:** SHIPPED 2026-05-05 via [PR #108](https://github.com/seabearDEV/codexCLI/pull/108) (merge `d18923f`)
+**Issue:** [#101](https://github.com/seabearDEV/reverie/issues/101)
+**Status:** SHIPPED 2026-05-05 via [PR #108](https://github.com/seabearDEV/reverie/pull/108) (merge `d18923f`)
 **Driving evidence:** `docs/dataset-2026-05-05-findings.md` §1b, `context.writeAmpPattern` codex entry
 **Playbook:** mirrors the #91 / #99 / #100 design-first treatment
 **Bundling:** ships in the same PR as #100 (theme E guardrails)
@@ -163,7 +163,7 @@ These ship in one PR because they share the telemetry/audit field extension surf
 1. **Schema + config.** `bootstrap.maxResponseBytes` config knob (#100). No config for #101 (in-memory only).
 2. **Pure functions.** `(entries, budget, tier) → { kept, shedSummary }` (#100); `recordWrite(sessionId, key, now) → result` (#101). Both testable in isolation, no MCP/CLI plumbing required.
 3. **Telemetry/audit field additions.** Both `degraded`/`shedNamespaces` and `writeAmpWarning`/`writeAmpCount` land in one schema commit so `TelemetryExtras` and `AuditEntry` change once.
-4. **Wire #100** into `codex_context` MCP handler + `ccli context` CLI command. Notice rendering, telemetry capture.
+4. **Wire #100** into `codex_context` MCP handler + `rvr context` CLI command. Notice rendering, telemetry capture.
 5. **Wire #101** into `codex_set` MCP handler. Warning rendering, telemetry capture.
 6. **Tests** for both, mirroring the test plans above.
 7. **CHANGELOG** with two entries under `### Added` (or `### Changed` for #100 if degraded responses count as a behavior change for `tier: "standard"`/`"essential"`).

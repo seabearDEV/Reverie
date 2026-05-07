@@ -76,7 +76,7 @@ The FA-iOS store needs an audit pass independent of any tool change:
 - 30 `context.*` entries — keep the load-bearing ones (e.g. `ios26_accent_color_regression`, `swiftlint_config_strategy`, `sourcekit_recovery`, `uikit_canimport_pattern`, `next_session`); audit the rest.
 - The pending FA-iOS repo move (mentioned in `context.next_session`) is a natural inflection point to do this cleanup before re-pinning to the new repo's `.codexcli/`.
 
-This is FA-iOS work, not codexCLI work — but it's evidence for improvement #1 above and worth re-checking after any tool changes land.
+This is FA-iOS work, not Reverie work — but it's evidence for improvement #1 above and worth re-checking after any tool changes land.
 
 ## Reproduction
 
@@ -91,7 +91,7 @@ cd ~/Projects/github.com/seabearDEV/sandbox/font-awesome/font-awesome-ios
 The exact spill file from the triggering session (preserved as evidence):
 
 ```
-~/.claude/projects/-Users-kh-Projects-github-com-seabearDEV-sandbox-font-awesome-font-awesome-ios/8a5be618-5ce4-44b9-89f3-f7fed469fd3e/tool-results/mcp-codexcli-codex_context-1777990844599.txt
+~/.claude/projects/-Users-kh-Projects-github-com-seabearDEV-sandbox-font-awesome-font-awesome-ios/8a5be618-5ce4-44b9-89f3-f7fed469fd3e/tool-results/mcp-reverie-codex_context-1777990844599.txt
 ```
 
 ## Resolution
