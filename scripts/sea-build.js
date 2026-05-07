@@ -62,34 +62,41 @@ if (!target) {
 
 const BINARY = path.join(DIST, outputName);
 
-// Locate bun. PATH first, then ~/.bun/bin/bun for installer-only setups.
-function findBun() {
-  try { return execFileSync('which', ['bun'], { encoding: 'utf8' }).trim(); } catch {}
-  const fallback = path.join(os.homedir(), '.bun/bin/bun');
-  if (fs.existsSync(fallback)) return fallback;
-  console.error('Error: bun not found. Install via https://bun.sh or `brew install bun`.');
-  process.exit(1);
+// Run bun. Try PATH first (works in CI where setup-bun is wired up, and on
+// local shells with bun on PATH). Fall back to ~/.bun/bin/bun for installer-
+// only setups (~/.bun not yet exported into PATH). Don't use `which` — its
+// output on Windows Git Bash is POSIX-style and can't be spawned by Node.
+function runBun(args) {
+  try {
+    return execFileSync('bun', args, { stdio: 'inherit', cwd: ROOT });
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    const fallback = path.join(os.homedir(), '.bun/bin/bun');
+    if (fs.existsSync(fallback)) {
+      return execFileSync(fallback, args, { stdio: 'inherit', cwd: ROOT });
+    }
+    console.error('Error: bun not found on PATH or at ~/.bun/bin/bun. Install via https://bun.sh.');
+    process.exit(1);
+  }
 }
-const BUN = findBun();
 
 fs.mkdirSync(DIST, { recursive: true });
 
 console.log(`\n=== bun build --compile (target: ${target}) ===`);
-execFileSync(BUN, [
+runBun([
   'build',
   path.join(ROOT, 'src/index.ts'),
   '--compile',
   `--target=${target}`,
   `--outfile=${BINARY}`,
-], { stdio: 'inherit', cwd: ROOT });
+]);
 
-// Codesign on macOS so Gatekeeper doesn't block the unsigned binary.
-// Only when the host is darwin AND the target is darwin (codesign isn't
-// available on non-darwin hosts; cross-compiled darwin binaries get signed
-// after lipo on the macOS runner per the CI workflow).
+// Codesign on macOS. --force re-signs even if bun already produced a signed
+// binary (it does for cross-compiled darwin-x64). codesign isn't available on
+// non-darwin hosts.
 if (platform === 'darwin' && target.includes('darwin')) {
-  console.log(`\n=== codesign --sign - ${outputName} ===`);
-  execFileSync('codesign', ['--sign', '-', BINARY], { stdio: 'inherit', cwd: ROOT });
+  console.log(`\n=== codesign --force --sign - ${outputName} ===`);
+  execFileSync('codesign', ['--force', '--sign', '-', BINARY], { stdio: 'inherit', cwd: ROOT });
 }
 
 console.log(`\nDone! Binary: ${BINARY}`);
