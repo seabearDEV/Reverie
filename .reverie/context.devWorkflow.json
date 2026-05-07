@@ -1,7 +1,7 @@
 {
-  "value": "Use cclid (dev) / cclid-mcp (MCP dev) for local testing — never ccli in dev. Release: git tag triggers CI.",
+  "value": "Use rvr-dev (CLI) / rvr-dev-mcp (MCP) for local testing — never the prod `rvr` binary in dev. Beta channel is `rvr-beta` (currently 1.0.0-beta.1; this project's own .mcp.json points its MCP server at `rvr-beta`). Release: git tag triggers CI.\n\nRenamed from cclid / cclid-mcp on 2026-05-07 as part of clearing C-bucket residue post-rebrand. See project.storeResidueC for the broader sweep.",
   "meta": {
     "created": 1775358827618,
-    "updated": 1775358827618
+    "updated": 1778163744987
   }
 }
