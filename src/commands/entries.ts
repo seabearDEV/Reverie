@@ -604,11 +604,11 @@ export async function editEntry(key: string, options: { decrypt?: boolean, globa
       const isWindows = process.platform === 'win32';
       const shell = isWindows ? 'cmd' : (process.env.SHELL ?? '/bin/sh');
       const shellArgs = isWindows
-        ? ['/c', `${editor} "%CODEX_TMPFILE%"`]
-        : ['-c', `${editor} "$CODEX_TMPFILE"`];
+        ? ['/c', `${editor} "%RVR_TMPFILE%"`]
+        : ['-c', `${editor} "$RVR_TMPFILE"`];
       const result = spawnSync(shell, shellArgs, {
         stdio: 'inherit',
-        env: { ...process.env, CODEX_TMPFILE: tmpFile },
+        env: { ...process.env, RVR_TMPFILE: tmpFile },
       });
       if (result.error) throw result.error;
       if (result.status !== 0 && result.status !== null) {

@@ -132,7 +132,7 @@ export function showHelp(): void {
   cmd('info',     '',   '',                   'Show version, stats, and storage paths');
   cmd('alias',    '',   '<subcommand>',       'Manage key aliases');
   cmd('confirm',  '',   '<subcommand>',       'Manage run confirmation requirements');
-  cmd('init',     '',   '',                   'Initialize project (.codexcli.json + CLAUDE.md)');
+  cmd('init',     '',   '',                   'Initialize project (.reverie/ + CLAUDE.md)');
   cmd('stale',    '',   '[days]',             'Show entries not updated in N days');
   cmd('lint',     '',   '',                   'Check entries against namespace schema');
   cmd('stats',    '',   '',                   'View usage telemetry and trends');
@@ -239,7 +239,7 @@ export function showExamples(): void {
   ex(`${b} ${g('data reset')} all ${y('-f')}`, '# Clear everything without confirmation');
 
   section('PROJECT-SCOPED DATA:');
-  ex(`${b} ${g('init')}`, '# Create .codexcli.json in the current directory');
+  ex(`${b} ${g('init')}`, '# Initialize .reverie/ in the current directory');
   ex(`${b} ${g('init')} ${y('--remove')}`, '# Remove the project file');
   ex(`${b} ${g('get')}`, '# Show project entries (when inside a project)');
   ex(`${b} ${g('get')} ${y('-G')}`, '# Show global entries only');

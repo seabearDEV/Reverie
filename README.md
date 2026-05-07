@@ -2,7 +2,7 @@
 
 > Bicameral memory for AI-assisted development.
 
-A CLI + MCP server that bootstraps persistent project context for any AI agent — Claude Code, Copilot, ChatGPT, Cursor, and beyond. Agents read the project's "other voice" at session start, write back what they learn, and the codex grows session over session.
+A CLI + MCP server that bootstraps persistent project context for any AI agent — Claude Code, Copilot, ChatGPT, Cursor, and beyond. Agents read the project's "other voice" at session start, write back what they learn, and Reverie grows session over session.
 
 A SeaBear Studios product · [seabear.dev/reverie](https://seabear.dev/reverie)
 

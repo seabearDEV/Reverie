@@ -25,7 +25,7 @@ Make the knowledge base aware of the code it describes, and easier to navigate.
 Make the knowledge base useful for teams, not just solo developers.
 
 - **Entry attribution** — track who/what last modified each entry ([#45](https://github.com/seabearDEV/reverie/issues/45))
-- **Merge conflict handling** — custom merge driver or tooling for `.codexcli.json` ([#46](https://github.com/seabearDEV/reverie/issues/46))
+- **Merge conflict handling** — custom merge driver or tooling for `.reverie/` ([#46](https://github.com/seabearDEV/reverie/issues/46))
 - **`rvr diff`** — compare local vs committed entries ([#47](https://github.com/seabearDEV/reverie/issues/47))
 
 ### Platform & Distribution
@@ -72,7 +72,7 @@ Staleness detection, schema validation (`rvr lint`), regex search, audit log, ti
 `${key:-default}`/`${key:?error}`, MCP telemetry, backup rotation, init scaffolding.
 
 ### v0.8.0 — GenAI Knowledge Base
-`reverie_context` for one-call bootstrap, recommended schema, project-scoped `.codexcli.json`.
+`reverie_context` for one-call bootstrap, recommended schema, project-scoped `.reverie/`.
 
 ### v0.6.0 — v0.7.0 — Unified Store
 Consolidated data format, project/global scope resolution, auto-migration.

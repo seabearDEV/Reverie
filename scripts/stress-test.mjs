@@ -6,8 +6,8 @@
 // to exercise concurrent-writer paths, measures per-call timings, and reports
 // any anomalies (errors, slow calls, slowdown over time).
 //
-// Uses an isolated CODEX_PROJECT + CODEX_DATA_DIR pointing at a temp dir so
-// the real .codexcli/ store and audit log are untouched.
+// Uses an isolated RVR_PROJECT + RVR_DATA_DIR pointing at a temp dir so
+// the real .reverie/ store and audit log are untouched.
 //
 // Env knobs:
 //   STRESS_ITERATIONS  number of main-loop iterations            (default 2000)
@@ -41,12 +41,10 @@ const NO_GROWTH = process.env.STRESS_NO_GROWTH === '1';
 const NO_LOG_QUERY = process.env.STRESS_NO_LOG_QUERY === '1';
 
 // --- isolated temp project setup ---------------------------------------------
-const TEMP_DIR = mkdtempSync(join(tmpdir(), 'codexcli-stress-'));
+const TEMP_DIR = mkdtempSync(join(tmpdir(), 'reverie-stress-'));
 const PROJECT_DIR = join(TEMP_DIR, 'project');
-const STORE_DIR = join(PROJECT_DIR, '.codexcli');
+const STORE_DIR = join(PROJECT_DIR, '.reverie');
 mkdirSync(STORE_DIR, { recursive: true });
-// marker file so findProjectFile() resolves cleanly under CODEX_PROJECT
-writeFileSync(join(PROJECT_DIR, '.codexcli.json'), '{}');
 
 let cleanedUp = false;
 function cleanup() {
@@ -61,9 +59,9 @@ process.on('SIGTERM', () => { cleanup(); process.exit(143); });
 
 const isolatedEnv = {
   ...process.env,
-  CODEX_PROJECT: PROJECT_DIR,
-  CODEX_DATA_DIR: TEMP_DIR,
-  CODEX_AGENT_NAME: 'stress-test',
+  RVR_PROJECT: PROJECT_DIR,
+  RVR_DATA_DIR: TEMP_DIR,
+  RVR_AGENT_NAME: 'stress-test',
 };
 
 console.log(`[stress] temp project:  ${PROJECT_DIR}`);
@@ -83,7 +81,7 @@ const transport = new StdioClientTransport({
 });
 
 const client = new Client(
-  { name: 'codexcli-stress-test', version: '1.0.0' },
+  { name: 'reverie-stress-test', version: '1.0.0' },
   { capabilities: {} },
 );
 
@@ -130,7 +128,7 @@ function spawnCliWrite(idx) {
     const child = spawn(
       'node',
       [CLI_ENTRY, 'set', `stress.cli.w${idx}`, `cli-${Date.now()}`],
-      { env: { ...isolatedEnv, CODEX_AGENT_NAME: 'stress-cli' }, stdio: 'ignore' },
+      { env: { ...isolatedEnv, RVR_AGENT_NAME: 'stress-cli' }, stdio: 'ignore' },
     );
     child.on('exit',  (code) => resolveP({ code: code ?? -1, idx }));
     child.on('error', () => resolveP({ code: -1, idx }));
@@ -141,29 +139,29 @@ function spawnCliWrite(idx) {
 console.log(`[stress] pre-populating ${PRE_POPULATE} entries...`);
 for (let i = 0; i < PRE_POPULATE; i++) {
   await client.callTool({
-    name: 'codex_set',
+    name: 'reverie_set',
     arguments: { key: `stress.entry.e${i}`, value: `seed-${i}` },
   });
 }
 await client.callTool({
-  name: 'codex_alias_set',
+  name: 'reverie_alias_set',
   arguments: { alias: 'stress-alpha', key: 'stress.entry.e0' },
 });
 
 // --- weighted op registry ----------------------------------------------------
 const ops = [
-  { w: 30, fn: () => callWithTimeout('codex_get',       { key: `stress.entry.e${randInt(PRE_POPULATE)}` }) },
-  { w: 15, fn: () => callWithTimeout('codex_set',       { key: `stress.entry.e${randInt(PRE_POPULATE)}`, value: `v${Date.now()}-${randInt(10000)}` }) },
-  { w: 10, fn: () => callWithTimeout('codex_find',      { query: 'stress' }) },
-  { w: NO_LOG_QUERY ? 0 : 10, fn: () => callWithTimeout('codex_audit',     { limit: 50, key: 'stress' }) },
-  { w:  5, fn: () => callWithTimeout('codex_context',   { tier: 'standard' }) },
-  { w: NO_LOG_QUERY ? 0 : 5, fn: () => callWithTimeout('codex_stats',     { period: '7d', detailed: true }) },
-  { w:  5, fn: () => callWithTimeout('codex_stale',     { days: 30 }) },
-  { w:  5, fn: () => callWithTimeout('codex_alias_list', {}) },
-  { w:  5, fn: () => callWithTimeout('codex_export',    { type: 'entries' }) },
-  { w:  5, fn: () => callWithTimeout('codex_get',       {}) }, // list all
-  { w: NO_GROWTH ? 0 : 3, fn: () => callWithTimeout('codex_copy',      { source: `stress.entry.e${randInt(PRE_POPULATE)}`, dest: `stress.copy.c${Date.now()}${randInt(10000)}`, force: true }) },
-  { w: NO_GROWTH ? 0 : 2, fn: () => callWithTimeout('codex_alias_set', { alias: `stress-${randInt(1000)}`, key: 'stress.entry.e0' }) },
+  { w: 30, fn: () => callWithTimeout('reverie_get',       { key: `stress.entry.e${randInt(PRE_POPULATE)}` }) },
+  { w: 15, fn: () => callWithTimeout('reverie_set',       { key: `stress.entry.e${randInt(PRE_POPULATE)}`, value: `v${Date.now()}-${randInt(10000)}` }) },
+  { w: 10, fn: () => callWithTimeout('reverie_find',      { query: 'stress' }) },
+  { w: NO_LOG_QUERY ? 0 : 10, fn: () => callWithTimeout('reverie_audit',     { limit: 50, key: 'stress' }) },
+  { w:  5, fn: () => callWithTimeout('reverie_context',   { tier: 'standard' }) },
+  { w: NO_LOG_QUERY ? 0 : 5, fn: () => callWithTimeout('reverie_stats',     { period: '7d', detailed: true }) },
+  { w:  5, fn: () => callWithTimeout('reverie_stale',     { days: 30 }) },
+  { w:  5, fn: () => callWithTimeout('reverie_alias_list', {}) },
+  { w:  5, fn: () => callWithTimeout('reverie_export',    { type: 'entries' }) },
+  { w:  5, fn: () => callWithTimeout('reverie_get',       {}) }, // list all
+  { w: NO_GROWTH ? 0 : 3, fn: () => callWithTimeout('reverie_copy',      { source: `stress.entry.e${randInt(PRE_POPULATE)}`, dest: `stress.copy.c${Date.now()}${randInt(10000)}`, force: true }) },
+  { w: NO_GROWTH ? 0 : 2, fn: () => callWithTimeout('reverie_alias_set', { alias: `stress-${randInt(1000)}`, key: 'stress.entry.e0' }) },
 ];
 const totalW = ops.reduce((s, o) => s + o.w, 0);
 function pickOp() {

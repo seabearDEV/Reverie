@@ -173,7 +173,7 @@ const CLI_TREE: Record<string, CommandDef> = {
       '--dry-run': 'Preview without writing',
     },
     argType: null,
-    description: 'Initialize project (.codexcli.json + CLAUDE.md)',
+    description: 'Initialize project (.reverie/ + CLAUDE.md)',
   },
   stale: {
     flags: { '--json': 'Output as JSON', '-j': 'Output as JSON', '--global': FLAG_DESCRIPTIONS['--global'], '-G': FLAG_DESCRIPTIONS['-G'] },

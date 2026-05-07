@@ -49,7 +49,7 @@ git push origin main
 
 ## Tag and release
 
-The release alias from the codex (`commands.release`) handles this:
+The release alias (`commands.release` in Reverie) handles this:
 
 ```bash
 git push origin main && \
@@ -99,7 +99,7 @@ the deprecation/error fires.
 - [ ] `rvr stats -D` works (the new short for `--detailed`)
 - [ ] `rvr stats -j` works (newly-added consistency short for `--json`)
 - [ ] `RVR_DATA_DIR=./relative rvr info` errors with "must be an absolute path"
-- [ ] `RVR_DATA_DIR=/tmp/codex-test rvr info` shows `(RVR_DATA_DIR)` annotation on the Data line
+- [ ] `RVR_DATA_DIR=/tmp/rvr-test rvr info` shows `(RVR_DATA_DIR)` annotation on the Data line
 - [ ] `rvr get -a` and `rvr rename -a foo bar` and `rvr remove -a foo` still work (legacy back-compat) but don't appear in `rvr get --help`
 
 #### v1.14.0
@@ -130,6 +130,6 @@ an advisory in the next minor version's CHANGELOG.
 
 ## Post-release
 
-- [ ] Update `project.<version>` codex entry (or create the next one) with status
+- [ ] Update `project.<version>` Reverie entry (or create the next one) with status
 - [ ] Close the milestone
 - [ ] Open issues for any deferred items mentioned in the release notes
