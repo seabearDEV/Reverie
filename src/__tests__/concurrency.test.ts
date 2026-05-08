@@ -93,7 +93,7 @@ for (let i = 0; i < count; i++) {
     for (let w = 0; w < WORKERS; w++) {
       promises.push(new Promise<void>((resolve, reject) => {
         try {
-          execSync(`node ${workerScript} ${dataPath} ${w} ${WRITES_PER_WORKER}`, {
+          execSync(`bun ${workerScript} ${dataPath} ${w} ${WRITES_PER_WORKER}`, {
             timeout: 30000,
           });
           resolve();
@@ -196,7 +196,7 @@ for (let i = 0; i < 20; i++) {
 }
 `);
 
-    execSync(`node ${workerScript} ${dataPath}`, { timeout: 10000 });
+    execSync(`bun ${workerScript} ${dataPath}`, { timeout: 10000 });
 
     expect(fs.existsSync(dataPath + '.lock')).toBe(false);
     const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
