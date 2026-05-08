@@ -1800,6 +1800,16 @@ describe('Commands', () => {
   });
 
   describe('error catch blocks', () => {
+    // bun:test's vi.resetAllMocks() in beforeEach clears call history
+    // but NOT impl, and mockReset wipes it without restoring the
+    // factory default. Capture the factory-set impl up front and put
+    // it back so the change doesn't leak into the next describe block
+    // (#112).
+    const factorySaveEntries = (saveEntries as Mock).getMockImplementation();
+    afterEach(() => {
+      (saveEntries as Mock).mockImplementation(factorySaveEntries ?? (() => {}));
+    });
+
     it('handles setEntry storage error gracefully', async () => {
       (saveEntries as Mock).mockImplementation(() => {
         throw new Error('disk full');
