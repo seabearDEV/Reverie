@@ -5,13 +5,10 @@ import os from 'os';
 let tmpDir: string;
 
 // Mock getDataDirectory to point at our temp dir (avoids path caching issues)
-vi.mock('../utils/paths', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../utils/paths')>();
-  return {
-    ...orig,
-    getDataDirectory: () => tmpDir,
-  };
-});
+vi.mock('../utils/paths', () => ({
+  getDataDirectory: () => tmpDir,
+  findProjectFile: () => null,
+}));
 
 // Import after mocks
 import { logToolCall, loadTelemetry, computeStats, TelemetryEntry } from '../utils/telemetry';
