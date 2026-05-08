@@ -21,7 +21,7 @@ const run = (args: string) => {
   } else if (/^data (reset|import)\b/.test(args)) {
     args = args.replace(/^(data \S+)/, '$1 --global');
   }
-  return execSync(`node dist/index.js ${args}`, {
+  return execSync(`bun dist/index.js ${args}`, {
     env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' },
     timeout: 10000,
   }).toString();

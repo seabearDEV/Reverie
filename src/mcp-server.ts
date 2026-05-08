@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /* eslint-disable @typescript-eslint/require-await */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -1891,7 +1891,7 @@ export async function startMcpServer(): Promise<void> {
   await applyClientRootsOverride();
 }
 
-// Auto-start when run directly (e.g. `node dist/mcp-server.js`, `rvr-dev-mcp`, or production `rvr-mcp`)
+// Auto-start when run directly (e.g. `bun dist/mcp-server.js`, `rvr-dev-mcp`, or production `rvr-mcp`)
 // When imported by index.ts for the `mcp-server` subcommand, the caller invokes startMcpServer() explicitly.
 if (process.argv[1] && (process.argv[1].endsWith('mcp-server.js') || process.argv[1].endsWith('rvr-dev-mcp') || process.argv[1].endsWith('rvr-mcp'))) {
   startMcpServer().catch((err) => {

@@ -16,7 +16,7 @@ describe('CLI Integration Tests', () => {
     } else if (/^data (reset|import)\b/.test(args)) {
       args = args.replace(/^(data \S+)/, '$1 --global');
     }
-    return execSync(`node dist/index.js ${args}`, execOpts).toString();
+    return execSync(`bun dist/index.js ${args}`, execOpts).toString();
   };
 
   beforeAll(() => {
@@ -79,7 +79,7 @@ describe('CLI Integration Tests', () => {
     let stderr = '';
     let status: number | null = null;
     try {
-      execSync(`node dist/index.js set --force project.refused "v"`, execOpts);
+      execSync(`bun dist/index.js set --force project.refused "v"`, execOpts);
     } catch (err: unknown) {
       const e = err as { stderr?: Buffer; status?: number };
       stderr = e.stderr?.toString() ?? '';

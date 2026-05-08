@@ -14,10 +14,10 @@ let tmpDir: string;
 // reconstitutes the legacy UnifiedData shape.
 const readProjectData = (dir: string) =>
   readDirectoryStore(path.join(dir, '.reverie'));
-const cliPath = path.resolve(__dirname, '..', '..', 'dist', 'index.js');
+const cliPath = path.resolve(import.meta.dirname, '..', '..', 'dist', 'index.js');
 
 const run = (args: string) => {
-  return execSync(`node ${cliPath} ${args}`, {
+  return execSync(`bun ${cliPath} ${args}`, {
     cwd: tmpDir,
     timeout: 10000,
   }).toString();
@@ -25,7 +25,7 @@ const run = (args: string) => {
 
 const runWithStderr = (args: string): { stdout: string; stderr: string } => {
   try {
-    const stdout = execSync(`node ${cliPath} ${args}`, {
+    const stdout = execSync(`bun ${cliPath} ${args}`, {
       cwd: tmpDir,
       timeout: 10000,
     }).toString();
@@ -190,7 +190,7 @@ describe('search command (alias for find)', () => {
 
 describe('deprecation notices', () => {
   it('set -a prints deprecation to stderr', () => {
-    const result = execSync(`node ${cliPath} set --force dep.key "val" -a dk`, {
+    const result = execSync(`bun ${cliPath} set --force dep.key "val" -a dk`, {
       cwd: tmpDir,
       timeout: 10000,
     });
@@ -206,7 +206,7 @@ describe('deprecation notices', () => {
     fs.writeFileSync(path.join(freshDir, 'package.json'), JSON.stringify({ name: 'x' }));
     try {
       // --scaffold should still work but warn
-      execSync(`node ${cliPath} init --scaffold --no-claude`, { cwd: freshDir, timeout: 10000 });
+      execSync(`bun ${cliPath} init --scaffold --no-claude`, { cwd: freshDir, timeout: 10000 });
       expect(fs.existsSync(path.join(freshDir, '.reverie'))).toBe(true);
     } finally {
       fs.rmSync(freshDir, { recursive: true, force: true });

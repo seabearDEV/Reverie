@@ -16,7 +16,7 @@ describe('CLI Integration Tests — Advanced', () => {
     } else if (/^data (reset|import)\b/.test(args)) {
       args = args.replace(/^(data \S+)/, '$1 --global');
     }
-    return execSync(`node dist/index.js ${args}`, execOpts).toString();
+    return execSync(`bun dist/index.js ${args}`, execOpts).toString();
   };
 
   beforeAll(() => {

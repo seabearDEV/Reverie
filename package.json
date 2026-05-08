@@ -2,6 +2,7 @@
 	"name": "@seabear/reverie",
 	"version": "1.0.0",
 	"description": "Bicameral memory for AI-assisted development — CLI + MCP server bootstrapping persistent project context across sessions",
+	"type": "module",
 	"bin": {
 		"rvr-dev": "dist/index.js",
 		"rvr-dev-mcp": "dist/mcp-server.js"
@@ -20,7 +21,7 @@
 		"test:watch": "vitest",
 		"dev:watch": "tsc --watch",
 		"lint": "eslint src/",
-		"sea": "node scripts/sea-build.js"
+		"sea": "bun scripts/sea-build.js"
 	},
 	"keywords": [
 		"cli",

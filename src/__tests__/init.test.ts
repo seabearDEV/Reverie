@@ -17,10 +17,10 @@ const readProjectData = (dir: string) =>
 const projectStorePath = (dir: string) => path.join(dir, '.reverie');
 
 // Resolve the CLI path relative to the project root (two levels up from __tests__)
-const cliPath = path.resolve(__dirname, '..', '..', 'dist', 'index.js');
+const cliPath = path.resolve(import.meta.dirname, '..', '..', 'dist', 'index.js');
 
 const run = (args: string, cwd?: string) => {
-  return execSync(`node ${cliPath} ${args}`, {
+  return execSync(`bun ${cliPath} ${args}`, {
     cwd: cwd ?? tmpDir,
     timeout: 10000,
   }).toString();

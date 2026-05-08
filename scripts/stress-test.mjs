@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // MCP server stress test for v1.11.1 release validation.
 //
 // Spawns dist/mcp-server.js via stdio, fires N mixed tool calls in batches
@@ -74,7 +74,7 @@ console.log('');
 
 // --- spawn server + connect --------------------------------------------------
 const transport = new StdioClientTransport({
-  command: 'node',
+  command: 'bun',
   args: [SERVER_ENTRY],
   env: isolatedEnv,
   stderr: 'pipe',
@@ -126,7 +126,7 @@ async function callWithTimeout(name, args) {
 function spawnCliWrite(idx) {
   return new Promise((resolveP) => {
     const child = spawn(
-      'node',
+      'bun',
       [CLI_ENTRY, 'set', `stress.cli.w${idx}`, `cli-${Date.now()}`],
       { env: { ...isolatedEnv, RVR_AGENT_NAME: 'stress-cli' }, stdio: 'ignore' },
     );

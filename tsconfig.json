@@ -2,8 +2,8 @@
 	"compilerOptions": {
 		// Module settings
 		"esModuleInterop": true,
-		"moduleResolution": "node",
-		"module": "CommonJS",
+		"moduleResolution": "bundler",
+		"module": "esnext",
 		"target": "ES2022",
 		
 		// Output settings
@@ -30,13 +30,7 @@
 		"resolveJsonModule": true, // Allow importing JSON files
 		"incremental": true, // Speed up builds by reusing information from previous compilations
 		"importHelpers": true, // Reduce bundle size by importing helpers from tslib
-		"useUnknownInCatchVariables": true, // Safer error handling with unknown type for caught errors
-		
-		// Module resolution 
-		"baseUrl": "./src",
-		"paths": {
-			"@utils/*": ["utils/*"]
-		}
+		"useUnknownInCatchVariables": true // Safer error handling with unknown type for caught errors
 	},
 	"include": ["src/**/*"],
 	"exclude": ["node_modules", "**/*.test.ts"]
