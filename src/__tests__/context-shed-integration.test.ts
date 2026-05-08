@@ -36,11 +36,12 @@ vi.mock('../utils/binaryName', () => ({
   getBinaryName: () => 'rvr',
 }));
 
+import type { Mock } from 'bun:test';
 import { getEntriesFlat } from '../storage';
 import { loadConfig } from '../config';
 
-const mockGetEntriesFlat = vi.mocked(getEntriesFlat);
-const mockLoadConfig = vi.mocked(loadConfig);
+const mockGetEntriesFlat = getEntriesFlat as Mock<typeof getEntriesFlat>;
+const mockLoadConfig = loadConfig as Mock<typeof loadConfig>;
 
 let logged: string[] = [];
 
