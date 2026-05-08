@@ -1,0 +1,6 @@
+[test]
+# `bun test` is invoked via `bun run test` which adds --isolate (mirrors
+# vitest's default isolate:true). Without isolation, mocks set in one
+# file leak into the next. bunfig.toml doesn't expose isolate as a key,
+# so the flag lives in the package.json script.
+preload = ["./src/__tests__/_setup.ts"]

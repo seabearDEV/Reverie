@@ -17,8 +17,8 @@
 	"scripts": {
 		"build": "tsc && chmod +x dist/index.js dist/mcp-server.js",
 		"install-local": "npm run build && npm link",
-		"test": "vitest run",
-		"test:watch": "vitest",
+		"test": "bun test --isolate",
+		"test:watch": "bun test --watch --isolate",
 		"dev:watch": "tsc --watch",
 		"lint": "eslint src/",
 		"sea": "bun scripts/sea-build.js"
