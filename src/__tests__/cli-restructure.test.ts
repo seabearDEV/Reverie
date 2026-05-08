@@ -20,6 +20,7 @@ const run = (args: string) => {
   return execSync(`bun ${cliPath} ${args}`, {
     cwd: tmpDir,
     timeout: 10000,
+    env: { ...process.env },
   }).toString();
 };
 
@@ -28,6 +29,7 @@ const runWithStderr = (args: string): { stdout: string; stderr: string } => {
     const stdout = execSync(`bun ${cliPath} ${args}`, {
       cwd: tmpDir,
       timeout: 10000,
+      env: { ...process.env },
     }).toString();
     return { stdout, stderr: '' };
   } catch (err: unknown) {
@@ -39,8 +41,15 @@ const runWithStderr = (args: string): { stdout: string; stderr: string } => {
   }
 };
 
+let dataDir: string;
+const originalDataDir = process.env.RVR_DATA_DIR;
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-restruct-'));
+  // bun:test (#112): the preload sets a shared RVR_DATA_DIR; per-test
+  // global state would leak across tests. Override per-test.
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-restruct-data-'));
+  process.env.RVR_DATA_DIR = dataDir;
   // Create project file and seed some entries
   fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
     name: 'test-project',
@@ -54,6 +63,12 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  if (originalDataDir !== undefined) {
+    process.env.RVR_DATA_DIR = originalDataDir;
+  } else {
+    delete process.env.RVR_DATA_DIR;
+  }
 });
 
 // ── alias ────────────────────────────────────────────────────────────

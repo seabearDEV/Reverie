@@ -69,8 +69,8 @@ describe('shedToFitBudget', () => {
     const result = shedToFitBudget(entries, noTag, 0, baseCost + 5);
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0].keys).toEqual(['context.large']);
-    expect(result.kept).toHaveProperty('context.medium');
-    expect(result.kept).toHaveProperty('context.small');
+    expect(result.kept).toHaveProperty(['context.medium']);
+    expect(result.kept).toHaveProperty(['context.small']);
   });
 
   it('never sheds context.next_session', () => {
@@ -80,7 +80,7 @@ describe('shedToFitBudget', () => {
     };
     // Force overflow.
     const result = shedToFitBudget(entries, noTag, 0, 100);
-    expect(result.kept).toHaveProperty('context.next_session');
+    expect(result.kept).toHaveProperty(['context.next_session']);
     // context.other may or may not be shed depending on budget math; the
     // contract is that next_session is preserved.
   });
@@ -94,10 +94,10 @@ describe('shedToFitBudget', () => {
       'files.shedme': 'x'.repeat(100),
     };
     const result = shedToFitBudget(entries, noTag, 0, 200);
-    expect(result.kept).toHaveProperty('project.name');
-    expect(result.kept).toHaveProperty('conventions.x');
-    expect(result.kept).toHaveProperty('commands.x');
-    expect(result.kept).toHaveProperty('deps.x');
+    expect(result.kept).toHaveProperty(['project.name']);
+    expect(result.kept).toHaveProperty(['conventions.x']);
+    expect(result.kept).toHaveProperty(['commands.x']);
+    expect(result.kept).toHaveProperty(['deps.x']);
   });
 
   it('marks pathologicalOverflow when never-shed alone exceeds budget', () => {
@@ -107,8 +107,8 @@ describe('shedToFitBudget', () => {
     };
     const result = shedToFitBudget(entries, noTag, 0, 100);
     expect(result.pathologicalOverflow).toBe(true);
-    expect(result.kept).toHaveProperty('project.name');
-    expect(result.kept).not.toHaveProperty('files.shedme');
+    expect(result.kept).toHaveProperty(['project.name']);
+    expect(result.kept).not.toHaveProperty(['files.shedme']);
   });
 
   it('respects fixedOverheadBytes when computing projection', () => {
