@@ -106,6 +106,12 @@ vi.mock('../store', () => {
       if (ts < Date.now() - 30 * 86400000) return ` [${Math.floor((Date.now() - ts) / 86400000)}d]`;
       return '';
     }),
+    // bun:test (#112): omitting these falls through to the REAL store
+    // impls (live bindings preserve un-mocked exports), which write to
+    // actual filesystem. Stubbing forces the slow path that the tests
+    // assert against (saveEntriesAndTouchMeta).
+    setEntryFast: vi.fn(() => false),
+    getEntryFast: vi.fn(() => undefined),
   };
 });
 
