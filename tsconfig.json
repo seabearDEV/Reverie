@@ -22,7 +22,7 @@
 		"exactOptionalPropertyTypes": true, // Stricter handling of optional properties
 		
 		// Additional options
-		"types": ["vitest/globals", "node"],
+		"types": ["bun", "node"],
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
 		"removeComments": true, // Changed to true to remove comments from the compiled output
@@ -33,5 +33,5 @@
 		"useUnknownInCatchVariables": true // Safer error handling with unknown type for caught errors
 	},
 	"include": ["src/**/*"],
-	"exclude": ["node_modules", "**/*.test.ts"]
+	"exclude": ["node_modules", "**/*.test.ts", "src/__tests__/**"]
 }

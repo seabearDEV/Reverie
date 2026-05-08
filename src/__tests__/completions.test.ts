@@ -37,21 +37,13 @@ vi.mock('../utils/paths', () => ({
 // v1.10.0: completions reads via loadData/loadAliases. Mock the facade
 // modules directly rather than trying to intercept fs calls made by the
 // file-per-entry store layer underneath.
-vi.mock('../storage', async () => {
-  const actual = await vi.importActual<typeof import('../storage')>('../storage');
-  return {
-    ...actual,
-    loadData: vi.fn(() => ({})),
-  };
-});
+vi.mock('../storage', () => ({
+  loadData: vi.fn(() => ({})),
+}));
 
-vi.mock('../alias', async () => {
-  const actual = await vi.importActual<typeof import('../alias')>('../alias');
-  return {
-    ...actual,
-    loadAliases: vi.fn(() => ({})),
-  };
-});
+vi.mock('../alias', () => ({
+  loadAliases: vi.fn(() => ({})),
+}));
 
 import { loadData } from '../storage';
 import { loadAliases } from '../alias';
