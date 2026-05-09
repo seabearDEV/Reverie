@@ -27,16 +27,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
       - uses: oven-sh/setup-bun@v2
 
-      - run: npm ci
+      - run: bun install --frozen-lockfile
 
       - name: Build binary
-        run: node scripts/sea-build.js ${{ matrix.binary }}
+        run: bun scripts/sea-build.js ${{ matrix.binary }}
 
       - name: Smoke test
         shell: bash
@@ -60,17 +56,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
       - uses: oven-sh/setup-bun@v2
 
-      - run: npm ci
+      - run: bun install --frozen-lockfile
 
       # ── arm64 slice (native on macos-latest) ─────────────────────────────
       - name: Build arm64 slice
-        run: node scripts/sea-build.js rvr-macos-arm64
+        run: bun scripts/sea-build.js rvr-macos-arm64
 
       - name: Smoke test arm64
         run: |
@@ -79,7 +71,7 @@ jobs:
 
       # ── x64 slice (bun cross-compiles natively, no Node x64 tarball needed) ──
       - name: Build x64 slice
-        run: node scripts/sea-build.js rvr-macos-x64
+        run: bun scripts/sea-build.js rvr-macos-x64
 
       - name: Smoke test x64
         run: |

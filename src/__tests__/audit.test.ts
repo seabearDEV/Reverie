@@ -6,14 +6,10 @@ let tmpDir: string;
 
 let mockProjectFile: string | null = null;
 
-vi.mock('../utils/paths', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../utils/paths')>();
-  return {
-    ...orig,
-    getDataDirectory: () => tmpDir,
-    findProjectFile: () => mockProjectFile,
-  };
-});
+vi.mock('../utils/paths', () => ({
+  getDataDirectory: () => tmpDir,
+  findProjectFile: () => mockProjectFile,
+}));
 
 vi.mock('../utils/crypto', () => ({
   isEncrypted: (v: string) => v.startsWith('ENC:'),

@@ -4,14 +4,10 @@ import os from 'os';
 
 let tmpDir: string;
 
-vi.mock('../utils/paths', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../utils/paths')>();
-  return {
-    ...orig,
-    getDataDirectory: () => tmpDir,
-    findProjectFile: () => null,
-  };
-});
+vi.mock('../utils/paths', () => ({
+  getDataDirectory: () => tmpDir,
+  findProjectFile: () => null,
+}));
 
 vi.mock('../utils/crypto', () => ({
   isEncrypted: (v: string) => v.startsWith('ENC:'),

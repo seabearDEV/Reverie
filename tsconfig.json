@@ -2,8 +2,8 @@
 	"compilerOptions": {
 		// Module settings
 		"esModuleInterop": true,
-		"moduleResolution": "node",
-		"module": "CommonJS",
+		"moduleResolution": "bundler",
+		"module": "esnext",
 		"target": "ES2022",
 		
 		// Output settings
@@ -22,7 +22,7 @@
 		"exactOptionalPropertyTypes": true, // Stricter handling of optional properties
 		
 		// Additional options
-		"types": ["vitest/globals", "node"],
+		"types": ["bun", "node"],
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
 		"removeComments": true, // Changed to true to remove comments from the compiled output
@@ -30,14 +30,8 @@
 		"resolveJsonModule": true, // Allow importing JSON files
 		"incremental": true, // Speed up builds by reusing information from previous compilations
 		"importHelpers": true, // Reduce bundle size by importing helpers from tslib
-		"useUnknownInCatchVariables": true, // Safer error handling with unknown type for caught errors
-		
-		// Module resolution 
-		"baseUrl": "./src",
-		"paths": {
-			"@utils/*": ["utils/*"]
-		}
+		"useUnknownInCatchVariables": true // Safer error handling with unknown type for caught errors
 	},
 	"include": ["src/**/*"],
-	"exclude": ["node_modules", "**/*.test.ts"]
+	"exclude": ["node_modules", "**/*.test.ts", "src/__tests__/**"]
 }

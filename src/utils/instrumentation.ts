@@ -1,4 +1,5 @@
 import path from 'path';
+import { formatWithOptions } from 'node:util';
 import { Scope } from '../store';
 import { getValue, getEntriesFlat } from '../storage';
 import { loadAliases, resolveKey } from '../alias';
@@ -130,6 +131,36 @@ export async function withCliInstrumentation<T>(
     return (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(...args);
   } as typeof process.stdout.write;
 
+  // Bun: console.log/error don't pass through process.stdout.write — they
+  // hit Bun's native fast-write path. Wrap them too so byte counting works
+  // there. Under Node, this branch is dead code (typeof Bun === 'undefined').
+  const isBun = typeof (globalThis as Record<string, unknown>).Bun !== 'undefined';
+  const originalConsoleLog = console.log;
+  const originalConsoleError = console.error;
+  if (isBun) {
+    const formatArgs = (args: unknown[]): string => {
+      try {
+        return formatWithOptions({ colors: false }, ...args) + '\n';
+      } catch {
+        return args.map((arg) => {
+          try {
+            return String(arg);
+          } catch {
+            return '[unformattable]';
+          }
+        }).join(' ') + '\n';
+      }
+    };
+    console.log = function (...args: unknown[]): void {
+      addResponseBytes(Buffer.byteLength(formatArgs(args), 'utf8'));
+      originalConsoleLog.apply(console, args);
+    };
+    console.error = function (...args: unknown[]): void {
+      addResponseBytes(Buffer.byteLength(formatArgs(args), 'utf8'));
+      originalConsoleError.apply(console, args);
+    };
+  }
+
   // Execute handler
   const prevExitCode = process.exitCode;
   let result: T | undefined;
@@ -150,6 +181,10 @@ export async function withCliInstrumentation<T>(
     // logging from the wrapper itself (or the audit/telemetry write paths
     // below) doesn't pollute the count or get measured as response.
     process.stdout.write = originalStdoutWrite;
+    if (isBun) {
+      console.log = originalConsoleLog;
+      console.error = originalConsoleError;
+    }
     const measuredResponseSize = endResponseMeasure();
 
     if (success) {

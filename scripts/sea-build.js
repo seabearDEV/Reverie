@@ -1,26 +1,25 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 /**
  * Build a single-file executable for the current (or specified) target via
  * `bun build --compile`. Replaces the prior Node SEA + esbuild + postject
  * pipeline introduced in v1.0.0-beta.2 (per project.bunMigrationScope).
  *
- * Usage: node scripts/sea-build.js [output-name] [--target <bun-target>]
+ * Usage: bun scripts/sea-build.js [output-name] [--target <bun-target>]
  *   output-name  defaults to rvr-{platform-name}-{arch} (e.g. rvr-macos-arm64)
  *   --target     bun build --compile target (e.g. bun-darwin-x64). Defaults
  *                to inferring from output-name, then current platform.
  *
  * The legacy --node-binary flag is accepted for CI back-compat but ignored;
  * the target is now derived from output-name (rvr-macos-x64 → bun-darwin-x64).
- * Drop --node-binary from .github/workflows/release.yml in the CI commit.
  */
 
-const { execFileSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(import.meta.dirname, '..');
 const DIST = path.join(ROOT, 'dist');
 
 const platform = os.platform(); // darwin | linux | win32
@@ -65,7 +64,7 @@ const BINARY = path.join(DIST, outputName);
 // Run bun. Try PATH first (works in CI where setup-bun is wired up, and on
 // local shells with bun on PATH). Fall back to ~/.bun/bin/bun for installer-
 // only setups (~/.bun not yet exported into PATH). Don't use `which` — its
-// output on Windows Git Bash is POSIX-style and can't be spawned by Node.
+// output on Windows Git Bash is POSIX-style and can't be spawned.
 function runBun(args) {
   try {
     return execFileSync('bun', args, { stdio: 'inherit', cwd: ROOT });

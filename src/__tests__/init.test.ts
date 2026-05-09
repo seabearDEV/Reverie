@@ -1,7 +1,7 @@
 /**
  * Integration tests for the enhanced `rvr init` command.
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -17,10 +17,12 @@ const readProjectData = (dir: string) =>
 const projectStorePath = (dir: string) => path.join(dir, '.reverie');
 
 // Resolve the CLI path relative to the project root (two levels up from __tests__)
-const cliPath = path.resolve(__dirname, '..', '..', 'dist', 'index.js');
+const cliPath = path.resolve(import.meta.dirname, '..', '..', 'dist', 'index.js');
+const tokenizeCliArgs = (args: string): string[] =>
+  args.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((token) => token.replace(/^"|"$/g, '')) ?? [];
 
 const run = (args: string, cwd?: string) => {
-  return execSync(`node ${cliPath} ${args}`, {
+  return execFileSync('bun', [cliPath, ...tokenizeCliArgs(args)], {
     cwd: cwd ?? tmpDir,
     timeout: 10000,
   }).toString();

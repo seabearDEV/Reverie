@@ -2,7 +2,7 @@
  * Integration tests for the CLI restructure:
  * alias, confirm, context, info, search commands + deprecation notices.
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -14,20 +14,24 @@ let tmpDir: string;
 // reconstitutes the legacy UnifiedData shape.
 const readProjectData = (dir: string) =>
   readDirectoryStore(path.join(dir, '.reverie'));
-const cliPath = path.resolve(__dirname, '..', '..', 'dist', 'index.js');
+const cliPath = path.resolve(import.meta.dirname, '..', '..', 'dist', 'index.js');
+const tokenizeCliArgs = (args: string): string[] =>
+  args.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((token) => token.replace(/^"|"$/g, '')) ?? [];
 
-const run = (args: string) => {
-  return execSync(`node ${cliPath} ${args}`, {
-    cwd: tmpDir,
+const run = (args: string, cwd?: string) => {
+  return execFileSync('bun', [cliPath, ...tokenizeCliArgs(args)], {
+    cwd: cwd ?? tmpDir,
     timeout: 10000,
+    env: { ...process.env },
   }).toString();
 };
 
 const runWithStderr = (args: string): { stdout: string; stderr: string } => {
   try {
-    const stdout = execSync(`node ${cliPath} ${args}`, {
+    const stdout = execFileSync('bun', [cliPath, ...tokenizeCliArgs(args)], {
       cwd: tmpDir,
       timeout: 10000,
+      env: { ...process.env },
     }).toString();
     return { stdout, stderr: '' };
   } catch (err: unknown) {
@@ -39,8 +43,15 @@ const runWithStderr = (args: string): { stdout: string; stderr: string } => {
   }
 };
 
+let dataDir: string;
+const originalDataDir = process.env.RVR_DATA_DIR;
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-restruct-'));
+  // bun:test (#112): the preload sets a shared RVR_DATA_DIR; per-test
+  // global state would leak across tests. Override per-test.
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-restruct-data-'));
+  process.env.RVR_DATA_DIR = dataDir;
   // Create project file and seed some entries
   fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
     name: 'test-project',
@@ -54,6 +65,12 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  if (originalDataDir !== undefined) {
+    process.env.RVR_DATA_DIR = originalDataDir;
+  } else {
+    delete process.env.RVR_DATA_DIR;
+  }
 });
 
 // ── alias ────────────────────────────────────────────────────────────
@@ -190,10 +207,7 @@ describe('search command (alias for find)', () => {
 
 describe('deprecation notices', () => {
   it('set -a prints deprecation to stderr', () => {
-    const result = execSync(`node ${cliPath} set --force dep.key "val" -a dk`, {
-      cwd: tmpDir,
-      timeout: 10000,
-    });
+    run('set --force dep.key "val" -a dk');
     // The deprecation goes to stderr which we can't easily capture with execSync
     // but we can verify the alias was still created (backward compat works)
     const data = readProjectData(tmpDir) as any;
@@ -206,7 +220,7 @@ describe('deprecation notices', () => {
     fs.writeFileSync(path.join(freshDir, 'package.json'), JSON.stringify({ name: 'x' }));
     try {
       // --scaffold should still work but warn
-      execSync(`node ${cliPath} init --scaffold --no-claude`, { cwd: freshDir, timeout: 10000 });
+      run('init --scaffold --no-claude', freshDir);
       expect(fs.existsSync(path.join(freshDir, '.reverie'))).toBe(true);
     } finally {
       fs.rmSync(freshDir, { recursive: true, force: true });

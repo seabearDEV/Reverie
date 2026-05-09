@@ -38,7 +38,7 @@ const mockGetEffectiveInstructions = vi.fn().mockReturnValue('effective instruct
 const mockDefaultLLMInstructions = 'default instructions';
 
 function setupMocks() {
-  vi.doMock('../commands', () => ({
+  vi.mock('../commands', () => ({
     setEntry: mockSetEntry,
     getEntry: mockGetEntry,
     runCommand: mockRunCommand,
@@ -52,30 +52,43 @@ function setupMocks() {
     importData: mockImportData,
     resetData: mockResetData,
   }));
-  vi.doMock('../alias', () => ({
+  vi.mock('../alias', () => ({
     removeAlias: mockRemoveAlias,
     resolveKey: mockResolveKey,
     loadAliases: vi.fn(() => ({})),
     setAlias: vi.fn(),
     renameAlias: vi.fn(() => true),
+    // bun:test (#112) strict parse — stub remaining exports.
+    saveAliases: vi.fn(),
+    removeAliasesForKey: vi.fn(),
+    buildKeyToAliasMap: vi.fn(() => ({})),
   }));
-  vi.doMock('../confirm', () => ({
+  vi.mock('../confirm', () => ({
     setConfirm: vi.fn(),
     removeConfirm: vi.fn(),
     loadConfirmKeys: vi.fn(() => ({})),
   }));
-  vi.doMock('../formatting', () => ({
+  vi.mock('../formatting', () => ({
     showHelp: mockShowHelp,
     showExamples: mockShowExamples,
     color: mockColor,
+    // bun:test (#112) parses imports strictly; pad with stubs for the
+    // formatting exports SUT transitively imports.
+    isColorEnabled: vi.fn(() => false),
+    resetColorCache: vi.fn(),
+    highlightMatch: identity,
+    formatKeyValue: identity,
+    colorizePathByLevels: identity,
+    formatTree: vi.fn(() => ''),
+    displayTree: vi.fn(),
   }));
-  vi.doMock('../completions', () => ({
+  vi.mock('../completions', () => ({
     getCompletions: mockGetCompletions,
     generateBashScript: mockGenerateBashScript,
     generateZshScript: mockGenerateZshScript,
     installCompletions: mockInstallCompletions,
   }));
-  vi.doMock('../llm-instructions', () => ({
+  vi.mock('../llm-instructions', () => ({
     DEFAULT_LLM_INSTRUCTIONS: mockDefaultLLMInstructions,
     getEffectiveInstructions: mockGetEffectiveInstructions,
   }));
@@ -84,7 +97,8 @@ function setupMocks() {
 const originalArgv = process.argv;
 
 beforeEach(() => {
-  vi.resetModules();
+  // vi.resetModules() removed (#112) — bun:test has no equivalent;
+  // loadCLI() uses a cache-busting import specifier instead.
   vi.restoreAllMocks();
   vi.clearAllMocks();
   // Re-apply default return values after clearAllMocks
@@ -115,7 +129,11 @@ afterEach(() => {
 
 async function loadCLI(...args: string[]) {
   process.argv = ['node', 'rvr', ...args];
-  await import('../index');
+  // Cache-buster forces re-evaluation of ../index each call (#112).
+  // Was paired with vi.resetModules() in beforeEach under vitest; bun:test
+  // has no module-cache reset, but a different specifier query string
+  // makes bun treat each load as a fresh module.
+  await import(`../index?t=${Date.now()}-${Math.random()}`);
 }
 
 describe('CLI Entry Point (index.ts)', () => {

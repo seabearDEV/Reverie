@@ -1,21 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// Hoist all mutable state so it's available inside vi.mock factories
 type ToolHandler = (params: any) => Promise<any>;
-const {
-  toolHandlers, mockExecSync, mockFiles, mockWrittenFiles,
-  mockData, mockAliases, mockConfig, mockConfirmKeys, mockMetaData,
-} = vi.hoisted(() => ({
-  toolHandlers: {} as Record<string, ToolHandler>,
-  mockExecSync: vi.fn(),
-  mockFiles: {} as Record<string, boolean>,
-  mockWrittenFiles: {} as Record<string, string>,
-  mockData: {} as Record<string, any>,
-  mockAliases: {} as Record<string, string>,
-  mockConfig: { colors: true, theme: 'default' } as Record<string, any>,
-  mockConfirmKeys: {} as Record<string, true>,
-  mockMetaData: {} as Record<string, number>,
-}));
+// Was vi.hoisted (#112) — bun:test has no equivalent, but doesn't need
+// one because vi.mock factories run in source order, after this binding.
+const toolHandlers: Record<string, ToolHandler> = {};
+const mockExecSync = vi.fn();
+const mockFiles: Record<string, boolean> = {};
+const mockWrittenFiles: Record<string, string> = {};
+const mockData: Record<string, any> = {};
+const mockAliases: Record<string, string> = {};
+const mockConfig: Record<string, any> = { colors: true, theme: 'default' };
+const mockConfirmKeys: Record<string, true> = {};
+const mockMetaData: Record<string, number> = {};
 
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => {
   class MockMcpServer {
@@ -36,6 +32,8 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 // Mock child_process
 vi.mock('child_process', () => ({
   execSync: (...args: any[]) => mockExecSync(...args),
+  spawn: vi.fn(),
+  spawnSync: vi.fn(() => ({ status: 0, stdout: '', stderr: '' })),
 }));
 
 // Mock fs — track written files
@@ -108,11 +106,16 @@ function removeNestedMock(obj: any, path: string): boolean {
   delete cur[parts[parts.length - 1]];
   return true;
 }
-vi.mock('../storage', async () => {
-  // Pull the real validateImportEntries so the sentinel guard (#75) and
-  // key-safety checks exercise real logic at the MCP handler level. Other
-  // validators stay as no-ops — the fixtures in this file use safe keys.
-  const actual = await vi.importActual<typeof import('../storage')>('../storage');
+// Pre-load real ../storage via createRequire BEFORE vi.mock registers,
+// to grab the real validateImportEntries (#75 sentinel guard + key-safety
+// checks). bun:test runs vi.mock in source order, so this captures the
+// unmocked module — vitest hoists vi.mock above all source-order code,
+// so this pattern is bun-only post-port.
+import { createRequire } from 'node:module';
+const _requireForStorage = createRequire(import.meta.url);
+const _realStorage = _requireForStorage('../storage') as typeof import('../storage');
+
+vi.mock('../storage', () => {
   return {
     loadData: vi.fn(() => ({ ...mockData })),
     saveData: vi.fn((d: any) => {
@@ -123,7 +126,7 @@ vi.mock('../storage', async () => {
     setValue: vi.fn((key: string, value: string) => setNestedMock(mockData, key, value)),
     removeValue: vi.fn((key: string) => removeNestedMock(mockData, key)),
     getEntriesFlat: vi.fn(() => flattenMock(mockData)),
-    validateImportEntries: actual.validateImportEntries,
+    validateImportEntries: _realStorage.validateImportEntries,
     validateImportAliases: vi.fn(),
     validateImportConfirm: vi.fn(),
   };

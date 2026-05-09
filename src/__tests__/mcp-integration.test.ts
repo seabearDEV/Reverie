@@ -71,7 +71,7 @@ function callMcpTool(tool: string, params: Record<string, unknown> = {}, opts: {
   const input = initialize + '\n' + initialized + '\n' + toolCall + '\n';
 
   try {
-    const output = execSync(`node dist/mcp-server.js --cwd ${tmpDir}`, {
+    const output = execSync(`bun dist/mcp-server.js --cwd ${tmpDir}`, {
       input,
       env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' },
       timeout: 15000,

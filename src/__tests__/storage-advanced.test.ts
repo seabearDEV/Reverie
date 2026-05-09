@@ -1,12 +1,19 @@
+import type { Mock } from 'bun:test';
 import { getValue, setValue, removeValue, getEntriesFlat } from '../storage';
+import { saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta, loadEntries, loadEntriesMerged } from '../store';
+
+// State accessed by both the mock factory and the tests. Was previously
+// exposed as __reset/__setProjectEntries on the mocked store namespace,
+// but bun:test (#112) filters mock factory exports to only those names
+// already exported by the real module — non-real names like __reset get
+// dropped. Hoisting the state to module scope avoids the round-trip.
+const projectEntries: Record<string, any> = {};
+const globalEntries: Record<string, any> = {};
+const projectMeta: Record<string, number> = {};
+const globalMeta: Record<string, number> = {};
+const testState = { hasProject: false };
 
 vi.mock('../store', () => {
-  let projectEntries: Record<string, any> = {};
-  let globalEntries: Record<string, any> = {};
-  let projectMeta: Record<string, number> = {};
-  let globalMeta: Record<string, number> = {};
-  let hasProject = false;
-
   return {
     loadEntries: vi.fn((scope?: string) => {
       if (scope === 'project') return { ...projectEntries };
@@ -23,7 +30,7 @@ vi.mock('../store', () => {
     }),
     loadEntriesMerged: vi.fn(() => ({ ...globalEntries, ...projectEntries })),
     clearStoreCaches: vi.fn(),
-    findProjectFile: vi.fn(() => hasProject ? '/fake/.codexcli.json' : null),
+    findProjectFile: vi.fn(() => testState.hasProject ? '/fake/.codexcli.json' : null),
     clearProjectFileCache: vi.fn(),
     saveEntriesAndTouchMeta: vi.fn((data: any, key: string, scope?: string) => {
       if (scope === 'project') {
@@ -47,23 +54,27 @@ vi.mock('../store', () => {
         delete globalMeta[key];
       }
     }),
-    // Test helper to set up state
-    __setProjectEntries: (data: Record<string, any>) => {
-      Object.keys(projectEntries).forEach(k => delete projectEntries[k]);
-      Object.assign(projectEntries, data);
-    },
-    __setGlobalEntries: (data: Record<string, any>) => {
-      Object.keys(globalEntries).forEach(k => delete globalEntries[k]);
-      Object.assign(globalEntries, data);
-    },
-    __setHasProject: (val: boolean) => { hasProject = val; },
-    __reset: () => {
-      Object.keys(projectEntries).forEach(k => delete projectEntries[k]);
-      Object.keys(globalEntries).forEach(k => delete globalEntries[k]);
-      Object.keys(projectMeta).forEach(k => delete projectMeta[k]);
-      Object.keys(globalMeta).forEach(k => delete globalMeta[k]);
-      hasProject = false;
-    },
+    // bun:test (#112): omitting these from the mock falls through to the
+    // REAL store impls (live bindings preserve un-mocked exports), which
+    // hit the actual filesystem. Stub them as no-ops so the slow path
+    // (loadEntries+saveEntriesAndTouchMeta) is exercised — that's what
+    // the tests assert against.
+    setEntryFast: vi.fn(() => false),
+    getEntryFast: vi.fn(() => undefined),
+    saveAliasMap: vi.fn(),
+    loadAliasMap: vi.fn(() => ({})),
+    loadAliasMapMerged: vi.fn(() => ({})),
+    saveConfirmMap: vi.fn(),
+    loadConfirmMap: vi.fn(() => ({})),
+    loadConfirmMapMerged: vi.fn(() => ({})),
+    saveAll: vi.fn(),
+    loadMeta: vi.fn(() => ({})),
+    loadMetaMerged: vi.fn(() => ({})),
+    touchMeta: vi.fn(),
+    removeMeta: vi.fn(),
+    getStalenessTag: vi.fn(() => ''),
+    STALE_DAYS: 30,
+    STALE_MS: 30 * 86400000,
   };
 });
 
@@ -74,50 +85,56 @@ vi.mock('../formatting', () => ({
   },
 }));
 
-const store = await import('../store') as any;
+function resetTestState() {
+  Object.keys(projectEntries).forEach(k => delete projectEntries[k]);
+  Object.keys(globalEntries).forEach(k => delete globalEntries[k]);
+  Object.keys(projectMeta).forEach(k => delete projectMeta[k]);
+  Object.keys(globalMeta).forEach(k => delete globalMeta[k]);
+  testState.hasProject = false;
+}
 
 beforeEach(() => {
-  store.__reset();
+  resetTestState();
   vi.clearAllMocks();
 });
 
 describe('storage layer — scope fallthrough', () => {
   it('getValue with auto scope checks project first, then global', () => {
-    store.__setHasProject(true);
-    store.__setProjectEntries({ server: { ip: '10.0.0.1' } });
-    store.__setGlobalEntries({ server: { ip: '192.168.1.1' } });
+    testState.hasProject = true;
+    Object.assign(projectEntries, { server: { ip: '10.0.0.1' } });
+    Object.assign(globalEntries, { server: { ip: '192.168.1.1' } });
 
     expect(getValue('server.ip')).toBe('10.0.0.1');
   });
 
   it('getValue falls through to global when project lacks key', () => {
-    store.__setHasProject(true);
-    store.__setProjectEntries({});
-    store.__setGlobalEntries({ server: { ip: '192.168.1.1' } });
+    testState.hasProject = true;
+    Object.assign(projectEntries, {});
+    Object.assign(globalEntries, { server: { ip: '192.168.1.1' } });
 
     expect(getValue('server.ip')).toBe('192.168.1.1');
   });
 
   it('getValue with explicit global scope ignores project', () => {
-    store.__setHasProject(true);
-    store.__setProjectEntries({ server: { ip: '10.0.0.1' } });
-    store.__setGlobalEntries({ server: { ip: '192.168.1.1' } });
+    testState.hasProject = true;
+    Object.assign(projectEntries, { server: { ip: '10.0.0.1' } });
+    Object.assign(globalEntries, { server: { ip: '192.168.1.1' } });
 
     expect(getValue('server.ip', 'global')).toBe('192.168.1.1');
   });
 
   it('getValue with explicit project scope ignores global', () => {
-    store.__setHasProject(true);
-    store.__setProjectEntries({});
-    store.__setGlobalEntries({ server: { ip: '192.168.1.1' } });
+    testState.hasProject = true;
+    Object.assign(projectEntries, {});
+    Object.assign(globalEntries, { server: { ip: '192.168.1.1' } });
 
     expect(getValue('server.ip', 'project')).toBeUndefined();
   });
 
   it('getValue returns undefined when key absent from both scopes', () => {
-    store.__setHasProject(true);
-    store.__setProjectEntries({});
-    store.__setGlobalEntries({});
+    testState.hasProject = true;
+    Object.assign(projectEntries, {});
+    Object.assign(globalEntries, {});
 
     expect(getValue('nonexistent.key')).toBeUndefined();
   });
@@ -125,14 +142,14 @@ describe('storage layer — scope fallthrough', () => {
 
 describe('storage layer — setValue', () => {
   it('setValue sets value in auto-resolved scope', () => {
-    store.__setHasProject(false);
+    testState.hasProject = false;
     setValue('test.key', 'value');
-    expect(store.saveEntriesAndTouchMeta).toHaveBeenCalled();
+    expect((saveEntriesAndTouchMeta as Mock<typeof saveEntriesAndTouchMeta>)).toHaveBeenCalled();
   });
 
   it('setValue with project scope targets project store', () => {
     setValue('test.key', 'value', 'project');
-    expect(store.saveEntriesAndTouchMeta).toHaveBeenCalledWith(
+    expect((saveEntriesAndTouchMeta as Mock<typeof saveEntriesAndTouchMeta>)).toHaveBeenCalledWith(
       expect.anything(),
       'test.key',
       'project',
@@ -142,13 +159,13 @@ describe('storage layer — setValue', () => {
 
 describe('storage layer — removeValue', () => {
   it('removeValue with auto scope removes from project first', () => {
-    store.__setHasProject(true);
-    store.__setProjectEntries({ foo: 'bar' });
-    store.__setGlobalEntries({ foo: 'global' });
+    testState.hasProject = true;
+    Object.assign(projectEntries, { foo: 'bar' });
+    Object.assign(globalEntries, { foo: 'global' });
 
     const removed = removeValue('foo');
     expect(removed).toBe(true);
-    expect(store.saveEntriesAndRemoveMeta).toHaveBeenCalledWith(
+    expect((saveEntriesAndRemoveMeta as Mock<typeof saveEntriesAndRemoveMeta>)).toHaveBeenCalledWith(
       expect.anything(),
       'foo',
       'project',
@@ -160,15 +177,15 @@ describe('storage layer — removeValue', () => {
     // branch collapses to whichever scope project resolution picks (project
     // when resolvable). Removing a global-scoped entry now requires explicit
     // scope:'global'.
-    store.__setHasProject(true);
-    store.__setProjectEntries({});
-    store.__setGlobalEntries({ foo: 'bar' });
+    testState.hasProject = true;
+    Object.assign(projectEntries, {});
+    Object.assign(globalEntries, { foo: 'bar' });
 
     const removed = removeValue('foo');
     expect(removed).toBe(false);
     // Confirm the explicit-scope path still works
     expect(removeValue('foo', 'global')).toBe(true);
-    expect(store.saveEntriesAndRemoveMeta).toHaveBeenCalledWith(
+    expect((saveEntriesAndRemoveMeta as Mock<typeof saveEntriesAndRemoveMeta>)).toHaveBeenCalledWith(
       expect.anything(),
       'foo',
       'global',
@@ -176,9 +193,9 @@ describe('storage layer — removeValue', () => {
   });
 
   it('removeValue returns false when key does not exist anywhere', () => {
-    store.__setHasProject(true);
-    store.__setProjectEntries({});
-    store.__setGlobalEntries({});
+    testState.hasProject = true;
+    Object.assign(projectEntries, {});
+    Object.assign(globalEntries, {});
 
     expect(removeValue('nonexistent')).toBe(false);
   });
@@ -188,11 +205,11 @@ describe('storage layer — getEntriesFlat', () => {
   it('getEntriesFlat with auto scope merges project over global', () => {
     const result = getEntriesFlat();
     // Uses loadEntriesMerged under the hood
-    expect(store.loadEntriesMerged).toHaveBeenCalled();
+    expect((loadEntriesMerged as Mock<typeof loadEntriesMerged>)).toHaveBeenCalled();
   });
 
   it('getEntriesFlat with explicit scope does not merge', () => {
     getEntriesFlat('global');
-    expect(store.loadEntries).toHaveBeenCalledWith('global');
+    expect((loadEntries as Mock<typeof loadEntries>)).toHaveBeenCalledWith('global');
   });
 });

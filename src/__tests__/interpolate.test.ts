@@ -1,3 +1,4 @@
+import type { Mock } from 'bun:test';
 import { execSync } from 'child_process';
 import { interpolate, interpolateObject, StrictInterpolationError } from '../utils/interpolate';
 import { getValue } from '../storage';
@@ -18,9 +19,9 @@ vi.mock('child_process', () => ({
   execSync: vi.fn(),
 }));
 
-const mockGetValue = vi.mocked(getValue);
-const mockResolveKey = vi.mocked(resolveKey);
-const mockExecSync = vi.mocked(execSync);
+const mockGetValue = getValue as Mock<typeof getValue>;
+const mockResolveKey = resolveKey as Mock<typeof resolveKey>;
+const mockExecSync = execSync as Mock<typeof execSync>;
 
 beforeEach(() => {
   vi.clearAllMocks();

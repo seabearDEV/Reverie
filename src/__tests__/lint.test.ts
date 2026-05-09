@@ -1,3 +1,4 @@
+import type { Mock } from 'bun:test';
 import { lintEntries } from '../commands/lint';
 import { getEntriesFlat } from '../storage';
 import { findProjectFile } from '../store';
@@ -27,9 +28,9 @@ vi.mock('fs', () => ({
   existsSync: vi.fn(() => false),
 }));
 
-const mockGetEntriesFlat = vi.mocked(getEntriesFlat);
-const mockFindProjectFile = vi.mocked(findProjectFile);
-const mockReadFileSync = vi.mocked(fs.readFileSync);
+const mockGetEntriesFlat = getEntriesFlat as Mock<typeof getEntriesFlat>;
+const mockFindProjectFile = findProjectFile as Mock<typeof findProjectFile>;
+const mockReadFileSync = fs.readFileSync as Mock<typeof fs.readFileSync>;
 
 beforeEach(() => {
   vi.clearAllMocks();

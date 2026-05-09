@@ -10,20 +10,17 @@
  */
 
 type ToolHandler = (params: any) => Promise<any>;
-const {
-  toolHandlers, mockExecSync, mockFiles, mockWrittenFiles,
-  mockData, mockAliases, mockConfig, mockConfirmKeys, mockMetaData,
-} = vi.hoisted(() => ({
-  toolHandlers: {} as Record<string, ToolHandler>,
-  mockExecSync: vi.fn(),
-  mockFiles: {} as Record<string, boolean>,
-  mockWrittenFiles: {} as Record<string, string>,
-  mockData: {} as Record<string, any>,
-  mockAliases: {} as Record<string, string>,
-  mockConfig: { colors: true, theme: 'default' } as Record<string, any>,
-  mockConfirmKeys: {} as Record<string, true>,
-  mockMetaData: {} as Record<string, number>,
-}));
+// Was vi.hoisted (#112) — bun:test has no equivalent, but doesn't need
+// one because vi.mock factories run in source order, after this binding.
+const toolHandlers: Record<string, ToolHandler> = {};
+const mockExecSync = vi.fn();
+const mockFiles: Record<string, boolean> = {};
+const mockWrittenFiles: Record<string, string> = {};
+const mockData: Record<string, any> = {};
+const mockAliases: Record<string, string> = {};
+const mockConfig: Record<string, any> = { colors: true, theme: 'default' };
+const mockConfirmKeys: Record<string, true> = {};
+const mockMetaData: Record<string, number> = {};
 
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => {
   class MockMcpServer {
@@ -42,6 +39,8 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 
 vi.mock('child_process', () => ({
   execSync: (...args: any[]) => mockExecSync(...args),
+  spawn: vi.fn(),
+  spawnSync: vi.fn(() => ({ status: 0, stdout: '', stderr: '' })),
 }));
 
 vi.mock('fs', () => {
@@ -176,8 +175,13 @@ vi.mock('../utils/paths', () => ({
   getDataDirectory: vi.fn(() => '/mock'),
   getGlobalStoreDirPath: vi.fn(() => '/mock/store'),
   findProjectFile: vi.fn(() => null),
+  findProjectFileWithDiagnostic: vi.fn(() => ({ path: null, diagnostic: { reason: 'no_project', searchedFrom: '/mock' } })),
   findProjectStoreDir: vi.fn(() => null),
   clearProjectFileCache: vi.fn(),
+  clearDataDirectoryCache: vi.fn(),
+  isDataDirectoryFromEnv: vi.fn(() => false),
+  setProjectRootOverride: vi.fn(),
+  getProjectRootOverride: vi.fn(() => null),
 }));
 
 vi.mock('../store', () => ({
@@ -214,12 +218,42 @@ vi.mock('../store', () => ({
     if (ts < Date.now() - 30 * 86400000) return ` [${Math.floor((Date.now() - ts) / 86400000)}d]`;
     return '';
   }),
+  // bun:test (#112): bun checks every named import strictly. Add no-op
+  // stubs for store exports the SUT transitively imports but this test
+  // doesn't otherwise stub.
+  loadAliasMap: vi.fn(() => ({ ...mockAliases })),
+  saveAliasMap: vi.fn((d: any) => { Object.keys(mockAliases).forEach(k => delete mockAliases[k]); Object.assign(mockAliases, d); }),
+  loadConfirmMap: vi.fn(() => ({ ...mockConfirmKeys })),
+  saveConfirmMap: vi.fn((d: any) => { Object.keys(mockConfirmKeys).forEach(k => delete mockConfirmKeys[k]); Object.assign(mockConfirmKeys, d); }),
+  loadEntriesMerged: vi.fn(() => ({ ...mockData })),
+  loadAliasMapMerged: vi.fn(() => ({ ...mockAliases })),
+  loadConfirmMapMerged: vi.fn(() => ({ ...mockConfirmKeys })),
+  saveAll: vi.fn(),
+  getEntryFast: vi.fn(),
+  setEntryFast: vi.fn(() => false),
 }));
 
-vi.mock('../formatting', () => ({
-  formatTree: vi.fn(() => 'tree-output'),
-  resetColorCache: vi.fn(),
-}));
+vi.mock('../formatting', () => {
+  // bun:test (#112): include every named export the SUT or its transitive
+  // imports use, even ones this test doesn't observe — bun parses imports
+  // strictly and errors on missing names.
+  const id = (s: string) => s;
+  return {
+    formatTree: vi.fn(() => 'tree-output'),
+    resetColorCache: vi.fn(),
+    color: {
+      cyan: id, green: id, yellow: id, red: id, blue: id, magenta: id,
+      gray: id, white: id, italic: id, bold: id,
+      boldColors: { cyan: id, green: id, yellow: id, blue: id, magenta: id },
+    },
+    colorizePathByLevels: id,
+    displayTree: vi.fn(),
+    formatKeyValue: id,
+    highlightMatch: id,
+    showHelp: vi.fn(),
+    showExamples: vi.fn(),
+  };
+});
 
 vi.mock('../config', () => ({
   loadConfig: vi.fn(() => ({ ...mockConfig })),

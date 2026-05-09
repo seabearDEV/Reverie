@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import readline from 'readline';
 import { execSync } from 'child_process';
+import type { Mock } from 'bun:test';
 import {
   setEntry,
   getEntry,
@@ -22,15 +23,14 @@ import { clearStoreCaches } from '../store';
 import { clearConfigCache } from '../config';
 import type { CodexData } from '../types';
 
-// ── Hoisted shared state for store mock ──────────────────────────────
-const { storeState } = vi.hoisted(() => {
-  const storeState = {
-    entries: {} as CodexData,
-    aliases: {} as Record<string, string>,
-    confirm: {} as Record<string, true>,
-  };
-  return { storeState };
-});
+// ── Shared state for store mock ──────────────────────────────────────
+// Was vi.hoisted (#112) — bun:test has no equivalent, but doesn't need
+// one because vi.mock factories run in source order, after this binding.
+const storeState = {
+  entries: {} as CodexData,
+  aliases: {} as Record<string, string>,
+  confirm: {} as Record<string, true>,
+};
 
 // Mock child_process
 vi.mock('child_process', () => ({
@@ -107,6 +107,12 @@ vi.mock('../store', () => {
       if (ts < Date.now() - 30 * 86400000) return ` [${Math.floor((Date.now() - ts) / 86400000)}d]`;
       return '';
     }),
+    // bun:test (#112): omitting these falls through to the REAL store
+    // impls (live bindings preserve un-mocked exports), which write to
+    // actual filesystem. Stubbing forces the slow path that the tests
+    // assert against (saveEntriesAndTouchMeta).
+    setEntryFast: vi.fn(() => false),
+    getEntryFast: vi.fn(() => undefined),
   };
 });
 
@@ -121,14 +127,19 @@ vi.mock('../utils/clipboard', () => ({
   copyToClipboard: vi.fn(),
 }));
 
-// Mock askPassword for encryption tests
-vi.mock('../commands/helpers', async () => {
-  const actual = await vi.importActual('../commands/helpers');
-  return {
-    ...actual,
-    askPassword: vi.fn(),
-  };
-});
+// Mock askPassword for encryption tests. Pre-load the real helpers via
+// createRequire BEFORE vi.mock registers — bun:test runs vi.mock in
+// source order, so this captures the unmocked module. (vitest hoists
+// vi.mock above all imports, so this pattern is bun-only — vitest will
+// see _realHelpers as the mock and the spread is a no-op there.)
+import { createRequire } from 'node:module';
+const _requireForHelpers = createRequire(import.meta.url);
+const _realHelpers = _requireForHelpers('../commands/helpers') as typeof import('../commands/helpers');
+
+vi.mock('../commands/helpers', () => ({
+  ..._realHelpers,
+  askPassword: vi.fn(),
+}));
 
 import { askPassword } from '../commands/helpers';
 import { saveEntries, saveAliasMap } from '../store';
@@ -1790,6 +1801,16 @@ describe('Commands', () => {
   });
 
   describe('error catch blocks', () => {
+    // bun:test's vi.resetAllMocks() in beforeEach clears call history
+    // but NOT impl, and mockReset wipes it without restoring the
+    // factory default. Capture the factory-set impl up front and put
+    // it back so the change doesn't leak into the next describe block
+    // (#112).
+    const factorySaveEntries = (saveEntries as Mock).getMockImplementation();
+    afterEach(() => {
+      (saveEntries as Mock).mockImplementation(factorySaveEntries ?? (() => {}));
+    });
+
     it('handles setEntry storage error gracefully', async () => {
       (saveEntries as Mock).mockImplementation(() => {
         throw new Error('disk full');
@@ -1982,11 +2003,10 @@ describe('Commands', () => {
 
   describe('printSuccess / printError / printWarning', () => {
     let printSuccess: Function, printError: Function, printWarning: Function;
-    beforeAll(async () => {
-      const actual = await vi.importActual<typeof import('../commands/helpers')>('../commands/helpers');
-      printSuccess = actual.printSuccess;
-      printError = actual.printError;
-      printWarning = actual.printWarning;
+    beforeAll(() => {
+      printSuccess = _realHelpers.printSuccess;
+      printError = _realHelpers.printError;
+      printWarning = _realHelpers.printWarning;
     });
 
     it('printSuccess logs green checkmark with message', () => {

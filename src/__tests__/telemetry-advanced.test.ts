@@ -10,13 +10,10 @@ import os from 'os';
 
 let tmpDir: string;
 
-vi.mock('../utils/paths', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../utils/paths')>();
-  return {
-    ...orig,
-    getDataDirectory: () => tmpDir,
-  };
-});
+vi.mock('../utils/paths', () => ({
+  getDataDirectory: () => tmpDir,
+  findProjectFile: () => null,
+}));
 
 import { computeStats, loadTelemetry, TelemetryEntry, EXPLORATION_COST, MissPath } from '../utils/telemetry';
 

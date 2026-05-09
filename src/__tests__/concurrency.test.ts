@@ -93,7 +93,7 @@ for (let i = 0; i < count; i++) {
     for (let w = 0; w < WORKERS; w++) {
       promises.push(new Promise<void>((resolve, reject) => {
         try {
-          execSync(`node ${workerScript} ${dataPath} ${w} ${WRITES_PER_WORKER}`, {
+          execSync(`bun ${workerScript} ${dataPath} ${w} ${WRITES_PER_WORKER}`, {
             timeout: 30000,
           });
           resolve();
@@ -196,7 +196,7 @@ for (let i = 0; i < 20; i++) {
 }
 `);
 
-    execSync(`node ${workerScript} ${dataPath}`, { timeout: 10000 });
+    execSync(`bun ${workerScript} ${dataPath}`, { timeout: 10000 });
 
     expect(fs.existsSync(dataPath + '.lock')).toBe(false);
     const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
@@ -218,7 +218,7 @@ for (let i = 0; i < 20; i++) {
 
     // Use the CLI to write — it should break the stale lock
     execSync(
-      `node dist/index.js set --global --force stale.lock.test "it works"`,
+      `bun dist/index.js set --global --force stale.lock.test "it works"`,
       { env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' }, timeout: 10000 }
     );
 
@@ -246,7 +246,7 @@ describe('concurrent CLI invocations', () => {
       promises.push(new Promise((resolve, reject) => {
         try {
           const result = execSync(
-            `node dist/index.js set --global --force parallel.key${i} "value${i}"`,
+            `bun dist/index.js set --global --force parallel.key${i} "value${i}"`,
             {
               env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' },
               timeout: 15000,
@@ -264,7 +264,7 @@ describe('concurrent CLI invocations', () => {
     // can handle rapid sequential access without corruption
     for (let i = 0; i < COMMANDS; i++) {
       execSync(
-        `node dist/index.js set --global --force parallel.key${i} "value${i}"`,
+        `bun dist/index.js set --global --force parallel.key${i} "value${i}"`,
         {
           env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' },
           timeout: 15000,

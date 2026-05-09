@@ -1,0 +1,20 @@
+// Test environment bootstrap — equivalent to vitest.config.ts's `env` block.
+// Loaded via bunfig.toml's [test].preload before each test file.
+import os from 'os';
+import path from 'path';
+import { afterEach } from 'bun:test';
+
+if (!process.env.RVR_DATA_DIR) {
+  process.env.RVR_DATA_DIR = path.join(os.tmpdir(), 'reverie-bun');
+}
+
+// printError() in src/commands/helpers.ts sets process.exitCode = 1 to
+// propagate failure to wrapping shell scripts. Several tests exercise
+// error paths that call printError, leaving exitCode = 1 across tests.
+// Bun's test runner inherits the final exitCode and exits 1 even when
+// every assertion passed. Reset after each test.
+afterEach(() => {
+  if (process.exitCode !== undefined && process.exitCode !== 0) {
+    process.exitCode = 0;
+  }
+});
