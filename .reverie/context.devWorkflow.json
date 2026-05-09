@@ -1,7 +1,7 @@
 {
-  "value": "Bun-only dev/prod runtime as of 2026-05-07 (pass 1 of Node→Bun, see project.bunMigrationScope).\n\nLOCAL: bun on PATH required. Build via `bun run build` (still tsc — emits ESM to dist/). Run dev binary via `bun dist/index.js` or via the shebang directly (chmod +x'd by build). The dev wrappers `rvr-dev` / `rvr-dev-mcp` (npm `bin` entries) are bun-shebang scripts now.\n\nNODE STILL REQUIRED ONLY FOR: vitest test runner. Until #112 lands, run tests via `bun run test` (accepts a 162-test coverage gap from vi.mock auto-hoist issues) or via Node-vitest directly (also degraded post-ESM, see project.bunMigrationScope baselines).\n\nCI: bun-only via oven-sh/setup-bun@v2 + `bun install --frozen-lockfile`. No setup-node anywhere in release.yml.\n\nCHANNELS UNCHANGED: `rvr` (stable, 1.0.0), `rvr-beta` (beta, 1.0.0-beta.3), `rvr-dev` (npm-linked).\n\nEXEC INTERPOLATION: stored commands use backticks, not `$(...)` (collides with Reverie's $(key) syntax).",
+  "value": "Bun-only dev/prod runtime as of 2026-05-07 (pass 2 of Node→Bun, see project.bunMigrationScope).\n\nLOCAL: bun on PATH required. Build via `bun run build` (still tsc — emits ESM to dist/). Run dev binary via `bun dist/index.js` or via the shebang directly (chmod +x'd by build). The dev wrappers `rvr-dev` / `rvr-dev-mcp` (npm `bin` entries) are bun-shebang scripts now.\n\nTEST RUNNER: `bun:test` via `bun run test` (uses `--isolate` from package.json script; preload configured in bunfig.toml).\n\nCI: bun-only via oven-sh/setup-bun@v2 + `bun install --frozen-lockfile`. No setup-node anywhere in release.yml.\n\nCHANNELS UNCHANGED: `rvr` (stable, 1.0.0), `rvr-beta` (beta, 1.0.0-beta.3), `rvr-dev` (npm-linked).\n\nEXEC INTERPOLATION: stored commands use backticks, not `$(...)` (collides with Reverie's $(key) syntax).",
   "meta": {
     "created": 1775358827618,
-    "updated": 1778203721389
+    "updated": 1778296594181
   }
 }

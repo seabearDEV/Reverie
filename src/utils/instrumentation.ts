@@ -1,4 +1,5 @@
 import path from 'path';
+import { formatWithOptions } from 'node:util';
 import { Scope } from '../store';
 import { getValue, getEntriesFlat } from '../storage';
 import { loadAliases, resolveKey } from '../alias';
@@ -137,8 +138,19 @@ export async function withCliInstrumentation<T>(
   const originalConsoleLog = console.log;
   const originalConsoleError = console.error;
   if (isBun) {
-    const formatArgs = (args: unknown[]): string =>
-      args.map((a) => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\n';
+    const formatArgs = (args: unknown[]): string => {
+      try {
+        return formatWithOptions({ colors: false }, ...args) + '\n';
+      } catch {
+        return args.map((arg) => {
+          try {
+            return String(arg);
+          } catch {
+            return '[unformattable]';
+          }
+        }).join(' ') + '\n';
+      }
+    };
     console.log = function (...args: unknown[]): void {
       addResponseBytes(Buffer.byteLength(formatArgs(args), 'utf8'));
       originalConsoleLog.apply(console, args);

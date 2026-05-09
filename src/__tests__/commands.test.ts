@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import readline from 'readline';
 import { execSync } from 'child_process';
+import type { Mock } from 'bun:test';
 import {
   setEntry,
   getEntry,
