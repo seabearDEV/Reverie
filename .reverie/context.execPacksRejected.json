@@ -1,0 +1,7 @@
+{
+  "value": "Executable packs (Reverie pack format shipping exec entries) considered for v1.x and rejected 2026-05-12. Filed as #116, closed same day with rationale.\n\nWHY: Skills (Claude Code, ~/.claude/skills/) already distribute procedural ops with bundled shell scripts. MCPs distribute structured tools. An exec pack would add no differentiation — not better structure (MCP wins), not better procedural context (skill wins), not better CLI ergonomics (shell aliases / direnv win). Originally filed alongside text packs (#115) without enough scrutiny of overlap.\n\nWHAT STAYS DIFFERENTIATED: text packs (#115). Reverie's slot is \"what the agent knows before it acts\" — context loaded at session bootstrap. Skills and MCPs don't fill that slot; ops distribution is already full.\n\nWHEN TO REVISIT: only if the agent-agnostic angle (project.goals #4) becomes pressing. Skills are Claude Code-specific. If Reverie's cross-agent reach (Copilot, Cursor, ChatGPT) starts mattering AND those ecosystems still lack a skills equivalent, an exec-pack channel could become the only cross-agent procedural-distribution surface. That's a real gap — but a v2.x scope reframe, not an MVP feature. Don't re-derive without that trigger.\n\nDON'T: refile this as a \"lite\" version, a \"just for the user's own machine\" version, or a \"wraps a single command\" version. All three have been considered implicitly — shell aliases beat each of them.",
+  "meta": {
+    "created": 1778619867367,
+    "updated": 1778619867367
+  }
+}

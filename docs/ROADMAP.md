@@ -6,6 +6,8 @@ Reverie is a structured, persistent knowledge base for software projects — acc
 
 **Planned work is tracked in [GitHub Issues](https://github.com/seabearDEV/reverie/issues).** This document provides the high-level vision and release history.
 
+Reverie 1.0.0 stable shipped 2026-05-07, following a rebrand from codexCLI. See [CHANGELOG.md](../CHANGELOG.md) for full provenance.
+
 ---
 
 ## What's Next
@@ -15,6 +17,7 @@ Reverie is a structured, persistent knowledge base for software projects — acc
 Make the knowledge base aware of the code it describes, and easier to navigate.
 
 - **Git-aware freshness** — link entries to source files, flag staleness on code changes ([#42](https://github.com/seabearDEV/reverie/issues/42))
+- **Entry health** — unified lifecycle, coldness, and staleness check ([#84](https://github.com/seabearDEV/reverie/issues/84))
 - **Live audit streaming** — `rvr audit --follow` for real-time formatted output ([#41](https://github.com/seabearDEV/reverie/issues/41))
 - **Fuzzy finder** — interactive search via fzf ([#13](https://github.com/seabearDEV/reverie/issues/13))
 - **Boolean search** — AND, OR, NOT operators ([#43](https://github.com/seabearDEV/reverie/issues/43))
@@ -25,8 +28,11 @@ Make the knowledge base aware of the code it describes, and easier to navigate.
 Make the knowledge base useful for teams, not just solo developers.
 
 - **Entry attribution** — track who/what last modified each entry ([#45](https://github.com/seabearDEV/reverie/issues/45))
-- **Merge conflict handling** — custom merge driver or tooling for `.reverie/` ([#46](https://github.com/seabearDEV/reverie/issues/46))
 - **`rvr diff`** — compare local vs committed entries ([#47](https://github.com/seabearDEV/reverie/issues/47))
+
+### Knowledge Reuse Across Projects
+
+- **`rvr pack install`** — share curated knowledge across projects via git URLs ([#115](https://github.com/seabearDEV/reverie/issues/115))
 
 ### Platform & Distribution
 
@@ -36,13 +42,14 @@ Make the knowledge base useful for teams, not just solo developers.
 - **IDE extensions** — VS Code and JetBrains ([#51](https://github.com/seabearDEV/reverie/issues/51))
 - **Performance at scale** — benchmarks, lazy loading, indexing ([#48](https://github.com/seabearDEV/reverie/issues/48))
 
-### Long-term: Go Rewrite
-
-A Go rewrite is planned for better performance and single-binary distribution without Node.js. Port core operations, MCP server, and data format compatibility. No issue yet — this is a future initiative.
-
 ---
 
 ## Release History
+
+v1.0.0 and forward are Reverie. The v0.1.0 → v1.14.0 entries below are codexCLI-era, preserved here for continuity.
+
+### v1.0.0 — Reverie Stable Launch
+First Reverie stable release (2026-05-07). SemVer re-baselined under the new product name; the prior codexCLI line ended at v1.14.0. Bun-runtime build pipeline (`bun build --compile`) shipped with the rebrand — ~50% smaller binaries, ~50× faster builds. End-to-end auto-migration from `.codexcli/` → `.reverie/` on first run. 19 MCP tools verified end-to-end against the stable binary. See [CHANGELOG](../CHANGELOG.md).
 
 ### v1.14.0 — Guardrails / Data Hygiene
 Theme E, picked mid-soak after the 2026-05-05 dataset surfaced bootstrap-overflow as the strongest signal. Five issues closed: project-resolution chokepoint refuses auto-scope writes when no `.reverie/` resolves (#99, breaking change), `reverie_context` size-budget shedding with priority order and pathological-overflow notice (#100), `reverie_set` write-amp warning on 3rd+ same-key write per session (#101), MCP audit `project` field absolutized (#102), tier semantics + size-budget interaction documented in schema-guide.md (#103). New telemetry/audit fields: `refusedReason`, `rescuedByExplicitGlobal`, `degraded`, `shedNamespaces`, `writeAmpWarning`, `writeAmpCount`. Tests 1325 → 1394 (+69).
