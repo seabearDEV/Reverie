@@ -9,11 +9,26 @@ import { getGlobalStoreDirPath, getConfigFilePath, isDataDirectoryFromEnv } from
 import { findProjectFile } from '../store';
 import { color } from '../formatting';
 import { getBinaryName } from '../utils/binaryName';
+import { isJsonMode, setResult } from '../utils/output';
 
 export function showInfo(): void {
   const entryCount = Object.keys(getEntriesFlat()).length;
   const aliasCount = Object.keys(loadAliases()).length;
   const confirmCount = Object.keys(loadConfirmKeys()).length;
+
+  if (isJsonMode()) {
+    setResult({
+      version,
+      entries: entryCount,
+      aliases: aliasCount,
+      confirmKeys: confirmCount,
+      dataDir: getGlobalStoreDirPath(),
+      dataDirFromEnv: isDataDirectoryFromEnv(),
+      configFile: getConfigFilePath(),
+      projectFile: findProjectFile() ?? null,
+    });
+    return;
+  }
 
   console.log();
 

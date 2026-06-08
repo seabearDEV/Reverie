@@ -1,6 +1,7 @@
 import type { Mock } from 'bun:test';
 import { lintEntries } from '../commands/lint';
 import { getEntriesFlat } from '../storage';
+import { configureOutput, buildEnvelope } from '../utils/output';
 import { findProjectFile } from '../store';
 import fs from 'fs';
 
@@ -87,10 +88,10 @@ describe('lintEntries', () => {
       'custom.key': 'value',
     });
 
-    lintEntries({ json: true });
+    configureOutput({ json: true, command: 'lint' });
+    lintEntries({});
 
-    const output = (console.log as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    const parsed = JSON.parse(output) as { issues: Array<{ key: string; namespace: string }>; allowed: string[] };
+    const parsed = buildEnvelope().result as { issues: Array<{ key: string; namespace: string }>; allowed: string[] };
     expect(parsed.issues).toHaveLength(1);
     expect(parsed.issues[0].namespace).toBe('custom');
     expect(parsed.allowed).toContain('project');
@@ -100,10 +101,10 @@ describe('lintEntries', () => {
   it('outputs empty issues array in JSON when all valid', () => {
     mockGetEntriesFlat.mockReturnValue({ 'project.name': 'test' });
 
-    lintEntries({ json: true });
+    configureOutput({ json: true, command: 'lint' });
+    lintEntries({});
 
-    const output = (console.log as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    const parsed = JSON.parse(output) as { issues: unknown[] };
+    const parsed = buildEnvelope().result as { issues: unknown[] };
     expect(parsed.issues).toHaveLength(0);
   });
 

@@ -1,7 +1,7 @@
 {
-  "value": "rvr init scans codebase via scanCodebase() in src/commands/scan.ts — 6 composable detectors (detectProject, detectCommands, detectFiles, detectDeps, detectConventions, detectContext). Generates CLAUDE.md via src/commands/claude-md.ts. Seeds conventions.persistence entry for three-file balance. Flags: --no-scan, --no-claude, --force, --dry-run. Idempotent — skips existing keys.",
+  "value": "rvr init scans codebase via scanCodebase() in src/commands/scan.ts — 6 composable detectors (detectProject, detectCommands, detectFiles, detectDeps, detectConventions, detectContext). Generates CLAUDE.md via src/commands/claude-md.ts AND (since #117 WS2) an agent-agnostic AGENTS.md (CLI-driven workflow, CLI_LLM_INSTRUCTIONS-flavored) via generateAgentsMd in the same file. Seeds conventions.persistence entry. Flags: --no-scan, --no-claude, --no-agents, --force, --dry-run. Idempotent — skips existing keys/files.",
   "meta": {
     "created": 1775508051571,
-    "updated": 1778164828391
+    "updated": 1780936615832
   }
 }

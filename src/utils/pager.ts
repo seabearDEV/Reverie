@@ -30,7 +30,7 @@ export async function withPager(fn: () => void | Promise<void>): Promise<void> {
     const cb = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback;
     if (cb) cb();
     return true;
-  } as typeof process.stdout.write;
+  };
 
   try {
     await fn();

@@ -20,6 +20,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
 import { interpolate, interpolateObject } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
+import { isJsonMode, setResult, failJson } from '../utils/output';
 
 function toScope(global?: boolean  ): Scope | undefined {
   return global ? 'global' : undefined;
@@ -32,7 +33,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     // --chain: resolve the first key's value as a space-separated list of key references
     if (options.chain) {
       if (keys.length !== 1) {
-        printError('--chain requires exactly one key argument.');
+        printError('--chain requires exactly one key argument.', 'INVALID_INPUT');
         process.exitCode = 1;
         return;
       }
@@ -40,19 +41,19 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       const resolvedChainKey = resolveKey(chainKey, scope);
       const chainValue = getValue(resolvedChainKey, scope);
       if (chainValue === undefined) {
-        printError(`Entry '${chainKey}' not found.`);
+        printError(`Entry '${chainKey}' not found.`, 'NOT_FOUND');
         process.exitCode = 1;
         return;
       }
       if (typeof chainValue !== 'string') {
-        printError(`Entry '${chainKey}' is not a string value.`);
+        printError(`Entry '${chainKey}' is not a string value.`, 'INVALID_INPUT');
         process.exitCode = 1;
         return;
       }
       // Split on whitespace to get key references, then run them as if passed as CLI args
       const chainKeys = chainValue.trim().split(/\s+/);
       if (chainKeys.length === 0 || (chainKeys.length === 1 && chainKeys[0] === '')) {
-        printError(`Entry '${chainKey}' is empty.`);
+        printError(`Entry '${chainKey}' is empty.`, 'INVALID_INPUT');
         process.exitCode = 1;
         return;
       }
@@ -75,20 +76,20 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
         let value = getValue(resolvedKey, scope);
 
         if (value === undefined) {
-          printError(`Entry '${segment}' not found.`);
+          printError(`Entry '${segment}' not found.`, 'NOT_FOUND');
           process.exitCode = 1;
           return;
         }
 
         if (typeof value !== 'string') {
-          printError(`Entry '${segment}' is not a string command (got ${typeof value}).`);
+          printError(`Entry '${segment}' is not a string command (got ${typeof value}).`, 'INVALID_INPUT');
           process.exitCode = 1;
           return;
         }
 
         if (isEncrypted(value)) {
           if (!options.decrypt) {
-            printError(`Entry '${segment}' is encrypted. Use --decrypt to decrypt and run.`);
+            printError(`Entry '${segment}' is encrypted. Use --decrypt to decrypt and run.`, 'ENCRYPTED_NO_PASSWORD');
             process.exitCode = 1;
             return;
           }
@@ -102,7 +103,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
           try {
             value = decryptValue(value, password);
           } catch {
-            printError('Decryption failed. Wrong password or corrupted data.');
+            printError('Decryption failed. Wrong password or corrupted data.', 'DECRYPT_FAILED');
             process.exitCode = 1;
             return;
           }
@@ -123,6 +124,42 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     }
 
     const value = commands.join(' && ');
+
+    // JSON mode (#117 WS1): produce a structured result instead of streaming
+    // the child's stdio. --source (the shell-eval wrapper path) is exempt — it
+    // is an internal integration, not an agent surface.
+    if (isJsonMode() && !options.source) {
+      const needsConfirmJson = resolvedKeys.some(k => hasConfirm(k));
+      if (options.dry) {
+        setResult({ keys: resolvedKeys, command: value });
+        return;
+      }
+      // Replaces the MCP two-step confirm-token flow: a stateless refusal the
+      // host gates on, then re-runs with --yes (see design doc). The resolved
+      // command rides in error.preview.
+      if (needsConfirmJson && !options.yes) {
+        setResult({ keys: resolvedKeys, command: value });
+        failJson('REQUIRES_CONFIRMATION', `Entry requires confirmation. Re-run with --yes to execute.`, value);
+        return;
+      }
+      const proc = spawnSync(value, { encoding: 'utf-8', shell: process.env.SHELL ?? '/bin/sh' });
+      // A spawn failure (bad $SHELL, ENOENT, EACCES) leaves status AND signal
+      // null. Without this guard exitCode would resolve to 0 and the command
+      // would report ok:true having run nothing.
+      if (proc.error) {
+        setResult({ keys: resolvedKeys, command: value, stdout: proc.stdout ?? '', stderr: proc.stderr ?? '' });
+        failJson('COMMAND_FAILED', `Failed to spawn command: ${proc.error.message}`, value);
+        process.exitCode = 1;
+        return;
+      }
+      const exitCode = proc.status ?? (proc.signal ? 1 : 0);
+      setResult({ keys: resolvedKeys, command: value, exitCode, stdout: proc.stdout ?? '', stderr: proc.stderr ?? '' });
+      if (exitCode !== 0) {
+        failJson('COMMAND_FAILED', `Command exited with code ${exitCode}.`, value);
+      }
+      process.exitCode = exitCode;
+      return;
+    }
 
     if (options.source) {
       process.stderr.write(color.gray('$ ') + color.white(value) + '\n');
@@ -190,7 +227,7 @@ async function promptAndEncrypt(value: string, passwordFile?: string): Promise<s
   const passwordBuf = Buffer.from(password);
   const confirmBuf = Buffer.from(confirmPw);
   if (passwordBuf.length !== confirmBuf.length || !crypto.timingSafeEqual(passwordBuf, confirmBuf)) {
-    printError('Passwords do not match.');
+    printError('Passwords do not match.', 'INVALID_INPUT');
     process.exitCode = 1;
     return null;
   }
@@ -222,7 +259,7 @@ export async function setEntry(key: string, value: string | undefined, force = f
       if (confirm !== undefined) {
         const existing = getValue(key, scope);
         if (existing === undefined) {
-          printError(`Entry '${key}' not found. Cannot update confirm on a non-existent entry.`);
+          printError(`Entry '${key}' not found. Cannot update confirm on a non-existent entry.`, 'NOT_FOUND');
           process.exitCode = 1;
           return;
         }
@@ -239,13 +276,13 @@ export async function setEntry(key: string, value: string | undefined, force = f
         return;
       }
       if (!alias) {
-        printError('Missing value. Provide a value or use --alias (-a) to update an alias.');
+        printError('Missing value. Provide a value or use --alias (-a) to update an alias.', 'INPUT_REQUIRED');
         process.exitCode = 1;
         return;
       }
       const existing = getValue(key, scope);
       if (existing === undefined) {
-        printError(`Entry '${key}' not found. Cannot set alias on a non-existent entry.`);
+        printError(`Entry '${key}' not found. Cannot set alias on a non-existent entry.`, 'NOT_FOUND');
         process.exitCode = 1;
         return;
       }
@@ -281,6 +318,7 @@ export async function setEntry(key: string, value: string | undefined, force = f
     }
 
     await handlePostSetConfirm(key, confirm, scope);
+    if (isJsonMode()) setResult({ key, ...(alias ? { alias } : {}) });
   } catch (error) {
     handleError('Failed to set entry:', error);
   }
@@ -301,7 +339,7 @@ function displayFlatEntries(flat: Record<string, string>, aliasMap: Record<strin
 
   const entries = options.source
     ? flat as Record<string, CodexValue>
-    : interpolateObject(flat as Record<string, CodexValue>);
+    : interpolateObject(flat);
 
   if (options.plain) {
     for (const [k, v] of Object.entries(entries)) {
@@ -370,7 +408,7 @@ function displayAllEntries(data: Record<string, CodexValue>, aliasMap: Record<st
 
 function displaySubtree(key: string, value: Record<string, CodexValue>, aliasMap: Record<string, string>, options: GetOptions): void {
   if (options.tree) {
-    displayTree({ [key]: value } as Record<string, unknown>, aliasMap, '', '', !!options.plain, undefined, !!options.source, !options.values, options.depth);
+    displayTree({ [key]: value }, aliasMap, '', '', !!options.plain, undefined, !!options.source, !options.values, options.depth);
     return;
   }
 
@@ -393,30 +431,29 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
   // For single-key lookups, use auto fallthrough (project → global)
   const lookupScope = toScope(options.global);
 
-  // --json output mode (no alias map needed)
-  if (options.json) {
+  // --json output mode (no alias map needed). The value goes inside the WS1
+  // envelope's `result` (decision D3 — the bare-value shape was a documented
+  // break). The instrumentation wrapper emits the single envelope. JSON mode
+  // is global state set by the preAction hook from --json/RVR_OUTPUT.
+  if (isJsonMode()) {
     if (!key) {
       if (options.all && hasProject) {
-        const result: Record<string, unknown> = {};
-        result.project = jsonFlatEntries(loadData('project'));
-        result.global = jsonFlatEntries(loadData('global'));
-        console.log(JSON.stringify(result, null, 2));
+        setResult({ project: jsonFlatEntries(loadData('project')), global: jsonFlatEntries(loadData('global')) });
       } else if (options.aliases) {
-        console.log(JSON.stringify(loadAliases(listingScope), null, 2));
+        setResult({ aliases: loadAliases(listingScope) });
       } else {
-        console.log(JSON.stringify(jsonFlatEntries(loadData(listingScope)), null, 2));
+        setResult(jsonFlatEntries(loadData(listingScope)));
       }
       return;
     }
 
     const val = getValue(key, lookupScope);
     if (val === undefined) {
-      console.error(JSON.stringify({ error: `Entry '${key}' not found` }));
-      process.exitCode = 1;
+      failJson('NOT_FOUND', `Entry '${key}' not found`);
       return;
     }
     if (typeof val === 'object' && val !== null) {
-      console.log(JSON.stringify(jsonFlatEntries(flattenObject({ [key]: val })), null, 2));
+      setResult(jsonFlatEntries(flattenObject({ [key]: val })));
     } else {
       const strVal = String(val);
       let displayVal: string;
@@ -425,7 +462,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
       } else {
         try { displayVal = interpolate(strVal); } catch { displayVal = strVal; }
       }
-      console.log(JSON.stringify({ [key]: displayVal }));
+      setResult({ [key]: displayVal });
     }
     return;
   }
@@ -455,7 +492,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
   const value = getValue(key, lookupScope);
 
   if (value === undefined) {
-    printError(`Entry '${key}' not found.`);
+    printError(`Entry '${key}' not found.`, 'NOT_FOUND');
     process.exitCode = 1;
     return;
   }
@@ -482,7 +519,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
     try {
       decrypted = decryptValue(strValue, password);
     } catch {
-      printError('Decryption failed. Wrong password or corrupted data.');
+      printError('Decryption failed. Wrong password or corrupted data.', 'DECRYPT_FAILED');
       process.exitCode = 1;
       return;
     }
@@ -555,7 +592,7 @@ export async function editEntry(key: string, options: { decrypt?: boolean, globa
   try {
     const editor = process.env.VISUAL ?? process.env.EDITOR;
     if (!editor) {
-      printError('No editor configured. Set $EDITOR or $VISUAL environment variable.');
+      printError('No editor configured. Set $EDITOR or $VISUAL environment variable.', 'INVALID_INPUT');
       process.exitCode = 1;
       return;
     }
@@ -563,13 +600,13 @@ export async function editEntry(key: string, options: { decrypt?: boolean, globa
     let value = getValue(key, scope);
 
     if (value === undefined) {
-      printError(`Entry '${key}' not found.`);
+      printError(`Entry '${key}' not found.`, 'NOT_FOUND');
       process.exitCode = 1;
       return;
     }
 
     if (typeof value !== 'string') {
-      printError(`Entry '${key}' is a subtree, not a single value. Cannot edit.`);
+      printError(`Entry '${key}' is a subtree, not a single value. Cannot edit.`, 'INVALID_INPUT');
       process.exitCode = 1;
       return;
     }
@@ -577,7 +614,7 @@ export async function editEntry(key: string, options: { decrypt?: boolean, globa
     let password: string | undefined;
     if (isEncrypted(value)) {
       if (!options.decrypt) {
-        printError(`Entry '${key}' is encrypted. Use --decrypt to edit.`);
+        printError(`Entry '${key}' is encrypted. Use --decrypt to edit.`, 'ENCRYPTED_NO_PASSWORD');
         process.exitCode = 1;
         return;
       }
@@ -590,7 +627,7 @@ export async function editEntry(key: string, options: { decrypt?: boolean, globa
       try {
         value = decryptValue(value, password);
       } catch {
-        printError('Decryption failed. Wrong password or corrupted data.');
+        printError('Decryption failed. Wrong password or corrupted data.', 'DECRYPT_FAILED');
         process.exitCode = 1;
         return;
       }
@@ -664,6 +701,7 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   removeConfirmForKey(key, scope);
 
   printSuccess(`Entry '${key}' removed successfully.`);
+  if (isJsonMode()) setResult({ key, removed: true });
 }
 
 export async function copyEntry(sourceKey: string, destKey: string, force = false, global?: boolean): Promise<void> {
@@ -672,7 +710,7 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
   try {
     const value = getValue(sourceKey, scope);
     if (value === undefined) {
-      printError(`Entry '${sourceKey}' not found.`);
+      printError(`Entry '${sourceKey}' not found.`, 'NOT_FOUND');
       process.exitCode = 1;
       return;
     }
@@ -705,6 +743,7 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
     }
 
     printSuccess(`Entry '${sourceKey}' copied to '${destKey}'.`);
+    if (isJsonMode()) setResult({ source: sourceKey, dest: destKey });
   } catch (error) {
     handleError('Failed to copy entry:', error);
   }
@@ -719,28 +758,29 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     if (!result) {
       const aliases = loadAliases(scope);
       if (!(oldKey in aliases)) {
-        printError(`Alias '${oldKey}' not found.`);
+        printError(`Alias '${oldKey}' not found.`, 'NOT_FOUND');
       } else {
-        printError(`Alias '${newKey}' already exists.`);
+        printError(`Alias '${newKey}' already exists.`, 'INVALID_INPUT');
       }
       process.exitCode = 1;
       return;
     }
     printSuccess(`Alias '${oldKey}' renamed to '${newKey}'.`);
+    if (isJsonMode()) setResult({ from: oldKey, to: newKey, kind: 'alias' });
     return;
   }
 
   // Entry key rename
   const value = getValue(oldKey, scope);
   if (value === undefined) {
-    printError(`Entry '${oldKey}' not found.`);
+    printError(`Entry '${oldKey}' not found.`, 'NOT_FOUND');
     process.exitCode = 1;
     return;
   }
 
   const existing = getValue(newKey, scope);
   if (existing !== undefined) {
-    printError(`Entry '${newKey}' already exists. Remove it first or choose a different key.`);
+    printError(`Entry '${newKey}' already exists. Remove it first or choose a different key.`, 'INVALID_INPUT');
     process.exitCode = 1;
     return;
   }
@@ -804,4 +844,5 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   }
 
   printSuccess(`Entry '${oldKey}' renamed to '${newKey}'.`);
+  if (isJsonMode()) setResult({ from: oldKey, to: newKey, kind: 'entry', ...(newAlias ? { alias: newAlias } : {}) });
 }

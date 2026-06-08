@@ -8,6 +8,7 @@ import { logToolCall, classifyOp, TelemetryExtras } from './telemetry';
 import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
 import { ProjectResolutionError } from '../projectResolution';
+import { isJsonMode, failJson, emitEnvelope } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
@@ -71,6 +72,10 @@ export async function withCliInstrumentation<T>(
   const op = classifyOp(ctx.tool);
   const isWrite = op === 'write' || op === 'exec' || op === 'remove';
   const scope: Scope = ctx.scope ?? 'auto';
+  // JSON mode (#117 WS1): the wrapper is the single envelope emit point. It
+  // sinks handler stdout (so a single envelope is the only thing on stdout)
+  // and emits the envelope via the original writer in the finally block.
+  const jsonMode = isJsonMode();
 
   // Alias resolution tracking. reverie_copy is special-cased: its context
   // carries rawKey=source (user input) and copySourceKey=resolvedSource, so
@@ -128,6 +133,14 @@ export async function withCliInstrumentation<T>(
     } else if (chunk instanceof Uint8Array) {
       addResponseBytes(chunk.byteLength);
     }
+    if (jsonMode) {
+      // Swallow handler stdout so the final envelope is the only thing
+      // written. Still invoke any write callback so callers awaiting drain
+      // don't hang. stderr is untouched — diagnostics flow normally.
+      const cb = args.find((a) => typeof a === 'function') as (() => void) | undefined;
+      if (cb) cb();
+      return true;
+    }
     return (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(...args);
   } as typeof process.stdout.write;
 
@@ -153,10 +166,13 @@ export async function withCliInstrumentation<T>(
     };
     console.log = function (...args: unknown[]): void {
       addResponseBytes(Buffer.byteLength(formatArgs(args), 'utf8'));
-      originalConsoleLog.apply(console, args);
+      // Under Bun, console.log bypasses process.stdout.write, so swallow it
+      // here in JSON mode (mirrors the stdout sink above).
+      if (!jsonMode) originalConsoleLog.apply(console, args);
     };
     console.error = function (...args: unknown[]): void {
       addResponseBytes(Buffer.byteLength(formatArgs(args), 'utf8'));
+      // console.error goes to stderr — always forward, even in JSON mode.
       originalConsoleError.apply(console, args);
     };
   }
@@ -175,7 +191,17 @@ export async function withCliInstrumentation<T>(
     if (err instanceof ProjectResolutionError) {
       refusedReason = 'project_unresolved';
     }
-    throw err;
+    // In JSON mode an uncaught throw must still surface as a structured
+    // envelope rather than crashing the process with a non-envelope stack
+    // trace. Record it and fall through to the finally emit. (Most commands
+    // catch internally via handleError; this covers direct-call handlers
+    // like the inline alias/confirm actions.)
+    if (jsonMode) {
+      const code = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED' : 'RUNTIME';
+      failJson(code, err instanceof Error ? err.message : String(err));
+    } else {
+      throw err;
+    }
   } finally {
     // Always restore stdout.write before reading the measurement, so any
     // logging from the wrapper itself (or the audit/telemetry write paths
@@ -256,7 +282,7 @@ export async function withCliInstrumentation<T>(
     const projectFile = findProjectFile();
     const resolvedScope: 'project' | 'global' | undefined = scope === 'auto'
       ? (projectFile ? 'project' : 'global')
-      : scope as 'project' | 'global' | undefined;
+      : scope;
     // #99: rescuedByExplicitGlobal — the call succeeded with explicit
     // scope:'global' but would have refused under scope:'auto' because
     // project resolution failed. Mirrors the MCP-side telemetry signal.
@@ -294,7 +320,19 @@ export async function withCliInstrumentation<T>(
       refusedReason,
       rescuedByExplicitGlobal,
     }, true);
+
+    // Emit the single structured envelope (#117 WS1). stdout.write has been
+    // restored above, so we hand emitEnvelope the original writer to be sure
+    // the envelope reaches the real stdout regardless of patch state. ok and
+    // any error are derived inside buildEnvelope from exitCode + recorded
+    // failure. Idempotent: a no-op if something already emitted.
+    if (jsonMode) {
+      emitEnvelope((s) => { (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(s); });
+    }
   }
 
-  return result;
+  // In JSON mode a swallowed error returns undefined here (callers discard the
+  // value — they pass `() => commands.xxx()` whose result is unused). The cast
+  // keeps the Promise<T> contract; the non-JSON path always assigned `result`.
+  return result as T;
 }

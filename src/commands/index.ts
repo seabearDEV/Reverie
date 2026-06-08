@@ -7,3 +7,4 @@ export { lintEntries } from './lint';
 export { showAuditLog } from './audit';
 export { showContext } from './context';
 export { showTopology } from './topology';
+export { showManifest, buildManifest } from './manifest';

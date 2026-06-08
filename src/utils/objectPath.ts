@@ -25,7 +25,7 @@ export function setNestedValue(obj: CodexData, path: string, value: string): voi
     if (!current[key] || typeof current[key] !== 'object') {
       current[key] = {};
     }
-    current = current[key] as CodexData;
+    current = current[key];
   }
 
   const lastKey = keys[keys.length - 1];
@@ -86,7 +86,7 @@ export function removeNestedValue(obj: CodexData, path: string): boolean {
       return false; // Path doesn't exist
     }
     stack.push({ obj: current, key });
-    current = current[key] as CodexData;
+    current = current[key];
   }
   
   // Delete the value

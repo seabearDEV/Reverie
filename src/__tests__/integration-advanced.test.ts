@@ -152,9 +152,10 @@ describe('CLI Integration Tests — Advanced', () => {
 
     it('JSON output produces valid JSON', () => {
       run('set --force search.json.key "jsonval"');
-      const result = run('find "jsonval" --json');
-      const parsed = JSON.parse(result);
-      expect(parsed.entries).toBeDefined();
+      // #117: matches are now inside the envelope's `result`.
+      const parsed = JSON.parse(run('find "jsonval" --json'));
+      expect(parsed.ok).toBe(true);
+      expect(parsed.result.entries).toBeDefined();
     });
   });
 

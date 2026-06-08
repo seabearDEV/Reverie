@@ -13,8 +13,9 @@ import { withPager } from './utils/pager';
 import { getDataDirectory } from './utils/paths';
 import { getBinaryName } from './utils/binaryName';
 import fs from 'fs';
-import { DEFAULT_LLM_INSTRUCTIONS, getEffectiveInstructions } from './llm-instructions';
+import { DEFAULT_LLM_INSTRUCTIONS, CLI_LLM_INSTRUCTIONS, getEffectiveInstructions } from './llm-instructions';
 import { withCliInstrumentation } from './utils/instrumentation';
+import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult } from './utils/output';
 
 // Early-exit handler for shell tab-completion (must run before Commander parses args)
 const completionFlagIndex = process.argv.indexOf('--get-completions');
@@ -42,6 +43,24 @@ reverie.option('--debug', 'Enable debug mode')
       process.env.DEBUG = 'true';
     }
   });
+
+// Global structured-output flag (#117 WS1). `rvr --json <cmd>` or the
+// session-wide RVR_OUTPUT=json env var make every command emit one versioned
+// envelope on stdout. Read commands also keep their local `-j, --json` for
+// `rvr get foo -j` ergonomics; optsWithGlobals() merges both sources.
+reverie.option('--json', 'Emit a structured JSON envelope on stdout (or set RVR_OUTPUT=json)');
+
+// Configure the output layer before every action runs. actionCommand is the
+// leaf command; we build a space-joined name (e.g. "alias set") for the
+// envelope's `command` field, and resolve JSON mode from the merged flag + env.
+reverie.hook('preAction', (_thisCommand, actionCommand) => {
+  const names: string[] = [];
+  for (let c: typeof actionCommand | null = actionCommand; c?.parent; c = c.parent) {
+    names.unshift(c.name());
+  }
+  const json = resolveJsonMode(actionCommand.optsWithGlobals().json as boolean | undefined);
+  configureOutput({ json, command: names.join(' ') });
+});
 
 // Set command
 reverie
@@ -286,10 +305,10 @@ reverie
         if (options.alias) {
           const removed = removeAlias(key, scope);
           if (removed) {
-            console.log(`Alias '${key}' removed successfully.`);
+            if (isJsonMode()) setResult({ alias: key, removed: true });
+            else console.log(`Alias '${key}' removed successfully.`);
           } else {
-            console.error(`Alias '${key}' not found.`);
-            process.exitCode = 1;
+            printError(`Alias '${key}' not found.`, 'NOT_FOUND');
           }
         } else {
           await commands.removeEntry(resolvedKey, options.force, options.global);
@@ -312,7 +331,10 @@ aliasCommand
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
       { tool: 'reverie_alias_set', key: name, scope, params: { alias: name, path: targetPath } },
-      () => setAlias(name, targetPath, scope)
+      () => {
+        setAlias(name, targetPath, scope);
+        if (isJsonMode()) setResult({ alias: name, target: targetPath });
+      }
     );
   });
 
@@ -327,10 +349,10 @@ aliasCommand
       () => {
         const removed = removeAlias(name, scope);
         if (removed) {
-          console.log(`Alias '${name}' removed.`);
+          if (isJsonMode()) setResult({ alias: name, removed: true });
+          else console.log(`Alias '${name}' removed.`);
         } else {
-          console.error(`Alias '${name}' not found.`);
-          process.exitCode = 1;
+          printError(`Alias '${name}' not found.`, 'NOT_FOUND');
         }
       }
     );
@@ -347,6 +369,10 @@ aliasCommand
       { tool: 'reverie_alias_list', scope, params: {} },
       () => {
         const aliases = loadAliases(scope);
+        if (isJsonMode()) {
+          setResult({ aliases });
+          return;
+        }
         if (Object.keys(aliases).length === 0) {
           console.log('No aliases defined.');
         } else {
@@ -369,15 +395,15 @@ aliasCommand
       () => {
         const result = renameAlias(oldName, newName, scope);
         if (result) {
-          console.log(`Alias '${oldName}' renamed to '${newName}'.`);
+          if (isJsonMode()) setResult({ from: oldName, to: newName });
+          else console.log(`Alias '${oldName}' renamed to '${newName}'.`);
         } else {
           const aliases = loadAliases(scope);
           if (!(oldName in aliases)) {
-            console.error(`Alias '${oldName}' not found.`);
+            printError(`Alias '${oldName}' not found.`, 'NOT_FOUND');
           } else {
-            console.error(`Alias '${newName}' already exists.`);
+            printError(`Alias '${newName}' already exists.`, 'INVALID_INPUT');
           }
-          process.exitCode = 1;
         }
       }
     );
@@ -398,7 +424,11 @@ confirmCommand
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
       { tool: 'reverie_confirm_set', key: resolvedKey, scope, params: { key: resolvedKey } },
-      () => { setConfirm(resolvedKey, scope); console.log(`Entry '${resolvedKey}' now requires confirmation to run.`); }
+      () => {
+        setConfirm(resolvedKey, scope);
+        if (isJsonMode()) setResult({ key: resolvedKey, confirm: true });
+        else console.log(`Entry '${resolvedKey}' now requires confirmation to run.`);
+      }
     );
   });
 
@@ -411,7 +441,11 @@ confirmCommand
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
       { tool: 'reverie_confirm_remove', key: resolvedKey, scope, params: { key: resolvedKey } },
-      () => { removeConfirm(resolvedKey, scope); console.log(`Confirmation removed from '${resolvedKey}'.`); }
+      () => {
+        removeConfirm(resolvedKey, scope);
+        if (isJsonMode()) setResult({ key: resolvedKey, confirm: false });
+        else console.log(`Confirmation removed from '${resolvedKey}'.`);
+      }
     );
   });
 
@@ -425,6 +459,10 @@ confirmCommand
       { tool: 'reverie_confirm_list', scope, params: {} },
       () => {
         const keys = loadConfirmKeys(scope);
+        if (isJsonMode()) {
+          setResult({ confirmKeys: Object.keys(keys) });
+          return;
+        }
         if (Object.keys(keys).length === 0) {
           console.log('No keys require confirmation.');
         } else {
@@ -460,6 +498,15 @@ reverie
   .description('Show version, stats, and storage paths')
   .action(() => {
     commands.showInfo();
+  });
+
+// ── Manifest command (top-level) — agent discovery (#117 WS2) ────────
+
+reverie
+  .command('manifest')
+  .description('Output the command/flag tree + MCP↔CLI map (the tools/list analog; use --json)')
+  .action(() => {
+    commands.showManifest(reverie);
   });
 
 // ── Search (hidden alias for find) ───────────────────────────────────
@@ -503,8 +550,12 @@ reverie
         const { color } = await import('./formatting');
         const threshold = parseInt(days ?? '30', 10);
         if (isNaN(threshold) || threshold < 0) {
-          console.error(color.red('Error: days must be a non-negative integer.'));
-          process.exitCode = 1;
+          if (isJsonMode()) {
+            printError('days must be a non-negative integer.', 'INVALID_INPUT');
+          } else {
+            console.error(color.red('Error: days must be a non-negative integer.'));
+            process.exitCode = 1;
+          }
           return;
         }
         const meta = scope ? loadMeta(scope) : loadMetaMerged();
@@ -517,8 +568,8 @@ reverie
             stale.push({ key, age: ts ? Math.floor((Date.now() - ts) / 86400000) : -1, lastUpdated: ts });
           }
         }
-        if (options.json) {
-          console.log(JSON.stringify(stale, null, 2));
+        if (isJsonMode()) {
+          setResult({ thresholdDays: threshold, stale });
           return;
         }
         if (stale.length === 0) {
@@ -607,14 +658,27 @@ configCommand
 configCommand
   .command('examples')
   .description('Show usage examples')
-  .action(() => { void withPager(() => showExamples()); });
+  .action(() => {
+    if (isJsonMode()) {
+      setResult({ hint: `Usage examples are human-formatted. Run \`${getBinaryName()} manifest --json\` for the machine-readable command surface, or \`${getBinaryName()} config llm-instructions --surface cli --json\` for agent guidance.` });
+      return;
+    }
+    void withPager(() => showExamples());
+  });
 
 configCommand
   .command('llm-instructions')
-  .description('Show the LLM instructions sent to AI agents via MCP')
+  .description('Show the LLM instructions sent to AI agents (MCP handshake or CLI workflow)')
   .option('--default', 'Show only the built-in defaults (exclude custom additions)')
-  .action(async (options: { default?: boolean }) => {
-    const text = options.default ? DEFAULT_LLM_INSTRUCTIONS : getEffectiveInstructions();
+  .addOption(new Option('--surface <surface>', 'Which surface to show').choices(['mcp', 'cli']).default('mcp'))
+  .action(async (options: { default?: boolean, surface?: 'mcp' | 'cli' }) => {
+    const surface = options.surface ?? 'mcp';
+    const base = surface === 'cli' ? CLI_LLM_INSTRUCTIONS : DEFAULT_LLM_INSTRUCTIONS;
+    const text = options.default ? base : getEffectiveInstructions(surface);
+    if (isJsonMode()) {
+      setResult({ surface, instructions: text });
+      return;
+    }
     await withPager(() => { process.stdout.write(text + '\n'); });
   });
 
@@ -627,6 +691,7 @@ completionsCommand
   .command('bash')
   .description('Output Bash completion script')
   .action(() => {
+    if (isJsonMode()) { setResult({ shell: 'bash', script: generateBashScript() }); return; }
     process.stdout.write(generateBashScript());
   });
 
@@ -634,6 +699,7 @@ completionsCommand
   .command('zsh')
   .description('Output Zsh completion script')
   .action(() => {
+    if (isJsonMode()) { setResult({ shell: 'zsh', script: generateZshScript() }); return; }
     process.stdout.write(generateZshScript());
   });
 
@@ -641,6 +707,12 @@ completionsCommand
   .command('install')
   .description('Auto-detect shell and install completions')
   .action(() => {
+    if (isJsonMode()) {
+      // Interactive setup that writes shell rc files and prints progress; not a
+      // machine surface. Refuse rather than pollute the envelope's stdout.
+      printError('completions install is interactive; run it without --json.', 'INVALID_INPUT');
+      return;
+    }
     installCompletions();
   });
 
@@ -713,9 +785,10 @@ reverie
   .option('--scaffold', 'Auto-populate from project files (kept for backward compat)')
   .option('--no-scan', 'Skip codebase analysis')
   .option('--no-claude', 'Skip CLAUDE.md generation')
-  .option('--force', 'Overwrite existing CLAUDE.md')
+  .option('--no-agents', 'Skip AGENTS.md generation')
+  .option('--force', 'Overwrite existing CLAUDE.md / AGENTS.md')
   .option('--dry-run', 'Preview without writing')
-  .action(async (options: { remove?: boolean; scaffold?: boolean; scan?: boolean; claude?: boolean; force?: boolean; dryRun?: boolean }) => {
+  .action(async (options: { remove?: boolean; scaffold?: boolean; scan?: boolean; claude?: boolean; agents?: boolean; force?: boolean; dryRun?: boolean }) => {
     if (options.scaffold) console.error(color.yellow('Deprecation: --scaffold is now a no-op. Scanning is the default. Use --no-scan to skip.'));
     await withCliInstrumentation(
       { tool: 'reverie_init', scope: 'project', params: {} },
@@ -735,8 +808,8 @@ reverie
     const { parsePeriodDays } = await import('./utils');
     const stats = computeStats(parsePeriodDays(options.period));
 
-    if (options.json) {
-      console.log(JSON.stringify(stats, null, 2));
+    if (isJsonMode()) {
+      setResult(stats);
       return;
     }
 
@@ -918,6 +991,13 @@ reverie
   .option('-f, --follow', 'Follow the audit log in real time')
   .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean }) => {
     if (options.follow) {
+      // --follow streams indefinitely; that is incompatible with the
+      // single-envelope JSON contract (#117 WS1). Refuse rather than emit a
+      // never-terminating stream of non-envelope lines on stdout.
+      if (isJsonMode()) {
+        printError('audit --follow streams continuously and cannot emit a single JSON envelope. Drop --follow (or RVR_OUTPUT) and poll `audit --json` instead.', 'INVALID_INPUT');
+        return;
+      }
       const { followAuditLog } = await import('./commands/audit');
       await followAuditLog(key, options);
     } else {
@@ -1001,6 +1081,13 @@ void (async () => {
         }
       }
     }
-    reverie.parse(process.argv);
+    // parseAsync (not parse) so async actions complete before the finalize
+    // below — the instrumented wrapper emits the envelope for data commands;
+    // this fallback covers the few non-instrumented commands (info, manifest,
+    // etc.) so JSON mode always produces exactly one envelope.
+    await reverie.parseAsync(process.argv);
+    if (isJsonMode() && !alreadyEmitted()) {
+      emitEnvelope();
+    }
   }
 })();

@@ -4,7 +4,8 @@ import { CodexData, CodexValue } from './types';
 import { debug } from './utils/debug';
 import { Scope, loadEntries, saveEntries, loadEntriesMerged, findProjectFile, saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta, getEntryFast, setEntryFast } from './store';
 import { isValidEntryKey } from './utils/directoryStore';
-import { resolveScopeForWrite } from './projectResolution';
+import { resolveScopeForWrite, ProjectResolutionError } from './projectResolution';
+import { isJsonMode, failJson } from './utils/output';
 
 export type { Scope } from './store';
 
@@ -28,6 +29,15 @@ export function handleError(message: string, error: unknown, context?: string): 
   // DEBUG=true. Now both branches show the message, with the stack
   // trace gated on DEBUG.
   const errorText = error instanceof Error ? error.message : String(error);
+
+  // In JSON mode, route the failure into the structured envelope (#117 WS1)
+  // instead of writing a human line to stderr. Project-resolution refusals
+  // map to the dedicated code so agents can branch on them.
+  if (isJsonMode()) {
+    const code = error instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED' : 'RUNTIME';
+    failJson(code, `${contextPrefix}${message} ${errorText}`.trim()); // failJson sets exitCode=1
+    return;
+  }
 
   if (process.env.DEBUG === 'true') {
     console.error(`${color.red(contextPrefix + message)}: ${errorText}`);

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { generateClaudeMd, CLAUDE_MD_TEMPLATE } from '../commands/claude-md';
+import { generateClaudeMd, CLAUDE_MD_TEMPLATE, generateAgentsMd, AGENTS_MD_TEMPLATE } from '../commands/claude-md';
 
 let tmpDir: string;
 
@@ -90,5 +90,39 @@ describe('CLAUDE_MD_TEMPLATE', () => {
 
   it('contains Do not store section', () => {
     expect(CLAUDE_MD_TEMPLATE).toContain('## Do not store');
+  });
+});
+
+// #117 WS2: agent-agnostic AGENTS.md.
+describe('generateAgentsMd', () => {
+  it('creates AGENTS.md with template content', () => {
+    const result = generateAgentsMd({ cwd: tmpDir });
+    expect(result).toBe(AGENTS_MD_TEMPLATE);
+    expect(fs.readFileSync(path.join(tmpDir, 'AGENTS.md'), 'utf8')).toBe(AGENTS_MD_TEMPLATE);
+  });
+
+  it('skips if AGENTS.md already exists (no --force)', () => {
+    fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), 'existing');
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = generateAgentsMd({ cwd: tmpDir });
+    consoleSpy.mockRestore();
+    expect(result).toBeNull();
+    expect(fs.readFileSync(path.join(tmpDir, 'AGENTS.md'), 'utf8')).toBe('existing');
+  });
+
+  it('--dryRun returns content without writing', () => {
+    const result = generateAgentsMd({ cwd: tmpDir, dryRun: true });
+    expect(result).toBe(AGENTS_MD_TEMPLATE);
+    expect(fs.existsSync(path.join(tmpDir, 'AGENTS.md'))).toBe(false);
+  });
+});
+
+describe('AGENTS_MD_TEMPLATE', () => {
+  it('is CLI-flavored and agent-agnostic', () => {
+    expect(AGENTS_MD_TEMPLATE).toContain('rvr context');
+    expect(AGENTS_MD_TEMPLATE).toContain('--json');
+    expect(AGENTS_MD_TEMPLATE).toContain('rvr manifest');
+    // Not Claude-specific tool names.
+    expect(AGENTS_MD_TEMPLATE).not.toContain('reverie_set');
   });
 });

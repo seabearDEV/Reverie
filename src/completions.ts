@@ -266,7 +266,7 @@ const CLI_TREE: Record<string, CommandDef> = {
       '--json': 'Output raw JSON', '-j': 'Output raw JSON',
       '--limit': 'Max entries to show', '-n': 'Max entries to show',
     },
-    argType: 'dataKey' as ArgType,
+    argType: 'dataKey',
     description: 'View audit log',
   },
   data: {
@@ -304,7 +304,7 @@ const CLI_TREE: Record<string, CommandDef> = {
           '--global': FLAG_DESCRIPTIONS['--global'], '-G': FLAG_DESCRIPTIONS['-G'],
           '--project': FLAG_DESCRIPTIONS['--project'], '-P': FLAG_DESCRIPTIONS['-P'],
         },
-        argType: 'resetType' as ArgType,
+        argType: 'resetType',
         description: 'Reset to empty state',
       },
       projectfile: {

@@ -3,6 +3,7 @@ import path from 'path';
 import { queryAuditLog, tailAuditLog, getAuditPath, AuditEntry } from '../utils/audit';
 import { parsePeriodDays } from '../utils';
 import { color } from '../formatting';
+import { isJsonMode, setResult } from '../utils/output';
 
 export interface AuditCommandOptions {
   period?: string;
@@ -137,8 +138,8 @@ export function showAuditLog(key: string | undefined, options: AuditCommandOptio
     limit,
   });
 
-  if (options.json) {
-    console.log(JSON.stringify(entries, null, 2));
+  if (isJsonMode()) {
+    setResult(entries);
     return;
   }
 
@@ -199,16 +200,14 @@ export function followAuditLog(key: string | undefined, options: AuditCommandOpt
   // Drain any entries already in the cache so tailAuditLog starts clean
   tailAuditLog();
 
+  // JSON mode is refused upstream (audit --follow can't satisfy the
+  // single-envelope contract), so this only ever renders the human stream.
   const onFileChange = (): void => {
     const newEntries = tailAuditLog();
     for (const entry of newEntries) {
       if (!matchesFilter(entry, options, key)) continue;
-      if (options.json) {
-        console.log(JSON.stringify(entry));
-      } else {
-        for (const line of formatAuditEntry(entry, ctx)) {
-          console.log(line);
-        }
+      for (const line of formatAuditEntry(entry, ctx)) {
+        console.log(line);
       }
     }
   };

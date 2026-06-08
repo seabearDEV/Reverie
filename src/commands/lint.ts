@@ -2,6 +2,7 @@ import { getEntriesFlat, Scope } from '../storage';
 import { color } from '../formatting';
 import { findProjectFile } from '../store';
 import { interpolate } from '../utils/interpolate';
+import { isJsonMode, setResult } from '../utils/output';
 import fs from 'fs';
 import path from 'path';
 
@@ -171,13 +172,13 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
 
   const seedIssues = options.seedQuality ? checkSeedQuality(flat) : [];
 
-  if (options.json) {
+  if (isJsonMode()) {
     const payload: Record<string, unknown> = {
       issues: namespaceIssues,
       allowed: allowedNamespaces,
     };
     if (options.seedQuality) payload.seedQuality = seedIssues;
-    console.log(JSON.stringify(payload, null, 2));
+    setResult(payload);
     return;
   }
 

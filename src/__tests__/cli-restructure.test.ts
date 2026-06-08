@@ -166,10 +166,11 @@ describe('context command', () => {
   });
 
   it('--json outputs valid JSON', () => {
-    const result = run('context --json');
-    const parsed = JSON.parse(result);
-    expect(parsed.entries).toBeDefined();
-    expect(parsed.tier).toBe('standard');
+    // #117: context payload is now inside the envelope's `result`.
+    const parsed = JSON.parse(run('context --json'));
+    expect(parsed.ok).toBe(true);
+    expect(parsed.result.entries).toBeDefined();
+    expect(parsed.result.tier).toBe('standard');
   });
 
   it('shows tier footer for non-full tiers', () => {

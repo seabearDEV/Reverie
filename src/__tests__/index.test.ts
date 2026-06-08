@@ -90,6 +90,7 @@ function setupMocks() {
   }));
   vi.mock('../llm-instructions', () => ({
     DEFAULT_LLM_INSTRUCTIONS: mockDefaultLLMInstructions,
+    CLI_LLM_INSTRUCTIONS: 'cli instructions',
     getEffectiveInstructions: mockGetEffectiveInstructions,
   }));
 }

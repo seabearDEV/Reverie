@@ -34,7 +34,7 @@ function formatBytes(n: number): string {
 import { getAuditPath } from '../utils/audit';
 import { getTelemetryPath, getMissPathsPath } from '../utils/telemetry';
 import { scanCodebase, ScaffoldEntry } from './scan';
-import { generateClaudeMd } from './claude-md';
+import { generateClaudeMd, generateAgentsMd } from './claude-md';
 
 function resolveScope(options: { global?: boolean | undefined, project?: boolean | undefined }): Scope | undefined {
   if (options.global) return 'global';
@@ -55,7 +55,7 @@ export function exportData(type: string, options: ExportOptions): void {
   debug('exportData called', { type, options });
   try {
     if (!validateDataType(type)) {
-      printError(getInvalidDataTypeMessage(type));
+      printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
       return;
     }
 
@@ -157,13 +157,13 @@ export async function importData(type: string, file: string, options: ImportOpti
   try {
     // Validate type parameter
     if (!validateDataType(type)) {
-      printError(getInvalidDataTypeMessage(type));
+      printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
       return;
     }
 
     // Check if file exists
     if (!fs.existsSync(file)) {
-      printError(`Import file not found: ${file}`);
+      printError(`Import file not found: ${file}`, 'NOT_FOUND');
       return;
     }
 
@@ -175,7 +175,8 @@ export async function importData(type: string, file: string, options: ImportOpti
     if (fileSize > maxBytes) {
       printError(
         `Import file too large: ${formatBytes(fileSize)} exceeds the ${formatBytes(maxBytes)} limit. ` +
-        `Set the 'import_max_bytes' config if you really need to import a file this size:\n  ${getBinaryName()} config set import_max_bytes ${fileSize}`
+        `Set the 'import_max_bytes' config if you really need to import a file this size:\n  ${getBinaryName()} config set import_max_bytes ${fileSize}`,
+        'INVALID_INPUT'
       );
       return;
     }
@@ -185,12 +186,12 @@ export async function importData(type: string, file: string, options: ImportOpti
     try {
       importedData = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
-      printError('The import file contains invalid JSON.');
+      printError('The import file contains invalid JSON.', 'INVALID_INPUT');
       return;
     }
 
     if (typeof importedData !== 'object' || importedData === null || Array.isArray(importedData)) {
-      printError('The import file must contain a JSON object.');
+      printError('The import file must contain a JSON object.', 'INVALID_INPUT');
       return;
     }
 
@@ -215,7 +216,7 @@ export async function importData(type: string, file: string, options: ImportOpti
     // Type compatibility: envelope.type must match user's requested type,
     // or one side must be 'all' (compatible as a subset extraction).
     if (envelope && envelope.type !== type && envelope.type !== 'all' && type !== 'all') {
-      printError(`Import type mismatch: file was exported as '${envelope.type}', but import requested '${type}'.`);
+      printError(`Import type mismatch: file was exported as '${envelope.type}', but import requested '${type}'.`, 'INVALID_INPUT');
       return;
     }
 
@@ -261,15 +262,15 @@ export async function importData(type: string, file: string, options: ImportOpti
     const wantsConfirm = type === 'confirm' || isAll;
 
     if (wantsEntries && rawEntries !== undefined && !isPlainObject(rawEntries)) {
-      printError(`Import section 'entries' must be an object (got ${shapeTypeName(rawEntries)}).`);
+      printError(`Import section 'entries' must be an object (got ${shapeTypeName(rawEntries)}).`, 'INVALID_INPUT');
       return;
     }
     if (wantsAliases && rawAliases !== undefined && !isPlainObject(rawAliases)) {
-      printError(`Import section 'aliases' must be an object (got ${shapeTypeName(rawAliases)}).`);
+      printError(`Import section 'aliases' must be an object (got ${shapeTypeName(rawAliases)}).`, 'INVALID_INPUT');
       return;
     }
     if (wantsConfirm && rawConfirm !== undefined && !isPlainObject(rawConfirm)) {
-      printError(`Import section 'confirm' must be an object (got ${shapeTypeName(rawConfirm)}).`);
+      printError(`Import section 'confirm' must be an object (got ${shapeTypeName(rawConfirm)}).`, 'INVALID_INPUT');
       return;
     }
 
@@ -281,7 +282,7 @@ export async function importData(type: string, file: string, options: ImportOpti
       wantsConfirm && isPlainObject(rawConfirm) ? rawConfirm : undefined;
 
     if (isAll && !entriesSection && !aliasesSection && !confirmSection) {
-      printError('Import with type "all" requires {"entries": {...}, "aliases": {...}, "confirm": {...}} (at least one section).');
+      printError('Import with type "all" requires {"entries": {...}, "aliases": {...}, "confirm": {...}} (at least one section).', 'INVALID_INPUT');
       return;
     }
 
@@ -313,7 +314,7 @@ export async function importData(type: string, file: string, options: ImportOpti
       try {
         createAutoBackup('pre-import', scope);
       } catch (err) {
-        printError(`Aborting: auto-backup failed (${err instanceof Error ? err.message : String(err)}). No changes were made.`);
+        printError(`Aborting: auto-backup failed (${err instanceof Error ? err.message : String(err)}). No changes were made.`, 'IO');
         return;
       }
     }
@@ -328,7 +329,7 @@ export async function importData(type: string, file: string, options: ImportOpti
       if (entriesSection) validateImportEntries(entriesSection);
       if (aliasesSection) {
         if (Object.values(aliasesSection).some(v => typeof v !== 'string')) {
-          printError('Alias values must all be strings (dot-notation paths).');
+          printError('Alias values must all be strings (dot-notation paths).', 'INVALID_INPUT');
           return;
         }
         validateImportAliases(aliasesSection);
@@ -382,7 +383,7 @@ export async function resetData(type: string, options: ResetOptions): Promise<vo
   try {
     // Validate type parameter
     if (!validateResetType(type)) {
-      printError(getInvalidResetTypeMessage(type));
+      printError(getInvalidResetTypeMessage(type), 'INVALID_INPUT');
       return;
     }
 
@@ -534,13 +535,14 @@ export function handleProjectFile(options: {
   scaffold?: boolean;
   scan?: boolean;
   claude?: boolean;
+  agents?: boolean;
   force?: boolean;
   dryRun?: boolean;
 }): void {
   if (options.remove) {
     const projectPath = findProjectFile();
     if (!projectPath) {
-      printError('No .reverie project store found in current directory tree.');
+      printError('No .reverie project store found in current directory tree.', 'NOT_FOUND');
       return;
     }
     // findProjectFile may return either a `.reverie/` directory (v1.0.0-beta.1+)
@@ -567,7 +569,8 @@ export function handleProjectFile(options: {
     const kind = targetStat.isFile() ? 'file' : targetStat.isSymbolicLink() ? 'symlink' : 'non-directory';
     printError(
       `Cannot initialize: '${target}' already exists as a ${kind}. ` +
-      `Remove it manually before running '${getBinaryName()} init'.`
+      `Remove it manually before running '${getBinaryName()} init'.`,
+      'INVALID_INPUT'
     );
     return;
   }
@@ -631,6 +634,20 @@ export function handleProjectFile(options: {
       }
     } else {
       generateClaudeMd({ cwd, force: options.force });
+    }
+  }
+
+  // Generate agent-agnostic AGENTS.md (unless --no-agents). Describes the
+  // CLI-driven workflow for agents that cannot run an MCP server (#117 WS2).
+  if (options.agents !== false) {
+    if (options.dryRun) {
+      const content = generateAgentsMd({ cwd, dryRun: true });
+      if (content) {
+        console.log(color.bold('\nWould create AGENTS.md:'));
+        console.log(content);
+      }
+    } else {
+      generateAgentsMd({ cwd, force: options.force });
     }
   }
 }

@@ -1,0 +1,7 @@
+{
+  "value": "Testing #117 JSON output: unit tests that call a command function directly (e.g. lintEntries({}), searchEntries(...), showContext(...)) must first call configureOutput({json:true, command:'...'}) then read buildEnvelope().result — the function no longer console.logs JSON, it calls setResult() which records into module state. src/__tests__/_setup.ts resetOutput()s after each test so JSON state never leaks. Integration (spawn) tests parse the envelope and assert on parsed.result.* / parsed.ok / parsed.error.code (NOT bare top-level — D3 break). The --json flag is GLOBAL (rvr --json <cmd>); `rvr <cmd> --json` only works on commands that define a local --json (the 8 read commands). For global-store writes in spawn tests, append --global after the verb token (skip a leading --json); for `confirm`/`alias` group commands -G lives on the leaf so append at the end.",
+  "meta": {
+    "created": 1780936605914,
+    "updated": 1780936605914
+  }
+}

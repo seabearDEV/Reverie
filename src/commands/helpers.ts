@@ -7,12 +7,22 @@ import { loadConfirmKeys } from '../confirm';
 import { isEncrypted } from '../utils/crypto';
 import { interpretEscapes, visibleLength, wordWrap } from '../utils/wordWrap';
 import { getBinaryName } from '../utils/binaryName';
+import { isJsonMode, failJson, addWarning, ErrorCode } from '../utils/output';
 
 export function printSuccess(message: string): void {
+  // In JSON mode success is conveyed by the envelope's `ok:true`; suppress the
+  // human line so the only thing on stdout is the single envelope (#117 WS1).
+  if (isJsonMode()) return;
   console.log(color.green('✓ ') + message);
 }
 
-export function printError(message: string): void {
+export function printError(message: string, code: ErrorCode = 'RUNTIME'): void {
+  // In JSON mode the failure becomes the envelope's structured `error` (on
+  // stdout) instead of a human line on stderr. failJson also sets exitCode=1.
+  if (isJsonMode()) {
+    failJson(code, message);
+    return;
+  }
   console.error(color.red('✗ ') + message);
   // Surface failure via the process exit code so scripts wrapping rvr can
   // detect errors. Pre-fix the CLI returned 0 on most printError paths.
@@ -21,6 +31,11 @@ export function printError(message: string): void {
 }
 
 export function printWarning(message: string): void {
+  // In JSON mode warnings accumulate into the envelope's `warnings[]`.
+  if (isJsonMode()) {
+    addWarning(message);
+    return;
+  }
   console.log(color.yellow('⚠ ') + message);
 }
 
@@ -94,7 +109,7 @@ export function displayAliases(aliases: Record<string, string>, options?: { tree
   if (name) {
     const aliasValue = aliases[name];
     if (!aliasValue) {
-      printError(`Alias '${name}' not found`);
+      printError(`Alias '${name}' not found`, 'NOT_FOUND');
       return;
     }
     if (tree) {
@@ -111,7 +126,7 @@ export function displayAliases(aliases: Record<string, string>, options?: { tree
   }
 
   if (tree) {
-    displayTree(aliases as Record<string, unknown>);
+    displayTree(aliases);
   } else {
     Object.entries(aliases).forEach(([alias, path]) => {
       console.log(`${color.cyan(alias)}: ${colorizePathByLevels(path)}`);
