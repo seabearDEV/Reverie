@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-08
+
 ### Added
 
 - **CLI as a first-class agent target** ([#117](https://github.com/seabearDEV/reverie/issues/117)). The CLI now offers the protocol affordances MCP gives an agent, so agents that **cannot run an MCP server** can use Reverie fully through `rvr`. Design: `docs/design-117-cli-agent-parity.md`.
