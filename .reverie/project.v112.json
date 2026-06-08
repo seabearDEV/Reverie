@@ -1,7 +1,0 @@
-{
-  "value": "v1.12.0 perf + observability mini-release. Tracked via GitHub milestone v1.12.0 (https://github.com/seabearDEV/reverie/milestone/2). Three scoped items: (1) #57 — perf: eager store scan creates O(n) cost on every CLI invocation. Add a getOne(key) fast path to ScopedStore that reads just entryFilePath(dir, key) directly (1 syscall) instead of scanAndSync'ing the whole directory (~2N syscalls). Has hard measurements (2.9ms at 100 entries to 121ms at 5k). Plumb through getEntry. Labels: bug, performance. (2) #41 — Live audit streaming: ccli audit --follow. Tail audit.jsonl with the same colored format as ccli audit. Support the existing filters in follow mode. Small feature, useful for the data-analysis workflow. Labels: enhancement. (3) #68 — docs(llm-instructions): nudge agents to check open GitHub issues at session start. One-line update to arch.llmInstructions and possibly CLAUDE.md telling agents to call gh issue list after codex_context. No code changes. Refiled from #52 sub-idea 3a (the conflated parent issue was closed during triage). Labels: documentation. Sequencing: ship after v1.11.0 cuts. Out of scope: any new features beyond these three items, GitHub API integration in codexCLI itself (#52 sub-idea 3b — file separately if pursued).",
-  "meta": {
-    "created": 1775679086687,
-    "updated": 1778173007019
-  }
-}

@@ -1,7 +1,7 @@
 {
-  "value": "v1.12.x patch chain for export/import integrity. Origin: 2026-04-09 review found 7 gaps.\n\nSHIPPED:\n- v1.12.1 (2026-04-16): #74 auto-backup project scope, #75 encrypted roundtrip. #75 shipped with a STANDALONE --include-encrypted flag rather than waiting for #78's envelope.\n- v1.12.2 (2026-04-16, stable promoted after 2-beta soak): #76 single-file export-all (--split preserves legacy 3-file), #77 transactional multi-section imports (new saveAll primitive in src/store.ts), #78 export envelope ($codexcli wrapper with version/type/scope/exportedAt/includesEncrypted/sha256 + bare-shape back-compat), #79 validateImportEntries non-string leaf rejection, #80 import_max_bytes config (default 50 MB) enforced in CLI + MCP, #87 saveAll stamps _meta on import (beta.0→beta.1 fix, prevents [untracked] cascade on restore).\n\nCONVENTION NOTE: original severity-to-patch-number mapping (HIGH→.1, MEDIUM→.2, LOW→.3) bent when .3 was folded into .2. v1.12.0 felt thin so bundling MEDIUM+LOW into a single .2 beat three-patch churn. Situational, not a project rule.\n\nAUDIT COMPLETE: export/import integrity review is fully addressed across v1.12.1 + v1.12.2. Don't re-audit the same area without a new finding. Soak verification on 2026-04-16 confirmed all fixes behave as claimed end-to-end (see #89/#90 for orthogonal bugs surfaced but not in scope).",
+  "value": "v1.12.1 + v1.12.2 closed all 7 export/import integrity gaps from the 2026-04-09 review: auto-backup project scope (#74), encrypted roundtrip (#75), single-file export-all (#76), transactional multi-section imports (#77, saveAll primitive), export envelope (#78, $reverie wrapper + bare-shape back-compat), non-string-leaf rejection (#79), import_max_bytes config (#80, default 50 MB). AUDIT COMPLETE — do NOT re-audit export/import without a new finding. Full detail in git history.",
   "meta": {
     "created": 1775765747564,
-    "updated": 1776369715280
+    "updated": 1780948212509
   }
 }
