@@ -349,8 +349,10 @@ rvr lint
 # Check global entries
 rvr lint -G
 
-# JSON output for CI integration
+# JSON output for CI integration (envelope; lint payload is under `.result`)
 rvr lint --json
 ```
+
+In JSON mode the lint payload (`issues`, `allowed`, optional `seedQuality`) is nested inside the standard envelope's `result` field — parse `.result.issues`, and branch on the top-level `ok` / exit code. See the README's [Structured JSON Output](../README.md#structured-json-output) for the full envelope contract and error codes.
 
 Lint warns but doesn't block — it's guidance, not a gate. If your project genuinely needs namespaces outside the defaults, add them via `_schema.namespaces` rather than ignoring the warnings.

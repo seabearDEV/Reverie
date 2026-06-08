@@ -4,17 +4,17 @@ Manual steps for cutting a new Reverie release. Follow these in order.
 
 ## Pre-tag verification
 
-Before tagging, run the full quality bar:
+Before tagging, run the full quality bar (Bun-only runtime — there is no `check` script, run the three steps):
 
 ```bash
-npm run check    # = npm run build && npm run lint && npm test
+bun run build && bun run lint && bun run test
 ```
 
 All of the following must be true:
 
-- [ ] `tsc` produces no errors
-- [ ] `eslint src/` produces no errors
-- [ ] Full test suite passes (currently 1394 tests across 59 files; updated each release)
+- [ ] `tsc` produces no errors (`bun run build`)
+- [ ] `eslint src/` produces no errors (`bun run lint`)
+- [ ] Full test suite passes (currently 1430 tests across 62 files; updated each release)
 - [ ] `git status` is clean (no uncommitted work)
 - [ ] You're on `main` and synced with `origin/main`
 - [ ] All issues in the milestone are CLOSED via merged PRs
@@ -41,8 +41,8 @@ Verify the section has at most one `### Added`, `### Changed`, `### Deprecated`,
 
 ```bash
 # Edit package.json: "version": "X.Y.Z" → "X.Y+1.0" (or appropriate)
-npm install   # updates package-lock.json
-git add package.json package-lock.json CHANGELOG.md
+# bun.lock records no root version, so a version-only bump needs no `bun install`.
+git add package.json CHANGELOG.md
 git commit -m "chore: release vX.Y.Z"
 git push origin main
 ```
@@ -85,6 +85,13 @@ rvr context            # shows project context summary
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | rvr-dev-mcp
 ```
 
+### Homebrew tap (stable releases)
+
+The Release workflow's **Update Homebrew Tap** job bumps `Formula/rvr.rb` in `seabearDEV/homebrew-reverie`. It needs the `HOMEBREW_TAP_TOKEN` repo secret (a PAT with `contents:write` on the tap) to be valid.
+
+- [ ] The workflow's "Update Homebrew Tap" job succeeded, and `brew update && brew upgrade rvr` installs the new version.
+- **If it failed with `Bad credentials`**, the token expired. Rotate it (`gh secret set HOMEBREW_TAP_TOKEN --repo seabearDEV/Reverie`) and re-run just that job: `gh run rerun <run-id> --failed`. Manual fallback (you need push access to the tap): regenerate `Formula/rvr.rb` from the `release.yml` template with the new `version` and the release assets' `.digest` SHA256s (`gh api repos/seabearDEV/reverie/releases/tags/vX.Y.Z --jq '.assets[]|{name,digest}'`), then push.
+
 ### Per-release breaking changes
 
 For releases with breaking changes, exercise each one explicitly to confirm
@@ -110,6 +117,16 @@ the deprecation/error fires.
 - [ ] `rvr config set bootstrap_max_response_bytes 102400` accepts the value; `rvr config get bootstrap_max_response_bytes` returns it; an invalid value (negative, non-integer) is rejected with a clear error
 - [ ] (manual via MCP client) Three `reverie_set` calls to the same key within 30 minutes — third response includes a `warning:` line naming the count and time-since-first-write (#101)
 
+#### v1.1.0
+
+- [ ] `rvr --json get <existing-key>` nests the value under `result` (D3 break — was a bare value/object before 1.1.0); `rvr get <key> --json` still works via the local flag
+- [ ] `rvr --json get missing.key` → envelope with `ok:false`, `error.code:"NOT_FOUND"`, and exit code 1
+- [ ] `RVR_OUTPUT=json rvr set k v -G` emits a single envelope on stdout (session-wide JSON mode)
+- [ ] `rvr --json manifest` → `result.mcpToolMap` has 19 tools and `result.envelope.version` is `"1"`
+- [ ] `rvr config llm-instructions --surface cli` contains no "PREFER MCP TOOLS" and names `rvr` commands
+- [ ] `rvr init` (in a temp dir) writes both `CLAUDE.md` and `AGENTS.md`; `rvr init --no-agents` skips `AGENTS.md`
+- [ ] `rvr --json run <confirm-entry>` (no `--yes`) → `ok:false`, `error.code:"REQUIRES_CONFIRMATION"`, command in `error.preview`
+
 ## Rollback (if a release goes wrong)
 
 Tagged releases are immutable on GitHub, but you can ship a follow-up patch:
@@ -117,7 +134,7 @@ Tagged releases are immutable on GitHub, but you can ship a follow-up patch:
 ```bash
 git checkout -b hotfix/vX.Y.Z+1
 # fix the issue
-npm run check
+bun run build && bun run lint && bun run test
 # bump version to X.Y.Z+1 in package.json + CHANGELOG
 git commit -m "chore: release vX.Y.Z+1"
 git push origin hotfix/...

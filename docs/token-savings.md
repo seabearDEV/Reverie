@@ -246,7 +246,7 @@ The values are intentionally conservative. A real `arch.*` lookup might save 5,0
 
 The static multipliers above are educated guesses. Reverie replaces them with **observed costs** as it collects real data from cache misses.
 
-**How it works:** When a `reverie_get` or `reverie_search` misses (returns no data), Reverie opens a "miss window" for that session and namespace. It tracks subsequent tool calls — the exploration the agent does to find the answer — until one of three things happens:
+**How it works:** When a `reverie_get` or `reverie_find` misses (returns no data), Reverie opens a "miss window" for that session and namespace. It tracks subsequent tool calls — the exploration the agent does to find the answer — until one of three things happens:
 
 | Resolution | Trigger | Meaning |
 |------------|---------|---------|

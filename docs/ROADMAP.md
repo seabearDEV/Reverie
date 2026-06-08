@@ -18,10 +18,13 @@ Make the knowledge base aware of the code it describes, and easier to navigate.
 
 - **Git-aware freshness** — link entries to source files, flag staleness on code changes ([#42](https://github.com/seabearDEV/reverie/issues/42))
 - **Entry health** — unified lifecycle, coldness, and staleness check ([#84](https://github.com/seabearDEV/reverie/issues/84))
-- **Live audit streaming** — `rvr audit --follow` for real-time formatted output ([#41](https://github.com/seabearDEV/reverie/issues/41))
-- **Fuzzy finder** — interactive search via fzf ([#13](https://github.com/seabearDEV/reverie/issues/13))
-- **Boolean search** — AND, OR, NOT operators ([#43](https://github.com/seabearDEV/reverie/issues/43))
+- **Fuzzy finder** — interactive search via fzf ([#13](https://github.com/seabearDEV/reverie/issues/13)) · leading next-theme candidate
+- **Boolean search** — AND, OR, NOT operators ([#43](https://github.com/seabearDEV/reverie/issues/43)) · leading next-theme candidate
 - **Richer data types** — lists, multi-line values, typed JSON ([#44](https://github.com/seabearDEV/reverie/issues/44))
+
+### Agent Surface
+
+- **CLI session parity (WS3 of #117)** — `RVR_SESSION`-bridged write-amp guard, miss-path tracking, and `aliasResolved` capture on the CLI, so CLI-agent usage is measured and guard-railed like MCP ([#119](https://github.com/seabearDEV/reverie/issues/119), deferred until telemetry shows the CLI-agent path is material)
 
 ### Team & Collaboration
 
@@ -46,7 +49,10 @@ Make the knowledge base useful for teams, not just solo developers.
 
 ## Release History
 
-v1.0.0 and forward are Reverie. The v0.1.0 → v1.14.0 entries below are codexCLI-era, preserved here for continuity.
+v1.0.0 and forward are Reverie. The v0.1.0 → v1.14.0 entries below are codexCLI-era, preserved here for continuity. (Those codexCLI git tags were retired during the v1.1.0 cut so Reverie's v1.x line is collision-free; the history lives on in this document and in `git log`.)
+
+### v1.1.0 — CLI as a First-Class Agent Target
+Closes [#117](https://github.com/seabearDEV/reverie/issues/117) (WS1 + WS2). For the cohort that **can't run an MCP server**, the CLI becomes an equivalent agent target. **WS1 — universal structured output:** a global `--json` flag and a session-wide `RVR_OUTPUT=json` wrap *every* command (reads and mutations) in one versioned envelope (`reverie`/`ok`/`command`/`result`/`warnings`/`error`) with a frozen, MCP-parity `error.code` set and non-zero exit on failure. **WS2 — agent bootstrap:** surface-aware instructions (`config llm-instructions --surface cli`, fixing the bug that told CLI agents to "PREFER MCP TOOLS"), an agent-agnostic `AGENTS.md` emitted by `rvr init`, and a new `rvr manifest --json` (command/flag tree + MCP↔CLI map). Breaking change (D3): `--json` reads now nest the value under `result`. WS3 (session-state parity) deferred to [#119](https://github.com/seabearDEV/reverie/issues/119). Tests 1394 → 1430. See [CHANGELOG](../CHANGELOG.md) and `docs/design-117-cli-agent-parity.md`.
 
 ### v1.0.0 — Reverie Stable Launch
 First Reverie stable release (2026-05-07). SemVer re-baselined under the new product name; the prior codexCLI line ended at v1.14.0. Bun-runtime build pipeline (`bun build --compile`) shipped with the rebrand — ~50% smaller binaries, ~50× faster builds. End-to-end auto-migration from `.codexcli/` → `.reverie/` on first run. 19 MCP tools verified end-to-end against the stable binary. See [CHANGELOG](../CHANGELOG.md).

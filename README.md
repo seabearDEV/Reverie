@@ -38,6 +38,7 @@ A SeaBear Studios product · [seabear.dev/reverie](https://seabear.dev/reverie)
   - [Shell Wrapper](#shell-wrapper)
   - [Shell Tab-Completion](#shell-tab-completion)
   - [Scripting Tips](#scripting-tips)
+  - [Structured JSON Output](#structured-json-output)
   - [Debugging](#debugging)
 - [Command Reference](#command-reference)
 - [MCP Server (AI Agent Integration)](#mcp-server-ai-agent-integration)
@@ -60,10 +61,11 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Tree Visualization**: Display nested data in a tree-like structure
 - **Clipboard Integration**: Copy values directly to clipboard (macOS, Linux, Windows)
 - **Inline Editing**: Open entries in `$EDITOR` / `$VISUAL` for quick edits
-- **JSON Output**: Machine-readable `--json` flag on `get` and `find` for scripting
+- **Structured Output**: A global `--json` flag — or `RVR_OUTPUT=json` for the whole session — wraps *every* command (reads and mutations) in one versioned envelope (`reverie`/`ok`/`command`/`result`/`warnings`/`error`) with a frozen `error.code` set and a non-zero exit on failure, so AI agents can drive Reverie through the CLI when MCP isn't available
+- **Command Manifest**: `rvr manifest --json` emits the full command/flag tree plus the MCP-tool ↔ CLI-command map — the `tools/list` analog for CLI-driven agents
 - **Stdin Piping**: Pipe values into `set` from other commands
 - **Project-Scoped Data**: Opt-in `.reverie/` per project — project entries take precedence, fall through to global
-- **Smart Init**: `rvr init` scans your codebase, populates `.reverie/` with project/commands/files/deps/conventions/context entries, generates `CLAUDE.md`, and seeds the three-file knowledge convention
+- **Smart Init**: `rvr init` scans your codebase, populates `.reverie/` with project/commands/files/deps/conventions/context entries, generates `CLAUDE.md` and an agent-agnostic `AGENTS.md`, and seeds the three-file knowledge convention
 - **Auto-Backup**: Automatic timestamped backups with configurable rotation (`max_backups` setting)
 - **File Locking**: Advisory locking prevents data corruption from concurrent access
 - **Shell Tab-Completion**: Full tab-completion for Bash and Zsh (commands, flags, keys, aliases)
@@ -148,6 +150,7 @@ Reverie honors a small set of environment variables for deployment-time configur
 | `RVR_PROJECT_DIR` | MCP-server launcher hint — the directory the server should treat as the project root. Equivalent to passing `--cwd <dir>`. Applied via `setProjectRootOverride` (no `process.chdir`), so it works whether the server is run as a binary or imported. | unset |
 | `RVR_NO_PROJECT` | Disable project-file lookup entirely. Set to any non-empty value (e.g. `1`) and `findProjectFile()` returns `null` regardless of `cwd` or `RVR_PROJECT`. | unset |
 | `RVR_AGENT_NAME` | Identifier recorded in the audit and telemetry logs for the calling agent. Used by `rvr stats` and `rvr audit` to break down activity per agent (Claude, Cursor, Copilot, etc.). | unset |
+| `RVR_OUTPUT` | When set to `json`, every command emits the structured JSON envelope on stdout (equivalent to passing `--json`), session-wide. Diagnostics and prompts go to stderr. | unset |
 | `RVR_DISABLE_LOCKING` | **Test-only.** When set to `1`, `withFileLock` falls back to running its closure without acquiring the file lock if lock acquisition fails. The default (production) behavior since v1.11 is to fail closed and propagate the lock error. Production code should never set this — there are no known production environments where lock acquisition is expected to fail. Tests that intentionally exercise contended-lock scenarios use this opt-out instead. | unset |
 
 ### Notes
@@ -831,8 +834,8 @@ eval "$(rvr config completions bash)"
 ### Scripting Tips
 
 ```bash
-# Use raw output in other commands
-ssh $(rvr get server.ip -r)
+# Use plain output in other commands
+ssh $(rvr get server.ip -p)
 
 # Decrypt and copy to clipboard
 rvr get api.key -d -c
@@ -843,6 +846,27 @@ rvr run deploy.cmd -d -y
 # Preview a command with interpolation
 rvr run paths.myproject --dry -y
 ```
+
+### Structured JSON Output
+
+Pass the global `--json` flag (`rvr --json <cmd>`) or set `RVR_OUTPUT=json` once for the session to make **every** command — reads *and* mutations — print exactly one versioned envelope on stdout. Diagnostics and prompts go to stderr; failures set a non-zero exit code. This is the path for AI agents that can't run the MCP server (`rvr init` also writes an `AGENTS.md` describing it).
+
+```bash
+rvr --json get server.ip
+# { "reverie": "1", "ok": true, "command": "get", "result": { "server.ip": "10.0.0.1" } }
+
+RVR_OUTPUT=json rvr set deploy.cmd "kubectl apply -f ."   # session-wide
+rvr --json manifest        # full command/flag tree + MCP↔CLI map (the tools/list analog)
+```
+
+On failure, `ok` is `false`, the envelope carries `error.code` from a frozen set, and the process exits non-zero — branch on the code, not on prose:
+
+```bash
+rvr --json get missing.key
+# { "reverie": "1", "ok": false, "command": "get", "error": { "code": "NOT_FOUND", "message": "Entry 'missing.key' not found" } }
+```
+
+Error codes: `PROJECT_UNRESOLVED`, `NOT_FOUND`, `INVALID_INPUT`, `REQUIRES_CONFIRMATION`, `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, `COMMAND_FAILED`, `INPUT_REQUIRED`, `IO`, `RUNTIME`. (Note: `--json` on reads nests the value under `result` — a deliberate break from the pre-1.1.0 bare-value shape.) Non-fatal notices (e.g. context `[trimmed]`) appear in `warnings[]`; `run` on a `--confirm` entry without `--yes` returns `REQUIRES_CONFIRMATION` with the resolved command in `error.preview`.
 
 ### Debugging
 
@@ -864,9 +888,10 @@ rvr --debug get server.production
 | `rename` | `rn` | `<old> <new>` | Rename an entry key or alias |
 | `context` | | `[--tier <tier>]` | Show compact knowledge summary (essential, standard, full) |
 | `info` | | | Show version, stats, and storage paths |
+| `manifest` | | `[--json]` | Command/flag tree + MCP↔CLI map (the `tools/list` analog for agents) |
 | `alias` | | `<subcommand>` | Manage key aliases (set, remove, list, rename) |
 | `confirm` | | `<subcommand>` | Manage run confirmation (set, remove, list) |
-| `init` | | | Initialize project (`.reverie/` + codebase scan + `CLAUDE.md`) |
+| `init` | | | Initialize project (`.reverie/` + codebase scan + `CLAUDE.md` + `AGENTS.md`; `--no-claude` / `--no-agents` to skip) |
 | `stale` | | `[days]` | Show entries not updated in N days (default 30) |
 | `lint` | | | Check entries against namespace schema (`--json`) |
 | `stats` | | | View MCP usage telemetry and trends (`--period`, `--detailed`, `--json`) |
@@ -878,11 +903,13 @@ rvr --debug get server.production
 
 **Confirm subcommands:** `set <key>`, `remove <key>`, `list`
 
-**Config subcommands:** `set <key> <value>`, `get [key]`, `info`, `examples`, `completions <bash\|zsh\|install>`
+**Config subcommands:** `set <key> <value>`, `get [key]`, `info`, `examples`, `llm-instructions [--surface <mcp\|cli>]`, `completions <bash\|zsh\|install>`
 
 **Data subcommands:** `export <type>`, `import <type> <file>`, `reset <type>`
 
 **Scope flags:** `-G` / `--global` targets the global store. `-A` / `--all` on `get` shows both scopes with section headers.
+
+**Structured output:** the global `--json` flag (`rvr --json <cmd>`) or `RVR_OUTPUT=json` wraps any command's output in the JSON envelope — see [Scripting Tips](#scripting-tips).
 
 ## MCP Server (AI Agent Integration)
 
@@ -970,7 +997,7 @@ claude mcp add reverie -- node /absolute/path/to/dist/mcp-server.js
 | `reverie_remove` | Remove a stored entry or alias by key |
 | `reverie_copy` | Copy an entry to a new key (optional force to overwrite) |
 | `reverie_rename` | Rename an entry key or alias (re-points aliases, migrates confirm metadata) |
-| `reverie_search` | Search stored knowledge by keyword (keys, values, or both) |
+| `reverie_find` | Search stored knowledge by keyword (keys, values, or both; regex supported) |
 | `reverie_alias_set` | Create or update an alias for a dot-notation path |
 | `reverie_alias_remove` | Remove an alias |
 | `reverie_alias_list` | List all defined aliases |
@@ -1003,9 +1030,14 @@ rvr config llm-instructions
 # View just the built-in defaults
 rvr config llm-instructions --default
 
+# View the CLI-surface instructions (for agents driving rvr instead of MCP)
+rvr config llm-instructions --surface cli
+
 # Remove your custom additions (reverts to defaults only)
 rvr rm system.llm.instructions
 ```
+
+Instructions are **surface-aware**: the `mcp` surface (default) guides agents using the MCP tools; the `cli` surface (`--surface cli`) guides agents driving the `rvr` CLI with `--json` — the same workflow `rvr init` writes into `AGENTS.md`. For the cohort that can't run an MCP server, the CLI is a first-class agent target (see [Scripting Tips](#scripting-tips) and `rvr manifest --json`).
 
 ### Verifying the MCP Server
 

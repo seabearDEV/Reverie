@@ -1,0 +1,7 @@
+{
+  "value": "Reverie re-baselined at v1.0.0 but the repo (renamed from codexCLI, not forked) still carried codexCLI's git tags v0.1.0–v1.14.0 — so Reverie's v1.x line COLLIDED with old tags on every release. Resolved 2026-06-08 during the v1.1.0 cut: purged all 36 pre-rebrand tags (v0.x and v1.1.0–v1.14.0, none had GitHub Releases) from local + origin, kept only v1.0.0 (the launch, has a Release). Reverie's 1.x line is now collision-free. Commits stay in history (untagged). If a future audit finds stale tags reappear, they were likely re-fetched from a stale clone. GOTCHA when scripting bulk tag deletion: `git tag -d $TAGS` with a command-substituted multiline var mangled under zsh (stray-quote, exit 128) and left a partial state — use a per-tag `for t in $(...); do git tag -d \"$t\"; git push origin \":refs/tags/$t\"; done` loop instead (idempotent).",
+  "meta": {
+    "created": 1780946677530,
+    "updated": 1780946677530
+  }
+}
