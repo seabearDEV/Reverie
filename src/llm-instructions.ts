@@ -69,10 +69,10 @@ FRESHNESS:
 - Entries tagged [Nd] haven't been updated in N days — verify before trusting version numbers, URLs, or commands.
 - Run reverie_stale after reverie_context to audit knowledge freshness when starting a new task.
 
-PREFER MCP TOOLS:
-- Always interact with Reverie via MCP tools (reverie_get, reverie_set, reverie_find, etc.) rather than reading .reverie/*.json directly.
-- Direct file reads bypass audit logging, alias resolution, interpolation, and scope fallthrough.
-- Hand-editing .reverie/*.json files is unsupported — it desyncs per-entry meta (staleness timestamps) and breaks the wrapper format. Use the CLI or MCP tools.
+PREFER MCP TOOLS (the CLI is the equal-functionality fallback):
+- You are connected via MCP — these tools are the preferred surface. Use them rather than reading .reverie/*.json directly. Direct file reads bypass audit logging, alias resolution, interpolation, and scope fallthrough.
+- Every MCP tool has an exact \`rvr\` CLI equivalent; the two surfaces are interchangeable, and the CLI is the fallback for agents that cannot run an MCP server. You don't need it here, but if you shell out or hand off to a CLI-only context, \`rvr manifest --json\` is the MCP-tool ↔ CLI-command map and \`rvr config llm-instructions --surface cli\` is the CLI guidance.
+- Hand-editing .reverie/*.json files is unsupported — it desyncs per-entry meta (staleness timestamps) and breaks the wrapper format. Use the MCP tools or the \`rvr\` CLI.
 
 EFFECTIVE USAGE:
 - Always call reverie_context as your FIRST tool call to bootstrap session knowledge.
