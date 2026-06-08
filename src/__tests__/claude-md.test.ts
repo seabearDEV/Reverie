@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { generateClaudeMd, CLAUDE_MD_TEMPLATE, generateAgentsMd, AGENTS_MD_TEMPLATE } from '../commands/claude-md';
+import { generateClaudeMd, CLAUDE_MD_TEMPLATE, generateAgentsMd, AGENTS_MD_TEMPLATE, REVERIE_CORE_GUIDE } from '../commands/claude-md';
 
 let tmpDir: string;
 
@@ -74,8 +74,11 @@ describe('CLAUDE_MD_TEMPLATE', () => {
     expect(CLAUDE_MD_TEMPLATE).toContain('reverie_context');
   });
 
-  it('contains MCP tools preference', () => {
-    expect(CLAUDE_MD_TEMPLATE).toContain('Prefer MCP tools');
+  it('names both surfaces with a prefer-MCP / CLI-fallback model (#121)', () => {
+    expect(CLAUDE_MD_TEMPLATE).toContain('prefer MCP, fall back to the CLI');
+    expect(CLAUDE_MD_TEMPLATE).toContain('reverie_get');
+    expect(CLAUDE_MD_TEMPLATE).toContain('rvr get');
+    expect(CLAUDE_MD_TEMPLATE).toContain('rvr manifest');
   });
 
   it('contains Before exploring code section', () => {
@@ -118,11 +121,25 @@ describe('generateAgentsMd', () => {
 });
 
 describe('AGENTS_MD_TEMPLATE', () => {
-  it('is CLI-flavored and agent-agnostic', () => {
+  it('is agent-agnostic and names both surfaces — prefer MCP, fall back to CLI (#121)', () => {
+    // CLI path
     expect(AGENTS_MD_TEMPLATE).toContain('rvr context');
     expect(AGENTS_MD_TEMPLATE).toContain('--json');
     expect(AGENTS_MD_TEMPLATE).toContain('rvr manifest');
-    // Not Claude-specific tool names.
-    expect(AGENTS_MD_TEMPLATE).not.toContain('reverie_set');
+    // MCP path is named too — the file is read before the agent knows its surface,
+    // so it must carry the full prefer-MCP / CLI-fallback decision (this is the #121 fix:
+    // the old AGENTS-is-CLI-only / CLAUDE-is-MCP-only split stranded MCP-less agents).
+    expect(AGENTS_MD_TEMPLATE).toContain('reverie_context');
+    expect(AGENTS_MD_TEMPLATE).toContain('reverie_set');
+    expect(AGENTS_MD_TEMPLATE).toContain('prefer MCP, fall back to the CLI');
+    // Agent-agnostic title, not Claude-specific.
+    expect(AGENTS_MD_TEMPLATE).toContain('# Reverie — agent guide');
+  });
+});
+
+describe('shared core (#121)', () => {
+  it('CLAUDE.md and AGENTS.md compose from the same operational core', () => {
+    expect(CLAUDE_MD_TEMPLATE).toContain(REVERIE_CORE_GUIDE);
+    expect(AGENTS_MD_TEMPLATE).toContain(REVERIE_CORE_GUIDE);
   });
 });
