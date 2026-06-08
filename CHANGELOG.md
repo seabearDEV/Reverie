@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-06-08
+
+### Fixed
+
+- **`rvr init` now generates agent files that name both surfaces** ([#121](https://github.com/seabearDEV/reverie/issues/121)). v1.1.0 split the generated instruction files by surface — `CLAUDE.md` described only the MCP tools, `AGENTS.md` only the `rvr` CLI — but both are read *before* an agent knows which surface it has. A Claude agent without an MCP server read "prefer MCP tools" it couldn't reach and never saw `AGENTS.md` (Claude Code reads `CLAUDE.md`, not `AGENTS.md`). Both files now compose from one shared core (`REVERIE_CORE_GUIDE` + `REVERIE_FIRST_SESSION`) that names **both** surfaces and the prefer-MCP / CLI-fallback rule: every MCP tool has an exact `rvr` equivalent, with `rvr manifest --json` as the map and `rvr config llm-instructions --surface cli` for CLI specifics. Completes the CLI-agent-parity work from [#117](https://github.com/seabearDEV/reverie/issues/117).
+- **The MCP handshake instructions now state CLI parity too.** `DEFAULT_LLM_INSTRUCTIONS` (the MCP `instructions` blob) said "PREFER MCP TOOLS" without noting that the `rvr` CLI offers identical functionality. It now points at `rvr manifest --json` and `rvr config llm-instructions --surface cli`, mirroring the CLI blob's existing "prefer MCP when available" acknowledgement — so both fetchable instruction surfaces name both paths.
+
 ## [1.1.0] - 2026-06-08
 
 ### Added
