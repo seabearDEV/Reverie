@@ -4,7 +4,7 @@
 
 A CLI + MCP server that bootstraps persistent project context for any AI agent — Claude Code, Copilot, ChatGPT, Cursor, and beyond. Agents read the project's "other voice" at session start, write back what they learn, and Reverie grows session over session.
 
-A SeaBear Studios product · [seabear.dev/reverie](https://seabear.dev/reverie)
+A SeaBear Studios product · [seabear.dev/work/reverie](https://seabear.dev/work/reverie/)
 
 > Previously known as **codexCLI**. See the [CHANGELOG](CHANGELOG.md) for the rebrand provenance and migration notes.
 
