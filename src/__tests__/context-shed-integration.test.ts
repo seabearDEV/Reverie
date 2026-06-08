@@ -39,9 +39,20 @@ vi.mock('../utils/binaryName', () => ({
 import type { Mock } from 'bun:test';
 import { getEntriesFlat } from '../storage';
 import { loadConfig } from '../config';
+import { configureOutput, buildEnvelope } from '../utils/output';
 
 const mockGetEntriesFlat = getEntriesFlat as Mock<typeof getEntriesFlat>;
 const mockLoadConfig = loadConfig as Mock<typeof loadConfig>;
+
+// #117: JSON output now goes inside the envelope's `result` (emitted by the
+// instrumentation wrapper at runtime). In a direct unit call we enable JSON
+// mode, invoke showContext, and read the recorded result.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function contextJson(opts: Parameters<typeof showContext>[0] = {}): any {
+  configureOutput({ json: true, command: 'context' });
+  showContext(opts);
+  return buildEnvelope().result;
+}
 
 let logged: string[] = [];
 
@@ -95,8 +106,7 @@ describe('showContext shed integration (#100)', () => {
       'files.a': 'x'.repeat(200),
       'files.b': 'x'.repeat(200),
     });
-    showContext({ json: true });
-    const parsed = JSON.parse(logged.join('\n'));
+    const parsed = contextJson();
     expect(parsed.degraded).toBe(true);
     expect(parsed.shedNamespaces).toContain('files.*');
     expect(parsed.entries['project.name']).toBe('reverie');
@@ -107,8 +117,7 @@ describe('showContext shed integration (#100)', () => {
     mockGetEntriesFlat.mockReturnValue({
       'project.name': 'reverie',
     });
-    showContext({ json: true });
-    const parsed = JSON.parse(logged.join('\n'));
+    const parsed = contextJson();
     expect(parsed.degraded).toBeUndefined();
     expect(parsed.shedNamespaces).toBeUndefined();
   });
@@ -120,8 +129,7 @@ describe('showContext shed integration (#100)', () => {
       'files.a': 'x'.repeat(200),
       'files.b': 'x'.repeat(200),
     });
-    showContext({ json: true, tier: 'full' });
-    const parsed = JSON.parse(logged.join('\n'));
+    const parsed = contextJson({ tier: "full" });
     expect(parsed.degraded).toBeUndefined();
     expect(parsed.entries['files.a']).toBeDefined();
     expect(parsed.entries['files.b']).toBeDefined();
@@ -146,8 +154,7 @@ describe('showContext shed integration (#100)', () => {
       'project.name': 'x'.repeat(500),
       'files.shedme': 'x'.repeat(100),
     });
-    showContext({ json: true });
-    const parsed = JSON.parse(logged.join('\n'));
+    const parsed = contextJson();
     expect(parsed.pathologicalOverflow).toBe(true);
     expect(parsed.degraded).toBe(true);
   });
@@ -163,8 +170,7 @@ describe('showContext shed integration (#100)', () => {
         'files.a': 'x'.repeat(200),
         'files.b': 'x'.repeat(200),
       });
-      showContext({ json: true });
-      const parsed = JSON.parse(logged.join('\n'));
+      const parsed = contextJson();
       expect(parsed.degraded).toBe(true);
     } finally {
       if (original === undefined) delete process.env.RVR_BOOTSTRAP_MAX_BYTES;

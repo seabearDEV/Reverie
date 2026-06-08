@@ -1,7 +1,24 @@
 # Design: CLI as a first-class agent target (MCP-equivalent, without MCP)
 
 **Issue:** [#117](https://github.com/seabearDEV/reverie/issues/117) (umbrella, milestone v1.1.0)
-**Status:** PROPOSED 2026-05-27
+**Status:** WS1 + WS2 **IMPLEMENTED** 2026-06-08 · WS3 **DEFERRED** (see note) · design PROPOSED 2026-05-27
+
+> **Implementation note (2026-06-08).** WS1 and WS2 shipped per this design.
+> The envelope contract is exactly as specified here: `reverie:"1"` (string
+> schema version), MCP-parity `error.code` names with **no `E_` prefix**
+> (`PROJECT_UNRESOLVED`, `NOT_FOUND`, `INVALID_INPUT`, `REQUIRES_CONFIRMATION`,
+> `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, `COMMAND_FAILED`, `INPUT_REQUIRED`,
+> `IO`, `RUNTIME`), `warnings[]` as `{code,message}` objects, and the confirm
+> preview in `error.preview` (D9). Code: `src/utils/output.ts` (envelope +
+> frozen `ERROR_CODES`), `src/commands/manifest.ts` (D7), surface-aware
+> `getEffectiveInstructions('cli'|'mcp')` (D5), AGENTS.md from `init` (D6).
+> **WS3 was moved back out of scope**: issue #117 supersedes D8 and re-gates the
+> session-state / write-amp / `aliasResolved` parity work on telemetry signal
+> rather than the first v1.1.0 cut. The D8 rationale below is retained as the
+> argument for picking it up when that signal arrives. (This doc absorbed a
+> second, leaner design draft written during implementation; it is the single
+> canonical design for #117.)
+
 **Driving constraint:** Real deployment blocker — at least one user's employer prohibits MCP servers entirely. For those users the CLI is not a convenience surface, it is the *only* way an AI agent can touch Reverie. This moves CLI/agent parity from "polish" to "table stakes for a whole class of users."
 **Goal alignment:** `project.goals` #4 (agent-agnostic — Claude/Copilot/Gemini/Cursor) and #1 (token efficiency). The MCP ban makes #4 concrete: the on-ramp can't assume MCP.
 

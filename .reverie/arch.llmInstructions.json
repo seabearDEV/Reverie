@@ -1,7 +1,7 @@
 {
-  "value": "MCP-side instructions sent to AI agents at session start, shown by `rvr config llm-instructions` (use `--default` to see only built-in defaults). Built-in defaults nudge agents to bootstrap via reverie_context, check open issues with `gh issue list --state open`, pick the right context tier for the task, write back insights when learned, and hand off via context.next_session at session end.",
+  "value": "src/llm-instructions.ts. getEffectiveInstructions(surface: 'mcp'|'cli' = 'mcp') picks DEFAULT_LLM_INSTRUCTIONS (MCP handshake, unchanged) or CLI_LLM_INSTRUCTIONS (#117 WS2 — rvr-flavored, points at `rvr <cmd> --json`/RVR_OUTPUT and `rvr manifest`, drops the MCP-only \"PREFER MCP TOOLS\"/confirm_token language that was actively wrong for a CLI agent), then appends any custom system.llm.instructions as a PROJECT CONTEXT block. MCP server calls it with no arg (mcp). View via `rvr config llm-instructions [--surface mcp|cli] [--default]`. AGENTS.md emitted by init mirrors the CLI blob.",
   "meta": {
     "created": 1775358827605,
-    "updated": 1778173003167
+    "updated": 1780936622382
   }
 }

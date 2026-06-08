@@ -1,4 +1,5 @@
 import { searchEntries } from '../commands/search';
+import { configureOutput, buildEnvelope } from '../utils/output';
 
 vi.mock('../storage', () => ({
   getEntriesFlat: vi.fn(() => ({
@@ -111,15 +112,11 @@ describe('searchEntries', () => {
   });
 
   it('supports JSON output', () => {
-    searchEntries('server', { json: true });
-    const jsonCall = consoleSpy.mock.calls.find(call =>
-      typeof call[0] === 'string' && call[0].startsWith('{')
-    );
-    expect(jsonCall).toBeDefined();
-    if (jsonCall) {
-      const parsed = JSON.parse(jsonCall[0]);
-      expect(parsed.entries).toBeDefined();
-    }
+    // #117: JSON output is recorded into the envelope result, not console.log'd.
+    configureOutput({ json: true, command: 'find' });
+    searchEntries('server', {});
+    const result = buildEnvelope().result as { entries?: Record<string, string> };
+    expect(result.entries).toBeDefined();
   });
 
   it('supports --keys flag (value matches excluded)', () => {

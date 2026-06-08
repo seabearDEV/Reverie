@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **CLI as a first-class agent target** ([#117](https://github.com/seabearDEV/reverie/issues/117)). The CLI now offers the protocol affordances MCP gives an agent, so agents that **cannot run an MCP server** can use Reverie fully through `rvr`. Design: `docs/design-117-cli-agent-parity.md`.
+  - **Universal structured output (WS1)**: a global `--json` flag (`rvr --json <cmd>`) and a session-wide `RVR_OUTPUT=json` env var make **every** command — reads *and* mutations — emit exactly one versioned envelope on stdout: `{ "reverie": "1", "ok", "command", "result", "warnings", "error" }`. Errors are structured with a frozen `error.code` set that reuses the MCP server's names (`PROJECT_UNRESOLVED`, `NOT_FOUND`, `INVALID_INPUT`, `REQUIRES_CONFIRMATION`, `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, `COMMAND_FAILED`, `INPUT_REQUIRED`, `IO`, `RUNTIME`) and a non-zero exit. `warnings[]` are `{code,message}` objects; `[trimmed]` shed notices surface there (MCP parity). Diagnostics/prompts go to stderr. `run` on a `--confirm` entry without `--yes` returns a stateless `REQUIRES_CONFIRMATION` envelope with the resolved command in `error.preview` (the host owns the permission gate) instead of the MCP two-step token flow.
+  - **Agent bootstrap / discovery (WS2)**: surface-aware instructions via `getEffectiveInstructions('cli')` — the CLI variant points agents at `rvr <cmd> --json` and `rvr manifest`, fixing the bug where the default instructions told a CLI-only agent to "PREFER MCP TOOLS" it cannot reach. `rvr config llm-instructions --surface cli` shows them. `rvr init` now also emits an agent-agnostic **`AGENTS.md`** describing the CLI workflow (skip with `--no-agents`). New **`rvr manifest [--json]`** command emits the command/flag tree plus the MCP-tool ↔ CLI-command map and the envelope contract (the `tools/list` analog).
+
+### Changed
+
+- :warning: **Breaking (decision D3, [#117](https://github.com/seabearDEV/reverie/issues/117))**: `--json` on read commands (`get`, `find`, `context`, `stale`, `lint`, `topology`, `stats`, `audit`) previously printed the **bare** value/object. It now prints the value inside the envelope's `result` field. Scripts parsing `rvr get --json <key>` must read `.result` instead of the top level.
+
 ## [1.0.0] - 2026-05-07
 
 **Reverie 1.0.0 stable.** First public stable release of Reverie — bicameral memory for AI-assisted development. The product began life as codexCLI; the rebrand and Bun-runtime swap landed across v1.0.0-beta.0 → v1.0.0-beta.3, all in the days leading up to this stable cut. See those entries below for the full narrative; this entry summarizes what makes 1.0.0 itself.

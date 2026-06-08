@@ -34,7 +34,7 @@ function formatBytes(n: number): string {
 import { getAuditPath } from '../utils/audit';
 import { getTelemetryPath, getMissPathsPath } from '../utils/telemetry';
 import { scanCodebase, ScaffoldEntry } from './scan';
-import { generateClaudeMd } from './claude-md';
+import { generateClaudeMd, generateAgentsMd } from './claude-md';
 
 function resolveScope(options: { global?: boolean | undefined, project?: boolean | undefined }): Scope | undefined {
   if (options.global) return 'global';
@@ -534,6 +534,7 @@ export function handleProjectFile(options: {
   scaffold?: boolean;
   scan?: boolean;
   claude?: boolean;
+  agents?: boolean;
   force?: boolean;
   dryRun?: boolean;
 }): void {
@@ -631,6 +632,20 @@ export function handleProjectFile(options: {
       }
     } else {
       generateClaudeMd({ cwd, force: options.force });
+    }
+  }
+
+  // Generate agent-agnostic AGENTS.md (unless --no-agents). Describes the
+  // CLI-driven workflow for agents that cannot run an MCP server (#117 WS2).
+  if (options.agents !== false) {
+    if (options.dryRun) {
+      const content = generateAgentsMd({ cwd, dryRun: true });
+      if (content) {
+        console.log(color.bold('\nWould create AGENTS.md:'));
+        console.log(content);
+      }
+    } else {
+      generateAgentsMd({ cwd, force: options.force });
     }
   }
 }

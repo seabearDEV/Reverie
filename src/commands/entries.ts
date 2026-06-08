@@ -20,6 +20,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
 import { interpolate, interpolateObject } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
+import { isJsonMode, setResult, failJson } from '../utils/output';
 
 function toScope(global?: boolean  ): Scope | undefined {
   return global ? 'global' : undefined;
@@ -123,6 +124,33 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     }
 
     const value = commands.join(' && ');
+
+    // JSON mode (#117 WS1): produce a structured result instead of streaming
+    // the child's stdio. --source (the shell-eval wrapper path) is exempt — it
+    // is an internal integration, not an agent surface.
+    if (isJsonMode() && !options.source) {
+      const needsConfirmJson = resolvedKeys.some(k => hasConfirm(k));
+      if (options.dry) {
+        setResult({ keys: resolvedKeys, command: value });
+        return;
+      }
+      // Replaces the MCP two-step confirm-token flow: a stateless refusal the
+      // host gates on, then re-runs with --yes (see design doc). The resolved
+      // command rides in error.preview.
+      if (needsConfirmJson && !options.yes) {
+        setResult({ keys: resolvedKeys, command: value });
+        failJson('REQUIRES_CONFIRMATION', `Entry requires confirmation. Re-run with --yes to execute.`, value);
+        return;
+      }
+      const proc = spawnSync(value, { encoding: 'utf-8', shell: process.env.SHELL ?? '/bin/sh' });
+      const exitCode = proc.status ?? (proc.signal ? 1 : 0);
+      setResult({ keys: resolvedKeys, command: value, exitCode, stdout: proc.stdout ?? '', stderr: proc.stderr ?? '' });
+      if (exitCode !== 0) {
+        failJson('COMMAND_FAILED', `Command exited with code ${exitCode}.`, value);
+      }
+      process.exitCode = exitCode;
+      return;
+    }
 
     if (options.source) {
       process.stderr.write(color.gray('$ ') + color.white(value) + '\n');
@@ -281,6 +309,7 @@ export async function setEntry(key: string, value: string | undefined, force = f
     }
 
     await handlePostSetConfirm(key, confirm, scope);
+    if (isJsonMode()) setResult({ key, ...(alias ? { alias } : {}) });
   } catch (error) {
     handleError('Failed to set entry:', error);
   }
@@ -393,30 +422,29 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
   // For single-key lookups, use auto fallthrough (project → global)
   const lookupScope = toScope(options.global);
 
-  // --json output mode (no alias map needed)
-  if (options.json) {
+  // --json output mode (no alias map needed). The value goes inside the WS1
+  // envelope's `result` (decision D3 — the bare-value shape was a documented
+  // break). The instrumentation wrapper emits the single envelope. JSON mode
+  // is global state set by the preAction hook from --json/RVR_OUTPUT.
+  if (isJsonMode()) {
     if (!key) {
       if (options.all && hasProject) {
-        const result: Record<string, unknown> = {};
-        result.project = jsonFlatEntries(loadData('project'));
-        result.global = jsonFlatEntries(loadData('global'));
-        console.log(JSON.stringify(result, null, 2));
+        setResult({ project: jsonFlatEntries(loadData('project')), global: jsonFlatEntries(loadData('global')) });
       } else if (options.aliases) {
-        console.log(JSON.stringify(loadAliases(listingScope), null, 2));
+        setResult({ aliases: loadAliases(listingScope) });
       } else {
-        console.log(JSON.stringify(jsonFlatEntries(loadData(listingScope)), null, 2));
+        setResult(jsonFlatEntries(loadData(listingScope)));
       }
       return;
     }
 
     const val = getValue(key, lookupScope);
     if (val === undefined) {
-      console.error(JSON.stringify({ error: `Entry '${key}' not found` }));
-      process.exitCode = 1;
+      failJson('NOT_FOUND', `Entry '${key}' not found`);
       return;
     }
     if (typeof val === 'object' && val !== null) {
-      console.log(JSON.stringify(jsonFlatEntries(flattenObject({ [key]: val })), null, 2));
+      setResult(jsonFlatEntries(flattenObject({ [key]: val })));
     } else {
       const strVal = String(val);
       let displayVal: string;
@@ -425,7 +453,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
       } else {
         try { displayVal = interpolate(strVal); } catch { displayVal = strVal; }
       }
-      console.log(JSON.stringify({ [key]: displayVal }));
+      setResult({ [key]: displayVal });
     }
     return;
   }
@@ -664,6 +692,7 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   removeConfirmForKey(key, scope);
 
   printSuccess(`Entry '${key}' removed successfully.`);
+  if (isJsonMode()) setResult({ key, removed: true });
 }
 
 export async function copyEntry(sourceKey: string, destKey: string, force = false, global?: boolean): Promise<void> {
@@ -705,6 +734,7 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
     }
 
     printSuccess(`Entry '${sourceKey}' copied to '${destKey}'.`);
+    if (isJsonMode()) setResult({ source: sourceKey, dest: destKey });
   } catch (error) {
     handleError('Failed to copy entry:', error);
   }
@@ -727,6 +757,7 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
       return;
     }
     printSuccess(`Alias '${oldKey}' renamed to '${newKey}'.`);
+    if (isJsonMode()) setResult({ from: oldKey, to: newKey, kind: 'alias' });
     return;
   }
 
@@ -804,4 +835,5 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   }
 
   printSuccess(`Entry '${oldKey}' renamed to '${newKey}'.`);
+  if (isJsonMode()) setResult({ from: oldKey, to: newKey, kind: 'entry', ...(newAlias ? { alias: newAlias } : {}) });
 }

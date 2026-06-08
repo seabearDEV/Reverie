@@ -1,0 +1,7 @@
+{
+  "value": "CLI structured-output envelope (#117 WS1). src/utils/output.ts holds module-global request-scoped state (json flag, command, result, warnings, error); CLI is single-threaded per process so module scope is safe. SINGLE EMIT POINT is withCliInstrumentation (utils/instrumentation.ts): in JSON mode it sinks handler stdout into the byte-counter (does NOT forward to real stdout) so stray console.log can't corrupt the envelope, then emits one envelope via the original stdout writer in its finally. Commands NOT wrapped (stats, audit, info, manifest) rely on the post-parseAsync finalize fallback in index.ts (emitEnvelope if isJsonMode && !alreadyEmitted) — that's why index.ts uses parseAsync not parse. Commands gate JSON output on isJsonMode() (global state set by the preAction hook from --json/RVR_OUTPUT), NOT on local options.json — the local flag only feeds the hook via optsWithGlobals(). printError(msg, code?)/printWarning/handleError are JSON-aware. Contract (pinned by docs/design-117-cli-agent-parity.md): reverie:\"1\" (string), error.code reuses MCP names with NO E_ prefix (PROJECT_UNRESOLVED/NOT_FOUND/REQUIRES_CONFIRMATION/COMMAND_FAILED/... in output.ts ERROR_CODES — renaming bumps ENVELOPE_VERSION), warnings as {code,message} objects, confirm preview in error.preview. D3: --json reads moved bare→result (documented break).",
+  "meta": {
+    "created": 1780936582215,
+    "updated": 1780943741562
+  }
+}

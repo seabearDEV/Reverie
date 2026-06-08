@@ -3,6 +3,7 @@
 import os from 'os';
 import path from 'path';
 import { afterEach } from 'bun:test';
+import { resetOutput } from '../utils/output';
 
 if (!process.env.RVR_DATA_DIR) {
   process.env.RVR_DATA_DIR = path.join(os.tmpdir(), 'reverie-bun');
@@ -17,4 +18,7 @@ afterEach(() => {
   if (process.exitCode !== undefined && process.exitCode !== 0) {
     process.exitCode = 0;
   }
+  // Reset the #117 structured-output state so JSON mode / recorded result /
+  // error never leak from one test into the next.
+  resetOutput();
 });

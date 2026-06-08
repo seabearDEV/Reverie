@@ -277,18 +277,19 @@ describe('entries advanced', () => {
   describe('JSON output', () => {
     it('get --json returns valid JSON for a single key', () => {
       run('set --force json.test "value"');
-      const result = run('get json.test --json');
-      const parsed = JSON.parse(result);
-      expect(parsed['json.test']).toBe('value');
+      // #117: value is now inside the envelope's `result` (decision D3).
+      const parsed = JSON.parse(run('get json.test --json'));
+      expect(parsed.reverie).toBe('1');
+      expect(parsed.ok).toBe(true);
+      expect(parsed.result['json.test']).toBe('value');
     });
 
     it('get --json returns valid JSON for all entries', () => {
       run('set --force json.a "1"');
       run('set --force json.b "2"');
-      const result = run('get --json');
-      const parsed = JSON.parse(result);
-      expect(parsed['json.a']).toBe('1');
-      expect(parsed['json.b']).toBe('2');
+      const parsed = JSON.parse(run('get --json'));
+      expect(parsed.result['json.a']).toBe('1');
+      expect(parsed.result['json.b']).toBe('2');
     });
   });
 

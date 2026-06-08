@@ -7,6 +7,7 @@ import { SearchOptions } from '../types';
 import { isEncrypted } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { interpolate } from '../utils/interpolate';
+import { isJsonMode, setResult, failJson } from '../utils/output';
 
 type MatchFn = (text: string) => boolean;
 
@@ -101,16 +102,18 @@ function displaySearchResults(
 export function searchEntries(searchTerm: string, options: SearchOptions = {}): { dataCount: number; aliasCount: number } {
   debug('searchEntries called', { searchTerm, options });
 
+  const json = isJsonMode();
+
   if (options.keys && options.values) {
-    console.error('Error: --keys and --values are mutually exclusive.');
-    process.exitCode = 1;
+    if (json) failJson('INVALID_INPUT', '--keys and --values are mutually exclusive.');
+    else { console.error('Error: --keys and --values are mutually exclusive.'); process.exitCode = 1; }
     return { dataCount: 0, aliasCount: 0 };
   }
 
   const scope = options.global ? 'global' as const : undefined;
   const flattenedData = options.aliases ? {} : getEntriesFlat(scope);
 
-  if (Object.keys(flattenedData).length === 0 && !options.aliases) {
+  if (Object.keys(flattenedData).length === 0 && !options.aliases && !json) {
     console.log('No entries to search in.');
     return { dataCount: 0, aliasCount: 0 };
   }
@@ -119,8 +122,9 @@ export function searchEntries(searchTerm: string, options: SearchOptions = {}): 
   try {
     match = buildMatcher(searchTerm, !!options.regex);
   } catch (err) {
-    console.error(`Invalid regex: ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    const msg = `Invalid regex: ${err instanceof Error ? err.message : String(err)}`;
+    if (json) failJson('INVALID_INPUT', msg);
+    else { console.error(msg); process.exitCode = 1; }
     return { dataCount: 0, aliasCount: 0 };
   }
 
@@ -132,11 +136,11 @@ export function searchEntries(searchTerm: string, options: SearchOptions = {}): 
   const aliasCount = Object.keys(aliasMatches).length;
   const totalMatches = dataCount + aliasCount;
 
-  if (options.json) {
+  if (json) {
     const result: { entries?: Record<string, string>, aliases?: Record<string, string> } = {};
     if (!options.aliases) result.entries = dataMatches;
     if (!options.entries) result.aliases = aliasMatches;
-    console.log(JSON.stringify(result, null, 2));
+    setResult(result);
     return { dataCount, aliasCount };
   }
 

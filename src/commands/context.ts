@@ -7,6 +7,7 @@ import { getBinaryName } from '../utils/binaryName';
 import { HANDOFF_KEY, buildHandoffBanner } from '../utils/handoff';
 import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from '../utils/contextBudget';
 import { loadConfig } from '../config';
+import { isJsonMode, setResult, addWarning } from '../utils/output';
 
 // ── Tier filtering (shared with MCP server) ──────────────────────────
 
@@ -107,8 +108,11 @@ export function showContext(options: ContextOptions = {}): void {
     pathologicalOverflow = decision.pathologicalOverflow;
   }
 
-  // JSON output
-  if (options.json) {
+  // JSON output — payload goes inside the WS1 envelope's `result`. The shed
+  // and pathological notices are surfaced both in the result (degraded/
+  // shedNamespaces, as before for MCP parity) and in the envelope's
+  // warnings[] so agents that only inspect warnings still see them.
+  if (isJsonMode()) {
     const result: Record<string, unknown> = {};
     if (handoff) {
       result.handoff = {
@@ -131,7 +135,9 @@ export function showContext(options: ContextOptions = {}): void {
     if (pathologicalOverflow) {
       result.pathologicalOverflow = true;
     }
-    console.log(JSON.stringify(result, null, 2));
+    if (shedSegments.length > 0) addWarning(formatShedNotice(shedSegments));
+    if (pathologicalOverflow) addWarning(PATHOLOGICAL_OVERFLOW_NOTICE);
+    setResult(result);
     return;
   }
 

@@ -3,6 +3,7 @@ import path from 'path';
 import { queryAuditLog, tailAuditLog, getAuditPath, AuditEntry } from '../utils/audit';
 import { parsePeriodDays } from '../utils';
 import { color } from '../formatting';
+import { isJsonMode, setResult } from '../utils/output';
 
 export interface AuditCommandOptions {
   period?: string;
@@ -137,8 +138,8 @@ export function showAuditLog(key: string | undefined, options: AuditCommandOptio
     limit,
   });
 
-  if (options.json) {
-    console.log(JSON.stringify(entries, null, 2));
+  if (isJsonMode()) {
+    setResult(entries);
     return;
   }
 
