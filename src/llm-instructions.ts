@@ -1,4 +1,5 @@
 import { getValue } from './storage';
+import { ERROR_CODES } from './utils/output';
 
 export const DEFAULT_LLM_INSTRUCTIONS = `You are connected to a Reverie data store via MCP. This store is a persistent, structured knowledge base for the project you are working on. Use it to learn, record, and share context across sessions and AI agents.
 
@@ -108,7 +109,7 @@ export const CLI_LLM_INSTRUCTIONS = `You are working with a Reverie data store v
 
 STRUCTURED OUTPUT (for agents):
 - Pass \`--json\` to any command, or set \`RVR_OUTPUT=json\` once for the whole session, to get a single machine-readable envelope on stdout: { "reverie": "1", "ok": true|false, "command": "...", "result": ..., "warnings": [{ "code": ..., "message": ... }], "error": { "code": ..., "message": ..., "preview": ... } }.
-- On failure, "ok" is false, "error.code" is from a frozen set (NOT_FOUND, INVALID_INPUT, PROJECT_UNRESOLVED, REQUIRES_CONFIRMATION, DECRYPT_FAILED, ENCRYPTED_NO_PASSWORD, COMMAND_FAILED, IO, RUNTIME), and the process exits non-zero. Branch on "error.code", not on prose.
+- On failure, "ok" is false, "error.code" is from a frozen set (${ERROR_CODES.join(', ')}), and the process exits non-zero. Branch on "error.code", not on prose.
 - Diagnostics and prompts go to stderr; stdout carries only the one envelope. Run \`rvr manifest --json\` to discover every command, flag, and the MCP-tool↔CLI-command map.
 
 HOW TO USE:

@@ -16,6 +16,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - :warning: **Breaking (decision D3, [#117](https://github.com/seabearDEV/reverie/issues/117))**: `--json` on read commands (`get`, `find`, `context`, `stale`, `lint`, `topology`, `stats`, `audit`) previously printed the **bare** value/object. It now prints the value inside the envelope's `result` field. Scripts parsing `rvr get --json <key>` must read `.result` instead of the top level.
 
+### Fixed
+
+- **Advertised error codes are now actually produced** ([#117](https://github.com/seabearDEV/reverie/issues/117)). `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, and `INPUT_REQUIRED` were in the frozen set and documented to agents, but no code path emitted them — encryption/decryption/missing-value failures surfaced as the generic `RUNTIME`. The `printError` sites across `run`/`get`/`edit`/`set`/`copy`/`rename`, `data import/export/reset`, and `config` now pass precise codes (`NOT_FOUND`, `INVALID_INPUT`, `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, `INPUT_REQUIRED`, `IO`). The error-code list in the CLI instructions and `AGENTS.md` is now interpolated from the single frozen set so the docs can't drift from the code.
+- **`config get` / `config set` no longer drop their value in JSON mode.** They are instrumented (so their stdout is sunk) but never populated the envelope, so `rvr --json config get <key>` returned a result-less envelope. They now emit the value/change in `result`.
+- **`config llm-instructions`, `config examples`, and `config completions bash|zsh` no longer pollute stdout** under `--json` — they emit their content inside the envelope (`completions install` refuses, being interactive).
+- **`audit --follow` is refused in JSON mode** (`INVALID_INPUT`) instead of streaming non-envelope lines forever and never emitting an envelope — a continuous stream can't satisfy the single-envelope contract.
+- **`run --json` no longer reports a failed spawn as success.** A `spawnSync` error (bad `$SHELL`, ENOENT) left both `status` and `signal` null, resolving to exit code 0 / `ok:true`; it now surfaces as `COMMAND_FAILED`.
+
 ## [1.0.0] - 2026-05-07
 
 **Reverie 1.0.0 stable.** First public stable release of Reverie — bicameral memory for AI-assisted development. The product began life as codexCLI; the rebrand and Bun-runtime swap landed across v1.0.0-beta.0 → v1.0.0-beta.3, all in the days leading up to this stable cut. See those entries below for the full narrative; this entry summarizes what makes 1.0.0 itself.

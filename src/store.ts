@@ -296,8 +296,8 @@ function stampImportMeta(
   existing: Record<string, number>,
 ): Record<string, number> {
   const now = Date.now();
-  const newFlat = flattenObject(next as Record<string, unknown>);
-  const currentFlat = flattenObject(current as Record<string, unknown>);
+  const newFlat = flattenObject(next);
+  const currentFlat = flattenObject(current);
   const fresh: Record<string, number> = {};
   for (const [key, value] of Object.entries(newFlat)) {
     const prev = existing[key];

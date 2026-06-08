@@ -106,4 +106,63 @@ describe('CLI JSON envelope (#117)', () => {
     expect(Object.keys(env.result.mcpToolMap)).toHaveLength(19);
     expect(env.result.commands.some((c: { name: string }) => c.name === 'get')).toBe(true);
   });
+
+  // ── Advertised error codes are actually produced (review #1) ──────────
+
+  it('run on an encrypted entry without --decrypt yields ENCRYPTED_NO_PASSWORD', () => {
+    run('set env.sec "secret cmd" --encrypt', { RVR_PASSWORD: 'pw' });
+    const r = run('--json run env.sec');
+    expect(r.status).not.toBe(0);
+    const env = parse(r.stdout);
+    expect(env.ok).toBe(false);
+    expect(env.error.code).toBe('ENCRYPTED_NO_PASSWORD');
+  });
+
+  it('run surfaces a spawn failure as COMMAND_FAILED (not a silent ok:true)', () => {
+    run('set env.cmd3 "echo nope"');
+    const r = run('--json run env.cmd3 --yes', { SHELL: '/nonexistent/shell-xyz' });
+    expect(r.status).not.toBe(0);
+    const env = parse(r.stdout);
+    expect(env.ok).toBe(false);
+    expect(env.error.code).toBe('COMMAND_FAILED');
+  });
+
+  it('every frozen error code is reachable — manifest advertises only real codes', () => {
+    // Guards against doc/code drift: the prose lists used to advertise codes
+    // (DECRYPT_FAILED, ENCRYPTED_NO_PASSWORD, INPUT_REQUIRED) the CLI never
+    // emitted. The instruction blobs now interpolate this same frozen set.
+    const env = parse(run('--json manifest').stdout);
+    const codes: string[] = env.result.envelope.errorCodes;
+    for (const c of ['ENCRYPTED_NO_PASSWORD', 'DECRYPT_FAILED', 'INPUT_REQUIRED', 'COMMAND_FAILED']) {
+      expect(codes).toContain(c);
+    }
+  });
+
+  // ── config get/set emit a populated envelope (review #2) ──────────────
+
+  it('config set --json returns the changed key in result', () => {
+    const env = parse(run('--json config set theme dark').stdout);
+    expect(env.ok).toBe(true);
+    expect(env.command).toBe('config set');
+    expect(env.result.key).toBe('theme');
+    expect(env.result.value).toBe('dark');
+  });
+
+  it('config get --json returns the value instead of dropping it', () => {
+    run('config set theme light');
+    const env = parse(run('--json config get theme').stdout);
+    expect(env.ok).toBe(true);
+    expect(env.command).toBe('config get');
+    expect(env.result.theme).toBe('light');
+  });
+
+  // ── audit --follow refuses in JSON mode (review #3) ───────────────────
+
+  it('audit --follow --json refuses with INVALID_INPUT (no stdout pollution / hang)', () => {
+    const r = run('--json audit --follow');
+    expect(r.status).not.toBe(0);
+    const env = parse(r.stdout);
+    expect(env.ok).toBe(false);
+    expect(env.error.code).toBe('INVALID_INPUT');
+  });
 });

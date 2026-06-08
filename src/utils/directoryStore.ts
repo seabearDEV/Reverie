@@ -576,7 +576,7 @@ export function createDirectoryStore(
       writeEpoch(dir, inProgressEpoch);
 
       // 1. Flatten new entries to leaves (authoritative new state).
-      const newFlat = flattenObject(data.entries as Record<string, unknown>);
+      const newFlat = flattenObject(data.entries);
 
       // 2. Re-scan under the lock for authoritative current state.
       scanAndSync();
@@ -899,7 +899,7 @@ function migrateFileToDirectoryLocked(
   fs.mkdirSync(tmpDirPath, { recursive: true, mode: 0o700 });
 
   // Write each entry as a wrapper file.
-  const flat = flattenObject(entries as Record<string, unknown>);
+  const flat = flattenObject(entries);
   let entryCount = 0;
   try {
     for (const [key, value] of Object.entries(flat)) {

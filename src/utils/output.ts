@@ -117,10 +117,6 @@ export function addWarning(message: string, code = 'WARNING', count?: number): v
   state.warnings.push(w);
 }
 
-export function addWarnings(messages: readonly string[], code = 'WARNING'): void {
-  for (const m of messages) addWarning(m, code);
-}
-
 /**
  * Record a structured error and flag the process for a non-zero exit. The
  * envelope is emitted (ok:false) by the wrapper / finalize step. `preview`

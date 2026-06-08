@@ -109,7 +109,7 @@ export function displayAliases(aliases: Record<string, string>, options?: { tree
   if (name) {
     const aliasValue = aliases[name];
     if (!aliasValue) {
-      printError(`Alias '${name}' not found`);
+      printError(`Alias '${name}' not found`, 'NOT_FOUND');
       return;
     }
     if (tree) {
@@ -126,7 +126,7 @@ export function displayAliases(aliases: Record<string, string>, options?: { tree
   }
 
   if (tree) {
-    displayTree(aliases as Record<string, unknown>);
+    displayTree(aliases);
   } else {
     Object.entries(aliases).forEach(([alias, path]) => {
       console.log(`${color.cyan(alias)}: ${colorizePathByLevels(path)}`);

@@ -189,7 +189,7 @@ server.tool = ((...args: any[]) => {
     const resolvedScope: 'project' | 'global' | undefined =
       scope === 'auto'
         ? (findProjectFile() ? 'project' : 'global')
-        : scope as 'project' | 'global' | undefined;
+        : scope;
 
     // Resolve alias for audit trail. reverie_copy is special-cased: extractKey
     // returns dest for the audit-key field, but the alias that matters is the
@@ -460,7 +460,7 @@ server.tool(
     try {
       const hasProject = !!findProjectFile();
       // For listings: default to project-only when project exists (unless --all or explicit scope)
-      const listingScope: Scope = scopeParam ? scopeParam as Scope : (hasProject && !showAll) ? 'project' : 'auto';
+      const listingScope: Scope = scopeParam ?? ((hasProject && !showAll) ? 'project' : 'auto');
       // For single-key lookups: auto fallthrough
       const lookupScope = toScope(scopeParam);
       const data = loadData(listingScope);
@@ -577,7 +577,7 @@ server.tool(
       }
       const flat = flattenObject(value, resolvedKey, depth);
       if (showSubtreeValues) {
-        const interpFlat = interpolateObject(flat as Record<string, import("./types").CodexValue>);
+        const interpFlat = interpolateObject(flat);
         const lines = Object.entries(interpFlat).map(([k, v]) => {
           const strVal = typeof v === 'string' ? v : JSON.stringify(v);
           return `${k}: ${isEncrypted(strVal) ? '[encrypted]' : strVal}`;
@@ -1408,7 +1408,7 @@ server.tool(
     try {
       const projectFile = findProjectFile();
       const hasProject = !!projectFile;
-      const effectiveScope: Scope = scopeParam ? scopeParam as Scope : hasProject ? 'project' : 'auto';
+      const effectiveScope: Scope = scopeParam ?? (hasProject ? 'project' : 'auto');
 
       const flat = getEntriesFlat(effectiveScope);
       const effectiveTier = tier ?? 'standard';

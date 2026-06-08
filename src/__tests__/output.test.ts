@@ -10,7 +10,6 @@ import {
   resolveJsonMode,
   setResult,
   addWarning,
-  addWarnings,
   failJson,
   hasError,
   buildEnvelope,
@@ -93,7 +92,8 @@ describe('output envelope (#117 WS1)', () => {
   it('collects warnings as {code,message} objects', () => {
     configureOutput({ json: true, command: 'context' });
     addWarning('[trimmed: files.*]', 'TRIMMED');
-    addWarnings(['w2', 'w3']);
+    addWarning('w2');
+    addWarning('w3');
     addWarning('');
     const env = buildEnvelope();
     expect(env.warnings).toEqual([

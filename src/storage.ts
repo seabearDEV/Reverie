@@ -35,8 +35,7 @@ export function handleError(message: string, error: unknown, context?: string): 
   // map to the dedicated code so agents can branch on them.
   if (isJsonMode()) {
     const code = error instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED' : 'RUNTIME';
-    failJson(code, `${contextPrefix}${message} ${errorText}`.trim());
-    process.exitCode = 1;
+    failJson(code, `${contextPrefix}${message} ${errorText}`.trim()); // failJson sets exitCode=1
     return;
   }
 

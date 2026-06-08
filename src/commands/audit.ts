@@ -200,16 +200,14 @@ export function followAuditLog(key: string | undefined, options: AuditCommandOpt
   // Drain any entries already in the cache so tailAuditLog starts clean
   tailAuditLog();
 
+  // JSON mode is refused upstream (audit --follow can't satisfy the
+  // single-envelope contract), so this only ever renders the human stream.
   const onFileChange = (): void => {
     const newEntries = tailAuditLog();
     for (const entry of newEntries) {
       if (!matchesFilter(entry, options, key)) continue;
-      if (options.json) {
-        console.log(JSON.stringify(entry));
-      } else {
-        for (const line of formatAuditEntry(entry, ctx)) {
-          console.log(line);
-        }
+      for (const line of formatAuditEntry(entry, ctx)) {
+        console.log(line);
       }
     }
   };

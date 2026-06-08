@@ -658,7 +658,13 @@ configCommand
 configCommand
   .command('examples')
   .description('Show usage examples')
-  .action(() => { void withPager(() => showExamples()); });
+  .action(() => {
+    if (isJsonMode()) {
+      setResult({ hint: `Usage examples are human-formatted. Run \`${getBinaryName()} manifest --json\` for the machine-readable command surface, or \`${getBinaryName()} config llm-instructions --surface cli --json\` for agent guidance.` });
+      return;
+    }
+    void withPager(() => showExamples());
+  });
 
 configCommand
   .command('llm-instructions')
@@ -669,6 +675,10 @@ configCommand
     const surface = options.surface ?? 'mcp';
     const base = surface === 'cli' ? CLI_LLM_INSTRUCTIONS : DEFAULT_LLM_INSTRUCTIONS;
     const text = options.default ? base : getEffectiveInstructions(surface);
+    if (isJsonMode()) {
+      setResult({ surface, instructions: text });
+      return;
+    }
     await withPager(() => { process.stdout.write(text + '\n'); });
   });
 
@@ -681,6 +691,7 @@ completionsCommand
   .command('bash')
   .description('Output Bash completion script')
   .action(() => {
+    if (isJsonMode()) { setResult({ shell: 'bash', script: generateBashScript() }); return; }
     process.stdout.write(generateBashScript());
   });
 
@@ -688,6 +699,7 @@ completionsCommand
   .command('zsh')
   .description('Output Zsh completion script')
   .action(() => {
+    if (isJsonMode()) { setResult({ shell: 'zsh', script: generateZshScript() }); return; }
     process.stdout.write(generateZshScript());
   });
 
@@ -695,6 +707,12 @@ completionsCommand
   .command('install')
   .description('Auto-detect shell and install completions')
   .action(() => {
+    if (isJsonMode()) {
+      // Interactive setup that writes shell rc files and prints progress; not a
+      // machine surface. Refuse rather than pollute the envelope's stdout.
+      printError('completions install is interactive; run it without --json.', 'INVALID_INPUT');
+      return;
+    }
     installCompletions();
   });
 
@@ -973,6 +991,13 @@ reverie
   .option('-f, --follow', 'Follow the audit log in real time')
   .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean }) => {
     if (options.follow) {
+      // --follow streams indefinitely; that is incompatible with the
+      // single-envelope JSON contract (#117 WS1). Refuse rather than emit a
+      // never-terminating stream of non-envelope lines on stdout.
+      if (isJsonMode()) {
+        printError('audit --follow streams continuously and cannot emit a single JSON envelope. Drop --follow (or RVR_OUTPUT) and poll `audit --json` instead.', 'INVALID_INPUT');
+        return;
+      }
       const { followAuditLog } = await import('./commands/audit');
       await followAuditLog(key, options);
     } else {

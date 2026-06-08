@@ -282,7 +282,7 @@ export async function withCliInstrumentation<T>(
     const projectFile = findProjectFile();
     const resolvedScope: 'project' | 'global' | undefined = scope === 'auto'
       ? (projectFile ? 'project' : 'global')
-      : scope as 'project' | 'global' | undefined;
+      : scope;
     // #99: rescuedByExplicitGlobal — the call succeeded with explicit
     // scope:'global' but would have refused under scope:'auto' because
     // project resolution failed. Mirrors the MCP-side telemetry signal.

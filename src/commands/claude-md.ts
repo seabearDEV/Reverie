@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { printSuccess, printWarning } from './helpers';
+import { ERROR_CODES } from '../utils/output';
 
 export const CLAUDE_MD_TEMPLATE = `## Bootstrap
 
@@ -60,10 +61,8 @@ to get a single machine-readable envelope on stdout:
 { "reverie": "1", "ok": true, "command": "get", "result": { "...": "..." }, "warnings": [] }
 \`\`\`
 
-On failure \`ok\` is \`false\`, \`error.code\` is from a frozen set
-(\`NOT_FOUND\`, \`INVALID_INPUT\`, \`PROJECT_UNRESOLVED\`,
-\`REQUIRES_CONFIRMATION\`, \`DECRYPT_FAILED\`, \`ENCRYPTED_NO_PASSWORD\`, \`IO\`,
-\`RUNTIME\`), and the process exits non-zero. Diagnostics go to stderr; stdout
+On failure \`ok\` is \`false\` and \`error.code\` is from a frozen set
+(${ERROR_CODES.join(', ')}), and the process exits non-zero. Diagnostics go to stderr; stdout
 carries only the envelope. Run \`rvr manifest --json\` to discover every command
 and the MCP-tool ↔ CLI-command map.
 
