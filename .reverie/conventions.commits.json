@@ -1,7 +1,7 @@
 {
-  "value": "Conventional commits: fix:, feat:, docs:, test:, refactor:. Version tags (v1.9.0) on release commits. Keep subject under 70 chars, use body for detail.",
+  "value": "Conventional commits: fix:, feat:, docs:, test:, refactor:. Version tags (v1.9.0) on release commits. Keep subject under 70 chars, use body for detail. NO footers or attribution trailers (Co-Authored-By, \"Generated with ...\") in commits, issue bodies, or PR descriptions — agent tooling that injects these by default must strip them. Rationale: token efficiency, not attribution policy — footers are boilerplate every future agent re-reads in git log and issue threads; keep commit/issue bodies lean the same way entries follow conventions.seedDensity.",
   "meta": {
     "created": 1775526068051,
-    "updated": 1775526068051
+    "updated": 1781028239920
   }
 }
