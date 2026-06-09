@@ -12,18 +12,7 @@ Reverie 1.0.0 stable shipped 2026-05-07, following a rebrand from codexCLI. See 
 
 ## What's Next
 
-### Next Release — v1.2.0: Surface Token Diet & Agent-Surface Parity
-
-Data-picked 2026-06-09 from measured MCP/CLI token economics (`context.surfaceTokenEconomics` in the store). Brings the MCP surface to token parity with the CLI, the CLI to statefulness parity with MCP, and closes the [#117](https://github.com/seabearDEV/reverie/issues/117) arc.
-
-- **Lower default bootstrap budget** below MCP-client large-response warnings ([#124](https://github.com/seabearDEV/reverie/issues/124))
-- **Quiet `reverie_set` confirmation** — drop the full-value echo ([#125](https://github.com/seabearDEV/reverie/issues/125))
-- **Handshake diet** — `DEFAULT_LLM_INSTRUCTIONS` ≤2KB, tools/list trimmed, size regression check ([#126](https://github.com/seabearDEV/reverie/issues/126))
-- **Projection params** for MCP read tools — keys-only, size-only ([#127](https://github.com/seabearDEV/reverie/issues/127))
-- **CLI session-state & observability parity** — WS3 of #117 ([#119](https://github.com/seabearDEV/reverie/issues/119))
-- **Envelope from handler return** — refactor away scattered `setResult` calls ([#120](https://github.com/seabearDEV/reverie/issues/120))
-
-Themes beyond v1.2.0 are picked from soak telemetry per the soak-exit policy (day-7 checkpoint for the current cycle: 2026-06-15) — leading candidates below.
+The next theme is soak-gated: it gets picked from usage telemetry per the soak-exit policy (day-7 checkpoint for the current cycle: 2026-06-15), not pre-committed. Leading candidates below.
 
 ### Smarter Knowledge Management
 
@@ -60,6 +49,9 @@ Make the knowledge base useful for teams, not just solo developers.
 ## Release History
 
 v1.0.0 and forward are Reverie. The v0.1.0 → v1.14.0 entries below are codexCLI-era, preserved here for continuity. (Those codexCLI git tags were retired during the v1.1.0 cut so Reverie's v1.x line is collision-free; the history lives on in this document and in `git log`.)
+
+### v1.2.0 — Surface Token Diet & Agent-Surface Parity
+Data-picked 2026-06-09 from measured MCP/CLI token economics; closes the [#117](https://github.com/seabearDEV/reverie/issues/117) arc — MCP reaches token parity with the CLI, the CLI reaches statefulness parity with MCP. Six issues: quiet `reverie_set` confirmation, no value echo (#125); default bootstrap budget 50KB → 38KB, under MCP-client large-response warnings (#124); handshake diet — `DEFAULT_LLM_INSTRUCTIONS` 8.7KB → 1.9KB with a size regression test (#126); projection params — `context sizeOnly`/`--size-only`, `find keysOnly` (#127); CLI session-state parity via `RVR_SESSION` + on-disk session files — write-amp guard and miss-path tracking across invocations (#119, WS3); JSON envelope `result` derived from handler returns, with a command-sweep completeness guard (#120). Generated agent guidance softened from "prefer MCP" to "same store, either surface." Tests 1430 → 1460. See [CHANGELOG](../CHANGELOG.md).
 
 ### v1.1.0 — CLI as a First-Class Agent Target
 Closes [#117](https://github.com/seabearDEV/reverie/issues/117) (WS1 + WS2). For the cohort that **can't run an MCP server**, the CLI becomes an equivalent agent target. **WS1 — universal structured output:** a global `--json` flag and a session-wide `RVR_OUTPUT=json` wrap *every* command (reads and mutations) in one versioned envelope (`reverie`/`ok`/`command`/`result`/`warnings`/`error`) with a frozen, MCP-parity `error.code` set and non-zero exit on failure. **WS2 — agent bootstrap:** surface-aware instructions (`config llm-instructions --surface cli`, fixing the bug that told CLI agents to "PREFER MCP TOOLS"), an agent-agnostic `AGENTS.md` emitted by `rvr init`, and a new `rvr manifest --json` (command/flag tree + MCP↔CLI map). Breaking change (D3): `--json` reads now nest the value under `result`. WS3 (session-state parity) deferred to [#119](https://github.com/seabearDEV/reverie/issues/119). Tests 1394 → 1430. See [CHANGELOG](../CHANGELOG.md) and `docs/design-117-cli-agent-parity.md`.

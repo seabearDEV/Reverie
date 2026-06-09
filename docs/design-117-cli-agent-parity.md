@@ -1,7 +1,20 @@
 # Design: CLI as a first-class agent target (MCP-equivalent, without MCP)
 
 **Issue:** [#117](https://github.com/seabearDEV/reverie/issues/117) (umbrella, milestone v1.1.0)
-**Status:** WS1 + WS2 **IMPLEMENTED** 2026-06-08 · WS3 **DEFERRED** (see note) · design PROPOSED 2026-05-27
+**Status:** **COMPLETE** — WS1 + WS2 IMPLEMENTED 2026-06-08 (v1.1.0/v1.1.1) · WS3 IMPLEMENTED 2026-06-09 (v1.2.0, [#119](https://github.com/seabearDEV/reverie/issues/119)/PR #129) · design PROPOSED 2026-05-27
+
+> **Implementation note (2026-06-09, WS3).** Shipped per D8 in v1.2.0:
+> `RVR_SESSION` adopts a shared session id (sanitized — it names the state
+> file), with per-session state at `~/.reverie/store/sessions/<id>.json`
+> (atomic + lock-guarded read-modify-write, 24h TTL prune, corrupt files
+> degrade to empty). Write-amp warnings land in the envelope's `warnings[]`
+> as `{code:"WRITE_AMP", message, count}` (stderr in human mode) with the
+> same window math as MCP (shared `pruneAndRecord`, not a re-implementation);
+> miss-path windows persist across invocations; `confirm set`/`remove` were
+> the last `aliasResolved`-dropping callsites, fixed. Two-step confirm tokens
+> stayed out per D9 — the stateless `REQUIRES_CONFIRMATION` envelope is the
+> CLI contract. Code: `src/utils/session.ts`, `src/utils/sessionState.ts`,
+> `src/utils/instrumentation.ts`.
 
 > **Implementation note (2026-06-08).** WS1 and WS2 shipped per this design.
 > The envelope contract is exactly as specified here: `reverie:"1"` (string

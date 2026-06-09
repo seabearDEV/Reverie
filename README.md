@@ -76,7 +76,9 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Cross-Session Handoff**: `reverie_context` surfaces a top banner from `context.next_session` so the next session reads where things stand before any other work (auto-staled past 7 days)
 - **Project-Resolution Guardrail**: writes refuse with a structured `PROJECT_UNRESOLVED` error when no `.reverie/` resolves and no explicit scope is given — prevents project-shaped data from silently landing in the global store
 - **Bootstrap Size Budget**: `reverie_context` sheds entries by priority when the projected response exceeds `bootstrap_max_response_bytes` (default 38KB) — `files.*` first, then `arch.*`, then large `context.*` largest-first, with a one-line trimmed-notice listing what was dropped. `tier:"full"` opts out
-- **Write-Amp Guard**: `reverie_set` warns on the 3rd+ write of the same key in a session within 30 minutes — informational, the write still succeeds. Helps agents notice when a key is being used as scratch space rather than a stable seed
+- **Write-Amp Guard**: `reverie_set` / `rvr set` warns on the 3rd+ write of the same key in a session within 30 minutes — informational, the write still succeeds. Helps agents notice when a key is being used as scratch space rather than a stable seed
+- **CLI Agent Sessions**: export `RVR_SESSION=<any-id>` and separate `rvr` invocations count as one session — the write-amp guard (a `WRITE_AMP` warning in the JSON envelope's `warnings[]`) and miss-path telemetry work across invocations, the same session guardrails MCP agents get
+- **Size Projection**: `rvr context --size-only` (or MCP `sizeOnly: true`) reports per-namespace entry/byte counts and the effective budget — answers "how big is my bootstrap" without paying for the bootstrap; `find --keys` returns matching keys without their values
 
 ## Installation
 
@@ -151,6 +153,7 @@ Reverie honors a small set of environment variables for deployment-time configur
 | `RVR_NO_PROJECT` | Disable project-file lookup entirely. Set to any non-empty value (e.g. `1`) and `findProjectFile()` returns `null` regardless of `cwd` or `RVR_PROJECT`. | unset |
 | `RVR_AGENT_NAME` | Identifier recorded in the audit and telemetry logs for the calling agent. Used by `rvr stats` and `rvr audit` to break down activity per agent (Claude, Cursor, Copilot, etc.). | unset |
 | `RVR_OUTPUT` | When set to `json`, every command emits the structured JSON envelope on stdout (equivalent to passing `--json`), session-wide. Diagnostics and prompts go to stderr. | unset |
+| `RVR_SESSION` | Shared session id for CLI-driven agents: invocations with the same id count as one session, with guardrail state (write-amp window, miss-path tracking) persisted to `~/.reverie/store/sessions/<id>.json` (TTL-pruned after 24h). Unset → each invocation is its own session. | unset |
 | `RVR_DISABLE_LOCKING` | **Test-only.** When set to `1`, `withFileLock` falls back to running its closure without acquiring the file lock if lock acquisition fails. The default (production) behavior since v1.11 is to fail closed and propagate the lock error. Production code should never set this — there are no known production environments where lock acquisition is expected to fail. Tests that intentionally exercise contended-lock scenarios use this opt-out instead. | unset |
 
 ### Notes
