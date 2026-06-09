@@ -331,27 +331,28 @@ describe('MCP Server Tools', () => {
   });
 
   describe('reverie_set', () => {
-    it('sets a value and returns success', async () => {
+    it('sets a value and returns a quiet confirmation without echoing the value (#125)', async () => {
       const result = await toolHandlers['reverie_set']({ key: 'server.ip', value: '10.0.0.1' });
-      expect(result.content[0].text).toContain('Set: server.ip = 10.0.0.1');
+      expect(result.content[0].text).toContain('Set: server.ip (8B)');
+      expect(result.content[0].text).not.toContain('10.0.0.1');
       expect(result.isError).toBeUndefined();
     });
 
-    it('masks plaintext in response when encrypt is true', async () => {
+    it('marks encrypted writes without echoing plaintext or ciphertext', async () => {
       const result = await toolHandlers['reverie_set']({
         key: 'api.secret', value: 'mysecret', encrypt: true, password: 'pass',
       });
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toContain('[encrypted]');
+      expect(result.content[0].text).toContain('Set: api.secret (8B, encrypted)');
       expect(result.content[0].text).not.toContain('mysecret');
     });
 
-    it('masks plaintext in response when encrypt is true with alias', async () => {
+    it('marks encrypted writes with alias without echoing plaintext', async () => {
       const result = await toolHandlers['reverie_set']({
         key: 'api.secret', value: 'mysecret', encrypt: true, password: 'pass', alias: 'sec',
       });
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toContain('[encrypted]');
+      expect(result.content[0].text).toContain('Set: api.secret (8B, encrypted)');
       expect(result.content[0].text).toContain('Alias set: sec ->');
       expect(result.content[0].text).not.toContain('mysecret');
     });

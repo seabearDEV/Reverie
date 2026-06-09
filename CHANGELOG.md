@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP `reverie_set` no longer echoes the stored value back** ([#125](https://github.com/seabearDEV/reverie/issues/125)). The response was `Set: <key> = <entire value>` — re-paying the full value the agent had just sent (~12× the CLI's confirmation on a 1KB seed; a 14-write session spent ~3.8k tokens on echoes alone). It is now a quiet confirmation: `Set: <key> (<bytes>B) → <scope> (<path>)`, with `, encrypted` marking encrypted writes. Alias confirmations and write-amplification warnings are unchanged.
+
 ## [1.1.1] - 2026-06-08
 
 ### Fixed

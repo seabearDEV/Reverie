@@ -420,9 +420,14 @@ server.tool(
         scope === 'project' ? 'project' :
         scope === 'global' ? 'global' :
         projectFile ? 'project' : 'global';
-      const lines: string[] = [`Set: ${resolved} = ${encrypt ? '[encrypted]' : value}`];
+      // #125: quiet confirmation — never echo the value back. The agent
+      // just sent it; re-paying it in the response costs ~12× the CLI's
+      // confirmation on a 1KB seed. Key + byte count + landing scope only.
+      const byteCount = Buffer.byteLength(value, 'utf8');
+      const lines: string[] = [
+        `Set: ${resolved} (${byteCount}B${encrypt ? ', encrypted' : ''}) → ${wroteTo}${wroteTo === 'project' && projectFile ? ` (${projectFile})` : ''}`,
+      ];
       if (alias) lines.push(`Alias set: ${alias} -> ${resolved}`);
-      lines.push(`Wrote to: ${wroteTo}${wroteTo === 'project' && projectFile ? ` (${projectFile})` : ''}`);
 
       // Write-amp guard (#101) — warn when the same key has been written
       // 3+ times in this session within a 30-min window. Informational
