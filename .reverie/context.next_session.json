@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — Store hygiene (bootstrap 49.9KB→36.4KB), measured surface token economics (context.surfaceTokenEconomics), MCP keep-decision recorded (project.surfaceStrategy). ROADMAP DEFINED: milestone v1.2.0 = #124-#127 + #119 + #120 (closes #117 arc); later themes wait for the 2026-06-15 soak checkpoint (project.soakPolicy). New conventions: no footers (conventions.commits), handoff-delta (conventions.handoff). Pick up first: #125 (quiet set echo — trivial, biggest win). Then #124, #126, #127, #119, #120 in any order.",
+  "value": "2026-06-09 — ALL of milestone v1.2.0 (#125 #124 #126 #127 #119 #120) implemented on PR #129, one commit per issue, 1456 tests green. Details + post-merge follow-ups in project.inFlight. Pick up first: check PR #129 review state — if merged, do the follow-ups (soften prefer-MCP guidance, close #117, cut v1.2.0); if not, address review feedback. Soak checkpoint 2026-06-15 next.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781030284764
+    "updated": 1781033991303
   }
 }
