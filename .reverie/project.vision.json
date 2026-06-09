@@ -1,7 +1,7 @@
 {
-  "value": "Eliminate repetitive codebase exploration by AI agents. Every session starts with full context. Every insight gets stored for the next session. As the knowledge base grows, hit rates improve and agents spend fewer tokens exploring — tracked via per-period trends in reverie_stats.",
+  "value": "Core mission: reduced token usage via local knowledge interactions — get/set/find against the store instead of re-exploring the codebase — and the seed concept ([[conventions.seedDensity]]): entries activate pretrained knowledge rather than store it. Every session starts with full context; every insight gets stored for the next. As the store grows, hit rates improve and agents spend fewer tokens exploring — tracked via per-period trends in reverie_stats. Every feature and convention should be judged against this mission.",
   "meta": {
     "created": 1775501535503,
-    "updated": 1778164457317
+    "updated": 1781028535859
   }
 }

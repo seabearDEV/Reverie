@@ -1,0 +1,7 @@
+{
+  "value": "context.next_session = date + deltas since last session + pick-up-first pointer. Issue numbers as pointers, no restated rationale. Target ≤600B. Single home per fact: durable state lives in project.inFlight — the handoff references it, never restates it. Both entries load at every bootstrap, so duplication is read twice per session and written twice at session end. Exempt from seedDensity (#91) but not from leanness.",
+  "meta": {
+    "created": 1781028526999,
+    "updated": 1781028526999
+  }
+}
