@@ -320,7 +320,7 @@ The tiers are inclusive cones: `essential ⊂ standard ⊂ full`. There's no way
 
 ### Relationship to the size budget (#100)
 
-When the projected response would exceed `bootstrap_max_response_bytes` (default 50KB), `reverie_context` automatically sheds entries by priority — `files.*` first, then `arch.*`, then large `context.*` (largest-first). `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never shed. A `[trimmed: …]` notice at the top of the response names what was dropped and points at `reverie_get <key>` or `tier:"full"` for retrieval.
+When the projected response would exceed `bootstrap_max_response_bytes` (default 38KB), `reverie_context` automatically sheds entries by priority — `files.*` first, then `arch.*`, then large `context.*` (largest-first). `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never shed. A `[trimmed: …]` notice at the top of the response names what was dropped and points at `reverie_get <key>` or `tier:"full"` for retrieval.
 
 `tier: "full"` opts out of degradation entirely. If you ask for the full payload, you get the full payload — even if that means hitting the host cap. The shed only fires for `essential` and `standard`.
 
@@ -337,6 +337,15 @@ rvr config set bootstrap_max_response_bytes 102400
 ```
 
 For test/integration workflows, `RVR_BOOTSTRAP_MAX_BYTES` env var overrides the config.
+
+## CLI agent sessions (`RVR_SESSION`)
+
+The CLI is one process per invocation, so session-scoped guardrails have nothing to attach to by default. Agents driving Reverie through `rvr` should export `RVR_SESSION=<any-id>` once at session start: every invocation sharing the id counts as one session, with state persisted to `~/.reverie/store/sessions/<id>.json` (TTL-pruned after 24h). This enables the same guardrails MCP sessions get ([#119](https://github.com/seabearDEV/reverie/issues/119)):
+
+- **Write-amplification warnings** (#101): the 3rd+ write of the same key within 30 minutes adds a `WRITE_AMP` warning to the envelope's `warnings[]` (with `count`) and to stderr in human mode.
+- **Miss-path tracking**: read misses open exploration windows that close on writeback/hit across invocations, feeding the same `reverie_stats` calibration as MCP sessions.
+
+Unset, each invocation is its own session — no state files are written.
 
 ## Validation
 

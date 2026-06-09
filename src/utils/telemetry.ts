@@ -138,7 +138,7 @@ export function loadMissPaths(): MissPath[] {
 
 // ── Miss-window tracker (pure state machine, no I/O) ────────────────
 
-interface OpenMissWindow {
+export interface OpenMissWindow {
   ts: number;
   session: string;
   namespace: string;
@@ -154,8 +154,10 @@ export class MissWindowTracker {
   private windows = new Map<string, OpenMissWindow>();
 
   /**
-   * Called after every MCP tool call. Returns closed MissPath records (if any).
-   * A single call can close multiple windows (e.g. timeout sweep + writeback).
+   * Called after every tool call on either surface — directly by the MCP
+   * wrapper, per CLI invocation via sessionState's trackCliMissPath (#119).
+   * Returns closed MissPath records (if any). A single call can close
+   * multiple windows (e.g. timeout sweep + writeback).
    */
   onToolCall(params: {
     session: string;
@@ -219,6 +221,21 @@ export class MissWindowTracker {
     }
 
     return closed;
+  }
+
+  /**
+   * Serialize open windows for the on-disk session state file (#119) so a
+   * per-invocation CLI process can carry windows across invocations.
+   */
+  exportOpenWindows(): OpenMissWindow[] {
+    return [...this.windows.values()].map(w => ({ ...w }));
+  }
+
+  /** Rehydrate windows persisted by a previous CLI invocation (#119). */
+  restoreOpenWindows(windows: OpenMissWindow[]): void {
+    for (const w of windows) {
+      this.windows.set(`${w.session}:${w.namespace}`, { ...w });
+    }
   }
 
   /** Flush all open windows as timeouts (call on shutdown). */

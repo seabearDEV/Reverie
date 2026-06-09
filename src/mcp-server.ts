@@ -34,7 +34,7 @@ import {
 import { fileURLToPath } from "url";
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll } from "./store";
 import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
-import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
+import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS, DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES } from "./config";
 import { deepMerge } from "./utils/deepMerge";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
@@ -388,7 +388,7 @@ server.tool = ((...args: any[]) => {
 // --- reverie_set ---
 server.tool(
   "reverie_set",
-  "Store a project-knowledge entry at a dot-notation key (e.g. arch.api). Use to persist non-obvious insights across sessions. For creating a nickname that points at an existing key, use reverie_alias_set instead — aliases do not store data.",
+  "Store a project-knowledge entry at a dot-notation key (e.g. arch.api) — persists insights across sessions. For a nickname pointing at an existing key, use reverie_alias_set (aliases store no data).",
   { key: z.string().describe("Dot-notation key (e.g. server.prod.ip)"), value: z.string().describe("Value to store"), alias: z.string().optional().describe("Create an alias for this key"), encrypt: z.boolean().optional().describe("Encrypt the value with the provided password"), password: z.string().optional().describe("Password for encryption (required when encrypt is true)"), scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)") },
   async ({ key, value, alias, encrypt, password, scope: scopeParam }) => {
     try {
@@ -420,9 +420,14 @@ server.tool(
         scope === 'project' ? 'project' :
         scope === 'global' ? 'global' :
         projectFile ? 'project' : 'global';
-      const lines: string[] = [`Set: ${resolved} = ${encrypt ? '[encrypted]' : value}`];
+      // #125: quiet confirmation — never echo the value back. The agent
+      // just sent it; re-paying it in the response costs ~12× the CLI's
+      // confirmation on a 1KB seed. Key + byte count + landing scope only.
+      const byteCount = Buffer.byteLength(value, 'utf8');
+      const lines: string[] = [
+        `Set: ${resolved} (${byteCount}B${encrypt ? ', encrypted' : ''}) → ${wroteTo}${wroteTo === 'project' && projectFile ? ` (${projectFile})` : ''}`,
+      ];
       if (alias) lines.push(`Alias set: ${alias} -> ${resolved}`);
-      lines.push(`Wrote to: ${wroteTo}${wroteTo === 'project' && projectFile ? ` (${projectFile})` : ''}`);
 
       // Write-amp guard (#101) — warn when the same key has been written
       // 3+ times in this session within a 30-min window. Informational
@@ -444,7 +449,7 @@ server.tool(
 // --- reverie_get ---
 server.tool(
   "reverie_get",
-  "Retrieve a specific stored entry by dot-notation key (e.g. arch.api, files.store). Use when you already know the key you want. For browsing or listing everything stored, use reverie_context — that is the bootstrap/overview tool. For keyword search, use reverie_find.",
+  "Retrieve a stored entry by dot-notation key (e.g. arch.api). For browsing everything, use reverie_context; for keyword search, use reverie_find.",
   {
     key: z.string().optional().describe("Dot-notation key to retrieve (omit for all entries)"),
     format: z.enum(["flat", "tree"]).optional().describe("Output format: flat (default) or tree"),
@@ -594,7 +599,7 @@ server.tool(
 // --- reverie_remove ---
 server.tool(
   "reverie_remove",
-  "Remove a stored entry by dot-notation key. Aliases pointing at this key (or its children) are cascade-removed automatically. Use when knowledge is outdated or incorrect. For removing a nickname only (keeping the entry), use reverie_alias_remove or pass is_alias:true.",
+  "Remove an entry by key; aliases pointing at it (or its children) cascade-remove. To remove only a nickname, use reverie_alias_remove or pass is_alias:true.",
   {
     key: z.string().describe("Dot-notation key to remove"),
     is_alias: z.boolean().optional().describe("If true, remove the alias only (keep the entry)"),
@@ -632,7 +637,7 @@ server.tool(
 // --- reverie_copy ---
 server.tool(
   "reverie_copy",
-  "Duplicate an entry's value to a new key (creates a full copy). For giving an existing key a short nickname without duplication, use reverie_alias_set. For moving/renaming, use reverie_rename.",
+  "Duplicate an entry's value to a new key. For a nickname without duplication, use reverie_alias_set; for moving, use reverie_rename.",
   {
     source: z.string().describe("Source dot-notation key to copy from"),
     dest: z.string().describe("Destination dot-notation key to copy to"),
@@ -681,7 +686,7 @@ server.tool(
 // --- reverie_rename ---
 server.tool(
   "reverie_rename",
-  "Move an entry key to a new name (or rename an alias when is_alias:true). Preserves the value and metadata — distinct from reverie_copy, which duplicates.",
+  "Move an entry key to a new name (alias when is_alias:true), preserving value and metadata. reverie_copy duplicates instead.",
   {
     oldKey: z.string().describe("Current dot-notation key (or alias name when is_alias is true)"),
     newKey: z.string().describe("New dot-notation key (or alias name when is_alias is true)"),
@@ -781,11 +786,11 @@ server.tool(
 // --- reverie_find ---
 server.tool(
   "reverie_find",
-  "Search stored entries by keyword or regex across keys and values. Use when you know roughly what you want but not the exact key. For listing all entries, use reverie_context. For exact-key lookup, use reverie_get.",
+  "Search entries by keyword or regex across keys and values — when you know roughly what, not the exact key. Exact key: reverie_get; list all: reverie_context.",
   {
     query: z.string().describe("Query string to find (case-insensitive substring, or regex if regex=true)"),
     regex: z.boolean().optional().describe("Treat query as a regular expression"),
-    keysOnly: z.boolean().optional().describe("Match against keys only (skip values)"),
+    keysOnly: z.boolean().optional().describe("Match against keys only and return keys without values"),
     valuesOnly: z.boolean().optional().describe("Match against values only (skip keys)"),
     aliasesOnly: z.boolean().optional().describe("Search only in aliases"),
     entriesOnly: z.boolean().optional().describe("Search only in data entries"),
@@ -822,7 +827,9 @@ server.tool(
           const valueMatch = !keysOnly && !encrypted && match(String(v));
 
           if (keyMatch || valueMatch) {
-            results.push(`${k}: ${encrypted ? '[encrypted]' : v}`);
+            // keysOnly is a projection too (#127): the caller asked to match
+            // on keys, so don't make them pay for the values in the response.
+            results.push(keysOnly ? k : `${k}: ${encrypted ? '[encrypted]' : v}`);
           }
         }
       }
@@ -849,7 +856,7 @@ server.tool(
 // --- reverie_alias_set ---
 server.tool(
   "reverie_alias_set",
-  "Create a short nickname that resolves to an existing entry key (e.g. 'api' -> 'arch.api'). Use when a long key is referenced repeatedly. Does NOT store data — the alias resolves to whatever reverie_set wrote. For storing new content, use reverie_set.",
+  "Create a short nickname resolving to an existing entry key (e.g. 'api' -> 'arch.api'). Stores NO data — for new content, use reverie_set.",
   {
     alias: z.string().describe("Alias name"),
     key: z.string().describe("Dot-notation key the alias points to"),
@@ -870,7 +877,7 @@ server.tool(
 // --- reverie_alias_remove ---
 server.tool(
   "reverie_alias_remove",
-  "Remove a nickname (alias) without touching the entry it points at. For removing the underlying entry, use reverie_remove.",
+  "Remove a nickname without touching its target entry. Entries themselves: reverie_remove.",
   { alias: z.string().describe("Alias name to remove"), scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)") },
   async ({ alias, scope: scopeParam }) => {
     try {
@@ -890,7 +897,7 @@ server.tool(
 // --- reverie_alias_list ---
 server.tool(
   "reverie_alias_list",
-  "List all nicknames (alias -> key mappings). For browsing entries themselves, use reverie_context.",
+  "List all nicknames (alias -> key mappings).",
   { scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)") },
   async ({ scope: scopeParam }) => {
     try {
@@ -911,7 +918,7 @@ server.tool(
 // --- reverie_run ---
 server.tool(
   "reverie_run",
-  "Execute a stored shell command by key (e.g. commands.build) and return its output. Supports ${key}/$(key) interpolation and &&-chaining via chain:true. For entries marked --confirm, a two-step flow applies: the first call returns a confirm_token and command preview; pass the token on the second call to execute. Use dry:true to preview without executing.",
+  "Execute a stored shell command by key (e.g. commands.build). Supports ${key}/$(key) interpolation, chain:true for &&-chaining, dry:true to preview. Confirm-gated entries are two-step: first call returns a confirm_token + preview; pass the token back to execute.",
   {
     key: z.string().describe("Dot-notation key (or alias) whose value is a shell command"),
     dry: z.boolean().optional().describe("If true, return the command without executing it"),
@@ -1037,7 +1044,7 @@ server.tool(
 // --- reverie_config_get ---
 server.tool(
   "reverie_config_get",
-  "Get a Reverie user-preference setting (colors, theme, pager). Distinct from reverie_get, which retrieves stored project knowledge.",
+  "Get a Reverie user-preference setting (colors, theme). Project knowledge lives in reverie_get.",
   {
     key: z.string().optional().describe("Config key (colors, theme). Omit for all settings."),
   },
@@ -1063,7 +1070,7 @@ server.tool(
 // --- reverie_config_set ---
 server.tool(
   "reverie_config_set",
-  "Set a Reverie user-preference setting (colors, theme, pager). Distinct from reverie_set, which stores project knowledge.",
+  "Set a Reverie user-preference setting. Project knowledge writes go through reverie_set.",
   {
     key: z.string().describe("Config key to set (colors, theme)"),
     value: z.string().describe("Value to set"),
@@ -1088,11 +1095,11 @@ server.tool(
 // --- reverie_export ---
 server.tool(
   "reverie_export",
-  "Export entries/aliases/confirm as a structured JSON envelope suitable for backup, sharing, or version control. Wrapped in a $codexcli envelope with version + sha256. For viewing entries interactively, use reverie_context. For targeted lookup, use reverie_get.",
+  "Export entries/aliases/confirm as a JSON envelope (version + sha256) for backup, sharing, or version control.",
   {
     type: z.enum(["entries", "aliases", "confirm", "all"]).describe("What to export"),
     pretty: z.boolean().optional().describe("Pretty-print the JSON (default false)"),
-    includeEncrypted: z.boolean().optional().describe("Emit real ciphertext for encrypted values instead of the [encrypted] placeholder. Produces a file suitable for backup/restore; output contains sensitive material."),
+    includeEncrypted: z.boolean().optional().describe("Emit real ciphertext for encrypted values instead of the [encrypted] placeholder — output contains sensitive material."),
     scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
   },
   async ({ type, pretty, includeEncrypted, scope: scopeParam }) => {
@@ -1127,7 +1134,7 @@ server.tool(
 // --- reverie_import ---
 server.tool(
   "reverie_import",
-  "Import entries/aliases/confirm from a JSON payload (object or string). Accepts reverie_export's envelope format or a bare {entries:{...}} shape. Merges by default; pass merge:false to replace. Use preview:true to see the diff without writing. Example: reverie_import({ data: { arch: { api: 'GraphQL' } } })",
+  "Import entries/aliases/confirm from JSON (reverie_export envelope or bare {entries:{...}}). Merges by default (merge:false replaces); preview:true shows the diff without writing.",
   {
     data: z.union([z.string(), z.record(z.string(), z.unknown())]).describe("Data to import — either a JSON string or an object literal"),
     type: z.enum(["entries", "aliases", "confirm", "all"]).optional().describe("What to import (default: entries)"),
@@ -1356,7 +1363,7 @@ server.tool(
 // --- reverie_reset ---
 server.tool(
   "reverie_reset",
-  "Wipe entries/aliases/confirm to empty state (type:'all') OR clear audit/telemetry/miss-path log files. Destructive and scope-wide. For single-entry deletion, use reverie_remove. Run reverie_export first if you want a backup.",
+  "Wipe entries/aliases/confirm (type:'all') or clear audit/telemetry/miss-path logs. Destructive and scope-wide — reverie_export first for a backup. Single entries: reverie_remove.",
   {
     type: z.enum(["entries", "aliases", "confirm", "all", "audit", "telemetry", "miss-paths"]).describe("What to reset ('all' covers entries+aliases+confirm, not logs)"),
     scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global). Ignored for audit/telemetry/miss-paths."),
@@ -1394,17 +1401,18 @@ server.tool(
 
 // --- reverie_context ---
 
-import { filterEntriesByTier } from "./commands/context";
+import { filterEntriesByTier, computeContextSizeReport, formatContextSizeReport } from "./commands/context";
 import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from "./utils/contextBudget";
 
 server.tool(
   "reverie_context",
-  "Browse all stored project knowledge as a compact summary. Use this at session start to bootstrap context, or any time you want to see what is stored without having a specific key in mind. Prefer over reverie_get when you do not have a specific key — this is the 'list everything' tool. Tiers: essential (project/commands/conventions only — for focused work or when standard overflows), standard (default, excludes arch.* — typical session start), full (everything — for refactoring, architectural changes, or onboarding). See docs/schema-guide.md \"Bootstrap tiers\" for tier-vs-task guidance and the size-budget interaction.",
+  "Compact summary of all stored project knowledge — call FIRST at session start to bootstrap. Tiers: essential (project/commands/conventions only), standard (default, excludes arch.*), full (everything; bypasses the size budget). Tier-vs-task guidance: docs/schema-guide.md.",
   {
     scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
     tier: z.enum(["essential", "standard", "full"]).optional().describe("Context tier: essential (project/commands/conventions only — for focused work or when standard overflows), standard (default, excludes arch.* — typical session start), full (everything — for refactoring, architectural changes, or onboarding). See docs/schema-guide.md \"Bootstrap tiers\""),
+    sizeOnly: z.boolean().optional().describe("Return per-namespace entry/byte counts and the budget instead of content"),
   },
-  async ({ scope: scopeParam, tier }) => {
+  async ({ scope: scopeParam, tier, sizeOnly }) => {
     try {
       const projectFile = findProjectFile();
       const hasProject = !!projectFile;
@@ -1412,6 +1420,15 @@ server.tool(
 
       const flat = getEntriesFlat(effectiveScope);
       const effectiveTier = tier ?? 'standard';
+
+      // Size projection (#127): answer "how big is my bootstrap" without
+      // paying for the bootstrap. Estimates handoff/alias/footer overhead
+      // without rendering.
+      if (sizeOnly) {
+        const header = hasProject ? `[project: ${projectFile}]` : '[project: NONE]';
+        return textResponse(`${header}\n\n${formatContextSizeReport(computeContextSizeReport(flat, effectiveTier, effectiveScope))}`);
+      }
+
       const filtered = filterEntriesByTier(flat, effectiveTier);
       const aliases = loadAliases(effectiveScope);
 
@@ -1447,7 +1464,7 @@ server.tool(
       let pathologicalOverflow = false;
       let kept: Record<string, string> = displayed;
       if (effectiveTier !== 'full') {
-        const budget = (loadConfig().bootstrap_max_response_bytes) || 50 * 1024;
+        const budget = (loadConfig().bootstrap_max_response_bytes) || DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES;
         const envOverride = process.env.RVR_BOOTSTRAP_MAX_BYTES;
         const effectiveBudget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
           ? Number(envOverride)
@@ -1555,7 +1572,7 @@ server.tool(
 // --- reverie_stale ---
 server.tool(
   "reverie_stale",
-  "List entries not written in the last N days (default 30). Use to find knowledge that may have drifted out of date. Based on write timestamps, not read patterns — a stale entry may still be actively consulted.",
+  "List entries not written in N days (default 30) — knowledge that may have drifted. Write-based; a stale entry may still be read often.",
   {
     days: z.coerce.number().int().min(0).optional().describe("Threshold in days (default: 30). Entries not updated in this many days are returned."),
     scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
@@ -1596,7 +1613,7 @@ server.tool(
 // --- reverie_stats ---
 server.tool(
   "reverie_stats",
-  "Aggregate usage stats across sessions — read/write ratio, bootstrap rate, top tools, namespace activity. High-level health of the store. For per-call granular history with filters, use reverie_audit.",
+  "Aggregate usage stats — read/write ratio, bootstrap rate, top tools, namespace activity. Per-call history with filters: reverie_audit.",
   {
     period: z.enum(["7d", "30d", "90d", "all"]).optional().describe("Time period to analyze (default: 30d)"),
     detailed: z.boolean().optional().describe("Include namespace activity, project breakdown, and top tools (default: false)"),
@@ -1765,7 +1782,7 @@ server.tool(
 // --- reverie_audit ---
 server.tool(
   "reverie_audit",
-  "Query the per-call audit log with filters (key prefix, time period, writes-only, hits/misses, source). Per-call granular history suitable for debugging or usage forensics. For aggregated stats across the log, use reverie_stats.",
+  "Query the per-call audit log with filters (key prefix, period, writes-only, hits/misses, source). Aggregates: reverie_stats.",
   {
     key: z.string().optional().describe("Filter by exact key or key prefix"),
     period: z.enum(["7d", "30d", "90d", "all"]).optional().describe("Time period to query (default: 30d)"),

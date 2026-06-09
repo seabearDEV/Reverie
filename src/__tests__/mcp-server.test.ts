@@ -249,6 +249,7 @@ vi.mock('../formatting', () => ({
 
 // Mock config
 vi.mock('../config', () => ({
+  DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES: 38 * 1024,
   loadConfig: vi.fn(() => ({ ...mockConfig })),
   getConfigSetting: vi.fn((key: string) => {
     if (key === 'colors' || key === 'theme') return mockConfig[key];
@@ -331,27 +332,28 @@ describe('MCP Server Tools', () => {
   });
 
   describe('reverie_set', () => {
-    it('sets a value and returns success', async () => {
+    it('sets a value and returns a quiet confirmation without echoing the value (#125)', async () => {
       const result = await toolHandlers['reverie_set']({ key: 'server.ip', value: '10.0.0.1' });
-      expect(result.content[0].text).toContain('Set: server.ip = 10.0.0.1');
+      expect(result.content[0].text).toContain('Set: server.ip (8B)');
+      expect(result.content[0].text).not.toContain('10.0.0.1');
       expect(result.isError).toBeUndefined();
     });
 
-    it('masks plaintext in response when encrypt is true', async () => {
+    it('marks encrypted writes without echoing plaintext or ciphertext', async () => {
       const result = await toolHandlers['reverie_set']({
         key: 'api.secret', value: 'mysecret', encrypt: true, password: 'pass',
       });
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toContain('[encrypted]');
+      expect(result.content[0].text).toContain('Set: api.secret (8B, encrypted)');
       expect(result.content[0].text).not.toContain('mysecret');
     });
 
-    it('masks plaintext in response when encrypt is true with alias', async () => {
+    it('marks encrypted writes with alias without echoing plaintext', async () => {
       const result = await toolHandlers['reverie_set']({
         key: 'api.secret', value: 'mysecret', encrypt: true, password: 'pass', alias: 'sec',
       });
       expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toContain('[encrypted]');
+      expect(result.content[0].text).toContain('Set: api.secret (8B, encrypted)');
       expect(result.content[0].text).toContain('Alias set: sec ->');
       expect(result.content[0].text).not.toContain('mysecret');
     });
@@ -577,6 +579,16 @@ describe('MCP Server Tools', () => {
         aliasesOnly: undefined, entriesOnly: undefined,
       });
       expect(result.content[0].text).toContain('No results');
+    });
+
+    it('keysOnly projects values out of the response (#127)', async () => {
+      Object.assign(mockData, { server: { ip: '10.0.0.1' } });
+      const result = await toolHandlers['reverie_find']({
+        query: 'server', keysOnly: true,
+        aliasesOnly: undefined, entriesOnly: undefined,
+      });
+      expect(result.content[0].text).toContain('server.ip');
+      expect(result.content[0].text).not.toContain('10.0.0.1');
     });
   });
 
@@ -1017,6 +1029,19 @@ describe('MCP Server Tools', () => {
     it('returns message when no entries stored', async () => {
       const result = await toolHandlers['reverie_context']({});
       expect(result.content[0].text).toContain('No entries stored');
+    });
+
+    it('sizeOnly returns per-namespace counts without entry content (#127)', async () => {
+      Object.assign(mockData, { server: { ip: '10.0.0.1' }, project: { name: 'test' } });
+      const result = await toolHandlers['reverie_context']({ sizeOnly: true });
+      const text = result.content[0].text;
+      expect(text).toContain('Context size (tier: standard)');
+      expect(text).toContain('server');
+      expect(text).toContain('total');
+      expect(text).toContain('Budget:');
+      expect(text).toContain('2 entries');
+      expect(text).not.toContain('10.0.0.1');
+      expect(text).not.toContain('test');
     });
 
     it('shows entries without aliases section when no aliases exist', async () => {

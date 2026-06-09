@@ -4,11 +4,13 @@ import { Scope } from '../store';
 import { getValue, getEntriesFlat } from '../storage';
 import { loadAliases, resolveKey } from '../alias';
 import { sanitizeValue, sanitizeParams, logAudit } from './audit';
-import { logToolCall, classifyOp, TelemetryExtras } from './telemetry';
+import { logToolCall, classifyOp, TelemetryExtras, extractNamespace, appendMissPath } from './telemetry';
+import { recordCliWrite, trackCliMissPath } from './sessionState';
+import { formatWriteAmpWarning, WriteAmpResult } from './writeAmp';
 import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
 import { ProjectResolutionError } from '../projectResolution';
-import { isJsonMode, failJson, emitEnvelope } from './output';
+import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
@@ -264,10 +266,15 @@ export async function withCliInstrumentation<T>(
       }
     }
 
-    // Redundant write detection
+    // Redundant = value didn't change on a true mutation. Match the MCP
+    // wrapper (mcp-server.ts): exec is excluded because a run never changes
+    // the stored command, so before === after is trivially true and would
+    // mis-tag every `run` as a redundant write; removes never fire because
+    // after is undefined.
     const isReadOnlyWrite = ctx.tool === 'reverie_rename' ||
-      (ctx.tool === 'reverie_run' && ctx.params?.dry === true);
-    const redundant = isWrite && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after
+      (ctx.tool === 'reverie_run' && ctx.params?.dry === true) ||
+      (ctx.tool === 'reverie_import' && ctx.params?.preview === true);
+    const redundant = op === 'write' && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after
       ? true
       : undefined;
 
@@ -276,6 +283,27 @@ export async function withCliInstrumentation<T>(
     if (op === 'read' && result && typeof result === 'object' && ('dataCount' in (result as object) || 'aliasCount' in (result as object))) {
       const r = result as { dataCount?: number; aliasCount?: number };
       entryCount = (r.dataCount ?? 0) + (r.aliasCount ?? 0);
+    }
+
+    // Write-amp guard on CLI set (#119/#101). Disk-backed when RVR_SESSION
+    // bridges invocations into one session; in-memory (never trips for a
+    // one-shot process) otherwise. The write itself already succeeded —
+    // the warning is advisory and must never fail the command, so the
+    // whole block is best-effort.
+    let writeAmp: WriteAmpResult | null = null;
+    if (ctx.tool === 'reverie_set' && success && ctx.key) {
+      try {
+        writeAmp = recordCliWrite(ctx.key);
+      } catch { /* guardrail bookkeeping must not break a set */ }
+      if (writeAmp) {
+        const message = formatWriteAmpWarning(writeAmp);
+        if (jsonMode) {
+          addWarning(message, 'WRITE_AMP', writeAmp.count);
+        } else {
+          // Human mode: stderr, so scripts capturing stdout stay clean.
+          console.error(`warning: ${message}`);
+        }
+      }
     }
 
     // Telemetry
@@ -295,6 +323,8 @@ export async function withCliInstrumentation<T>(
       project: projectFile ? path.dirname(projectFile) : undefined,
       refusedReason,
       rescuedByExplicitGlobal,
+      writeAmpWarning: writeAmp ? true : undefined,
+      writeAmpCount: writeAmp?.count,
     };
     void logToolCall(ctx.tool, ctx.key, 'cli', resolvedScope, telemetryExtras, true);
 
@@ -319,7 +349,27 @@ export async function withCliInstrumentation<T>(
       params: ctx.params ? sanitizeParams(ctx.params) : undefined,
       refusedReason,
       rescuedByExplicitGlobal,
+      writeAmpWarning: writeAmp ? true : undefined,
+      writeAmpCount: writeAmp?.count,
     }, true);
+
+    // Miss-path tracking on CLI reads (#119). Only meaningful when
+    // RVR_SESSION bridges invocations (trackCliMissPath no-ops otherwise —
+    // a window that dies with a one-shot process would log pure noise).
+    try {
+      const closedPaths = trackCliMissPath({
+        tool: ctx.tool,
+        namespace: extractNamespace(ctx.key),
+        key: ctx.key ?? '',
+        op,
+        hit,
+        responseSize: responseSize ?? 0,
+        agent: process.env.RVR_AGENT_NAME,
+      });
+      for (const mp of closedPaths) {
+        void appendMissPath(mp);
+      }
+    } catch { /* observability must not break the command */ }
 
     // Emit the single structured envelope (#117 WS1). stdout.write has been
     // restored above, so we hand emitEnvelope the original writer to be sure
@@ -327,6 +377,15 @@ export async function withCliInstrumentation<T>(
     // any error are derived inside buildEnvelope from exitCode + recorded
     // failure. Idempotent: a no-op if something already emitted.
     if (jsonMode) {
+      // #120: derive the envelope result from the handler's return value.
+      // Populating `result` stops being per-site setResult discipline —
+      // a handler that returns its payload gets it into the envelope.
+      // Explicit setResult/failJson still win (handlers that need a result
+      // alongside an error, or a result shaped differently from the value
+      // they return to the wrapper for hit detection, e.g. searchEntries).
+      if (success && !hasError() && result !== undefined && !hasResult()) {
+        setResult(result);
+      }
       emitEnvelope((s) => { (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(s); });
     }
   }

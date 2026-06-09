@@ -51,7 +51,7 @@ function resolveExportScope(scope?: Scope): 'project' | 'global' {
   return findProjectFile() ? 'project' : 'global';
 }
 
-export function exportData(type: string, options: ExportOptions): void {
+export function exportData(type: string, options: ExportOptions): { type: string; files: string[] } | undefined {
   debug('exportData called', { type, options });
   try {
     if (!validateDataType(type)) {
@@ -65,6 +65,7 @@ export function exportData(type: string, options: ExportOptions): void {
     const indent = options.pretty ? 2 : 0;
     const envelopeScope = resolveExportScope(scope);
     const includesEncrypted = !!options.includeEncrypted;
+    const written: string[] = [];
 
     // Single-file 'all' export (default in v1.12.2+). Produces one wrapped
     // file that `data import all` can consume directly — restores the
@@ -90,7 +91,7 @@ export function exportData(type: string, options: ExportOptions): void {
       if (includesEncrypted) {
         printWarning('Export contains decryptable ciphertext. Store the file securely.');
       }
-      return;
+      return { type, files: [outputFile] };
     }
 
     // Split path: each section gets its own wrapped file. Runs for single-
@@ -119,6 +120,7 @@ export function exportData(type: string, options: ExportOptions): void {
       if (includesEncrypted) {
         printWarning('Export contains decryptable ciphertext. Store the file securely.');
       }
+      written.push(outputFile);
     }
 
     if (type === 'aliases' || type === 'all') {
@@ -132,6 +134,7 @@ export function exportData(type: string, options: ExportOptions): void {
       });
       fs.writeFileSync(outputFile, JSON.stringify(wrapped, null, indent), { encoding: 'utf8', mode: 0o600 });
       printSuccess(`Aliases exported to: ${color.cyan(outputFile)}`);
+      written.push(outputFile);
     }
 
     if (type === 'confirm' || type === 'all') {
@@ -145,9 +148,12 @@ export function exportData(type: string, options: ExportOptions): void {
       });
       fs.writeFileSync(outputFile, JSON.stringify(wrapped, null, indent), { encoding: 'utf8', mode: 0o600 });
       printSuccess(`Confirm keys exported to: ${color.cyan(outputFile)}`);
+      written.push(outputFile);
     }
+    return { type, files: written };
   } catch (error) {
     handleError('Error exporting data:', error);
+    return undefined;
   }
 }
 

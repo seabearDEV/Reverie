@@ -19,11 +19,13 @@ export const VALID_CONFIG_KEYS = ['colors', 'theme', 'max_backups', 'import_max_
 // adversarial payload) before they OOM the process.
 const DEFAULT_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 
-// 50 KB — reverie_context payload cap before tier degradation kicks in
-// (#100). Sized for ~75% of the ~25k-token / ~68KB host tool-result cap,
-// leaving headroom for the next_session banner, instruction block, and
-// agent prompt overhead. tier:"full" bypasses the cap; users opted in.
-export const DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES = 50 * 1024;
+// 38 KB — reverie_context payload cap before tier degradation kicks in
+// (#100). Sized to keep a budget-filling bootstrap under the ~10k-token
+// threshold where MCP clients warn about large responses (#124): at the
+// observed ~4 bytes/token, 38KB ≈ 9.5k tokens with headroom for the
+// next_session banner and instruction block. tier:"full" bypasses the
+// cap; users opted in.
+export const DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES = 38 * 1024;
 
 // Default configuration
 const defaultConfig: Config = {

@@ -6,7 +6,7 @@ import { color } from '../formatting';
 import { getBinaryName } from '../utils/binaryName';
 import { HANDOFF_KEY, buildHandoffBanner } from '../utils/handoff';
 import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from '../utils/contextBudget';
-import { loadConfig } from '../config';
+import { loadConfig, DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES } from '../config';
 import { isJsonMode, setResult, addWarning } from '../utils/output';
 
 // ── Tier filtering (shared with MCP server) ──────────────────────────
@@ -30,6 +30,125 @@ export function filterEntriesByTier(
   );
 }
 
+// ── Bootstrap overhead estimate (shared by shed + size projection) ───
+// Non-entry bytes of a rendered bootstrap: handoff banner, aliases
+// section, tier footer, and a conservative allowance for the shed-notice
+// line itself. Uses Buffer.byteLength for accurate UTF-8 counts.
+
+export function estimateBootstrapOverheadBytes(
+  handoffLines: string[] | undefined,
+  aliases: Record<string, string>,
+  tier: 'essential' | 'standard' | 'full',
+  entryCount: number
+): number {
+  let bytes = 0;
+  if (handoffLines) {
+    for (const line of handoffLines) bytes += Buffer.byteLength(`${line}\n`, 'utf8');
+    bytes += 1; // blank line separator
+  }
+  if (Object.keys(aliases).length > 0) {
+    bytes += Buffer.byteLength('\nAliases:\n', 'utf8');
+    for (const [a, t] of Object.entries(aliases)) {
+      bytes += Buffer.byteLength(`  ${a} -> ${t}\n`, 'utf8');
+    }
+  }
+  // Tier footer (present whenever tier !== 'full'); entryCount is the
+  // pre-shed count, an upper bound on the rendered footer length.
+  bytes += Buffer.byteLength(`\n[tier: ${tier} (${entryCount} entries) — use --tier full for complete context]\n`, 'utf8');
+  // Conservative budget for the shed-notice line (emitted only when shedding
+  // occurs, but including it here prevents the notice itself from pushing
+  // the final output over budget).
+  bytes += 256;
+  return bytes;
+}
+
+// ── Size projection (#127) ───────────────────────────────────────────
+// Answers "how big is my bootstrap" without paying for the bootstrap:
+// per-namespace entry/byte counts over the tier-filtered store, plus the
+// effective budget. Shared by MCP sizeOnly and CLI --size-only.
+
+export interface ContextSizeReport {
+  tier: 'essential' | 'standard' | 'full';
+  namespaces: { ns: string; entries: number; bytes: number }[];
+  totalEntries: number;
+  totalBytes: number;
+  /** Estimated non-entry response bytes (handoff banner, aliases, footer). */
+  overheadBytes: number;
+  budgetBytes: number;
+  fitsBudget: boolean;
+}
+
+export function computeContextSizes(
+  flat: Record<string, string>,
+  tier: 'essential' | 'standard' | 'full',
+  overheadBytes = 0
+): ContextSizeReport {
+  const filtered = filterEntriesByTier(flat, tier);
+  const byNs = new Map<string, { entries: number; bytes: number }>();
+  let totalBytes = 0;
+  for (const [k, v] of Object.entries(filtered)) {
+    const display = isEncrypted(v) ? '[encrypted]' : v;
+    // Byte cost as rendered in a bootstrap response: "key: value\n".
+    const bytes = Buffer.byteLength(`${k}: ${display}\n`, 'utf8');
+    const ns = k.includes('.') ? k.slice(0, k.indexOf('.')) : k;
+    const agg = byNs.get(ns) ?? { entries: 0, bytes: 0 };
+    agg.entries += 1;
+    agg.bytes += bytes;
+    byNs.set(ns, agg);
+    totalBytes += bytes;
+  }
+  const envOverride = process.env.RVR_BOOTSTRAP_MAX_BYTES;
+  const budgetBytes = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
+    ? Number(envOverride)
+    : (loadConfig().bootstrap_max_response_bytes || DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES);
+  return {
+    tier,
+    namespaces: [...byNs.entries()]
+      .map(([ns, a]) => ({ ns, entries: a.entries, bytes: a.bytes }))
+      .sort((a, b) => b.bytes - a.bytes),
+    totalEntries: Object.keys(filtered).length,
+    totalBytes,
+    overheadBytes,
+    budgetBytes,
+    fitsBudget: tier === 'full' || totalBytes + overheadBytes <= budgetBytes,
+  };
+}
+
+/**
+ * Build the size report the way the real bootstrap accounts for itself:
+ * handoff banner bytes move from the entry list to the overhead estimate
+ * (mirroring the HANDOFF_KEY drop in showContext/reverie_context), and
+ * `fitsBudget` answers "would a bootstrap at this tier shed?" — the same
+ * `entries + fixed overhead <= budget` check shedToFitBudget runs.
+ */
+export function computeContextSizeReport(
+  flat: Record<string, string>,
+  tier: 'essential' | 'standard' | 'full',
+  scope?: Scope
+): ContextSizeReport {
+  if (tier === 'full') return computeContextSizes(flat, tier);
+  const meta = scope === undefined || scope === 'auto' ? loadMetaMerged() : loadMeta(scope);
+  const handoff = buildHandoffBanner(flat, meta);
+  const aliases = loadAliases(scope);
+  const entries = handoff ? { ...flat } : flat;
+  if (handoff) delete entries[HANDOFF_KEY];
+  const entryCount = Object.keys(filterEntriesByTier(entries, tier)).length;
+  const overhead = estimateBootstrapOverheadBytes(handoff?.lines, aliases, tier, entryCount);
+  return computeContextSizes(entries, tier, overhead);
+}
+
+export function formatContextSizeReport(report: ContextSizeReport): string {
+  const lines = [`Context size (tier: ${report.tier}):`];
+  for (const n of report.namespaces) {
+    lines.push(`  ${n.ns.padEnd(14)} ${String(n.entries).padStart(4)} entries  ${String(n.bytes).padStart(8)}B`);
+  }
+  lines.push(`  ${'total'.padEnd(14)} ${String(report.totalEntries).padStart(4)} entries  ${String(report.totalBytes).padStart(8)}B`);
+  lines.push(report.tier === 'full'
+    ? `Budget: ${report.budgetBytes}B (tier "full" bypasses the budget)`
+    : `Budget: ${report.budgetBytes}B — entries + ~${report.overheadBytes}B overhead ${report.fitsBudget ? 'fit' : 'EXCEED the budget; a bootstrap at this tier will shed'}`);
+  return lines.join('\n');
+}
+
 // ── CLI context command ──────────────────────────────────────────────
 
 export interface ContextOptions {
@@ -37,6 +156,7 @@ export interface ContextOptions {
   global?: boolean | undefined;
   plain?: boolean | undefined;
   json?: boolean | undefined;
+  sizeOnly?: boolean | undefined;
 }
 
 export function showContext(options: ContextOptions = {}): void {
@@ -44,6 +164,19 @@ export function showContext(options: ContextOptions = {}): void {
   const tier = (options.tier ?? 'standard') as 'essential' | 'standard' | 'full';
 
   const flat = getEntriesFlat(scope);
+
+  // Size projection (#127): report what a bootstrap would cost instead of
+  // paying it. Estimates handoff/alias/footer overhead without rendering.
+  if (options.sizeOnly) {
+    const report = computeContextSizeReport(flat, tier, scope);
+    if (isJsonMode()) {
+      setResult(report);
+    } else {
+      console.log(formatContextSizeReport(report));
+    }
+    return;
+  }
+
   const filtered = filterEntriesByTier(flat, tier);
   const aliases = loadAliases(scope);
   const meta = scope === 'global' ? loadMeta('global') : loadMetaMerged();
@@ -77,30 +210,10 @@ export function showContext(options: ContextOptions = {}): void {
     const envOverride = process.env.RVR_BOOTSTRAP_MAX_BYTES;
     const budget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
       ? Number(envOverride)
-      : (loadConfig().bootstrap_max_response_bytes || 50 * 1024);
+      : (loadConfig().bootstrap_max_response_bytes || DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES);
 
-    // Estimate non-entry overhead using Buffer.byteLength for accurate UTF-8
-    // byte counts — covers handoff banner, aliases section, tier footer, and a
-    // conservative allowance for the shed-notice line itself.
-    let fixedOverheadBytes = 0;
-    if (handoff) {
-      for (const line of handoff.lines) fixedOverheadBytes += Buffer.byteLength(`${line}\n`, 'utf8');
-      fixedOverheadBytes += 1; // blank line separator
-    }
-    if (Object.keys(aliases).length > 0) {
-      fixedOverheadBytes += Buffer.byteLength('\nAliases:\n', 'utf8');
-      for (const [a, t] of Object.entries(aliases)) {
-        fixedOverheadBytes += Buffer.byteLength(`  ${a} -> ${t}\n`, 'utf8');
-      }
-    }
-    // Tier footer always present in this branch (tier !== 'full').
-    // Use pre-shed entry count as an upper bound on footer length.
-    const preSheddableCount = Object.keys(kept).length;
-    fixedOverheadBytes += Buffer.byteLength(`\n[tier: ${tier} (${preSheddableCount} entries) — use --tier full for complete context]\n`, 'utf8');
-    // Conservative budget for the shed-notice line (emitted only when shedding
-    // occurs, but including it here prevents the notice itself from pushing the
-    // final output over budget).
-    fixedOverheadBytes += 256;
+    const fixedOverheadBytes = estimateBootstrapOverheadBytes(
+      handoff?.lines, aliases, tier, Object.keys(kept).length);
 
     const decision = shedToFitBudget(kept, (k) => getStalenessTag(k, meta), fixedOverheadBytes, budget);
     kept = decision.kept;
