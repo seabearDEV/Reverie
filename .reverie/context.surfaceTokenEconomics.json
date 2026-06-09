@@ -1,0 +1,7 @@
+{
+  "value": "Measured 2026-06-09 (v1.1.1): token cost of MCP vs CLI surfaces.\nFIXED: MCP handshake = 8.7KB instructions + 16.7KB tools/list (19 tools: 4.4KB descriptions, 10.3KB schemas) ≈ 5-7k tokens/session in schemas-upfront clients. Claude Code TRUNCATES server instructions at ~2KB — most of DEFAULT_LLM_INSTRUCTIONS never reaches the agent. CLI fixed cost ≈ 0 (Bash is already present).\nWRITES: rvr set confirms in 36B (97B --json); MCP reverie_set ECHOES the full value back — ~12× the tokens on a 1KB seed. The 2026-06-09 hygiene session paid ~3.8k tokens in echoes alone (14 writes ≈ 15KB).\nREADS: parity on single gets; CLI wins analytical reads via pipe projection BEFORE context ingestion (rvr context | wc -c = one number vs 9.2k tokens).\nVERDICT: CLI is cheaper today, but both MCP penalties are product gaps, not intrinsic: quiet set response (#125), instructions ≤2KB (#126), projection params (#127) would bring MCP to parity. MCP keeps schema-validated params (fewer flag-fumble retries) + session guards until #119 ports them.\nOBSERVABILITY: BOTH surfaces are fully instrumented — audit.jsonl + telemetry.jsonl log cli and mcp src entries alike (verified: rvr context reads appear as src:cli). The only unmeasured leak is agents bypassing Reverie entirely for raw .reverie/*.json filesystem reads.",
+  "meta": {
+    "created": 1781029131538,
+    "updated": 1781029434301
+  }
+}

@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — Store hygiene: 14 historical entries compressed, default-tier bootstrap 49.9KB→36.4KB (under the MCP-client large-response warning). Filed #124 (lower default bootstrap budget 50→38KB). New conventions: no commit/issue/PR footers (conventions.commits), handoff-delta discipline (conventions.handoff). Pick up first: #124 (quick win) or #119 WS3. Then: #120, #84, search theme #13/#43.",
+  "value": "2026-06-09 — Store hygiene: 14 historical entries compressed, default-tier bootstrap 49.9KB→36.4KB. Measured MCP-vs-CLI token economics (context.surfaceTokenEconomics) → filed token-efficiency batch #124-#127 (budget default, quiet set echo, handshake diet, projection params). New conventions: no commit/issue/PR footers (conventions.commits), handoff-delta discipline (conventions.handoff). Pick up first: #125 (quiet set — biggest win, trivial) or #124. Then: #119 WS3, #120, #84.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781028525148
+    "updated": 1781029486366
   }
 }
