@@ -52,6 +52,15 @@ describe('RVR_SESSION session id (#119)', () => {
     resetSessionIdForTests();
     expect(getSessionId()).toMatch(/^[A-Za-z0-9._-]+$/);
     expect(getSessionId()).not.toContain('/');
+    // No leading dot: the session file must never be a dotfile, or it
+    // hides from plain `ls` of the sessions dir.
+    expect(getSessionId().startsWith('.')).toBe(false);
+  });
+
+  it('falls back to a random id when sanitization empties the value', () => {
+    process.env.RVR_SESSION = '...';
+    resetSessionIdForTests();
+    expect(getSessionId()).toMatch(/^[0-9a-f]{8}$/);
   });
 });
 

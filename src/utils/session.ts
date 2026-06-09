@@ -26,7 +26,9 @@ let sessionId: string | null = null;
 function computeSessionId(): string {
   const env = process.env.RVR_SESSION?.trim();
   if (env) {
-    const safe = env.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 64);
+    // Leading dots are stripped so the session state file is never a
+    // dotfile — sessions/ should always be inspectable with plain `ls`.
+    const safe = env.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 64);
     if (safe) return safe;
   }
   return crypto.randomBytes(4).toString('hex');
