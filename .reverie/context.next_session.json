@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — PR #129 merged; milestone v1.2.0 closed; guidance softened + CHANGELOG release heading committed locally on main (cefbb2d) BUT NOT PUSHED (agent push-to-main denied). Pick up first: verify the user ran `git push origin main && git tag v1.2.0 && git push origin v1.2.0` — if yes, check the release workflow completed (GitHub Release + Homebrew formula) and verify `brew upgrade rvr` serves 1.2.0; if no, that push is the only blocker. Then: soak checkpoint 2026-06-15. State details in project.inFlight.",
+  "value": "2026-06-09 — v1.2.0 SHIPPED and verified (release published, Homebrew updated, rvr -V → 1.2.0); milestone + #117 arc closed; guidance softened. One local store-sync commit on main may be unpushed — check `git status -sb` and push if behind. Pick up first: soak checkpoint 2026-06-15 (reverie_stats period:7d detailed:true) — and decide whether the mid-cycle v1.2.0 ship resets the soak clock (policy gap, see project.inFlight). Theme candidates: search (#13/#43), entry health (#84).",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781037728244
+    "updated": 1781038005499
   }
 }
