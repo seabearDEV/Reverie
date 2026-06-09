@@ -74,8 +74,8 @@ describe('CLAUDE_MD_TEMPLATE', () => {
     expect(CLAUDE_MD_TEMPLATE).toContain('reverie_context');
   });
 
-  it('names both surfaces with a prefer-MCP / CLI-fallback model (#121)', () => {
-    expect(CLAUDE_MD_TEMPLATE).toContain('prefer MCP, fall back to the CLI');
+  it('names both surfaces with the either-surface model (#121, softened post-#117 parity)', () => {
+    expect(CLAUDE_MD_TEMPLATE).toContain('same store, same functionality, either surface');
     expect(CLAUDE_MD_TEMPLATE).toContain('reverie_get');
     expect(CLAUDE_MD_TEMPLATE).toContain('rvr get');
     expect(CLAUDE_MD_TEMPLATE).toContain('rvr manifest');
@@ -121,17 +121,17 @@ describe('generateAgentsMd', () => {
 });
 
 describe('AGENTS_MD_TEMPLATE', () => {
-  it('is agent-agnostic and names both surfaces — prefer MCP, fall back to CLI (#121)', () => {
+  it('is agent-agnostic and names both surfaces — same store, either surface (#121)', () => {
     // CLI path
     expect(AGENTS_MD_TEMPLATE).toContain('rvr context');
     expect(AGENTS_MD_TEMPLATE).toContain('--json');
     expect(AGENTS_MD_TEMPLATE).toContain('rvr manifest');
     // MCP path is named too — the file is read before the agent knows its surface,
-    // so it must carry the full prefer-MCP / CLI-fallback decision (this is the #121 fix:
+    // so it must carry the full either-surface decision (this is the #121 fix:
     // the old AGENTS-is-CLI-only / CLAUDE-is-MCP-only split stranded MCP-less agents).
     expect(AGENTS_MD_TEMPLATE).toContain('reverie_context');
     expect(AGENTS_MD_TEMPLATE).toContain('reverie_set');
-    expect(AGENTS_MD_TEMPLATE).toContain('prefer MCP, fall back to the CLI');
+    expect(AGENTS_MD_TEMPLATE).toContain('same store, same functionality, either surface');
     // Agent-agnostic title, not Claude-specific.
     expect(AGENTS_MD_TEMPLATE).toContain('# Reverie — agent guide');
   });

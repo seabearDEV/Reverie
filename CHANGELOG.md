@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.0] - 2026-06-09
+
+**Token parity for MCP, statefulness parity for the CLI** — closes the [#117](https://github.com/seabearDEV/reverie/issues/117) dual-surface arc. With parity landed, the generated agent guidance (CLAUDE.md / AGENTS.md from `rvr init`) softens from "prefer MCP, fall back to the CLI" to **"same store, same functionality, either surface"** — MCP earns writes via schema-validated params, the CLI earns filterable reads via pipes.
 
 ### Added
 

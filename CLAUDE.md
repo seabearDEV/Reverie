@@ -1,9 +1,9 @@
 ## Reverie store
 
-This project keeps durable, cross-session knowledge in a Reverie store (`.reverie/`). Two interchangeable surfaces reach it with the **same functionality — prefer MCP, fall back to the CLI**:
+This project keeps durable, cross-session knowledge in a Reverie store (`.reverie/`). Two interchangeable surfaces reach it — **same store, same functionality, either surface**:
 
-- **MCP tools** — `reverie_context`, `reverie_get`, `reverie_set`, `reverie_find`, … Use these whenever an MCP server is connected.
-- **`rvr` CLI** — `rvr context`, `rvr get`, `rvr set`, `rvr find`, … Use this when MCP is unavailable. Every MCP tool has an exact `rvr` equivalent: run `rvr manifest --json` for the full MCP-tool ↔ CLI-command map, and `rvr config llm-instructions --surface cli` for CLI specifics (the `--json` envelope, scope flags, confirm flow).
+- **MCP tools** — `reverie_context`, `reverie_get`, `reverie_set`, `reverie_find`, … Schema-validated params make these the safest write path; use them whenever an MCP server is connected.
+- **`rvr` CLI** — `rvr context`, `rvr get`, `rvr set`, `rvr find`, … The only path when MCP is unavailable, and the better read path when you'd filter — pipe `--json` output (e.g. through `jq`) so only the distilled answer enters context. Every MCP tool has an exact `rvr` equivalent: run `rvr manifest --json` for the full MCP-tool ↔ CLI-command map, and `rvr config llm-instructions --surface cli` for CLI specifics (the `--json` envelope, scope flags, confirm flow, `RVR_SESSION`).
 
 CLI commands emit a single machine-readable envelope with `--json` (or `RVR_OUTPUT=json`): `{ "reverie": "1", "ok": true, "command": "…", "result": …, "error": { "code": … }, "warnings": [] }`. Branch on `error.code`, not on prose.
 

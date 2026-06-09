@@ -6,21 +6,25 @@ import { printSuccess, printWarning } from './helpers';
  * Shared operational core for both agent-instruction files (#121).
  *
  * CLAUDE.md and AGENTS.md are read from disk BEFORE an agent knows which
- * surface it has, so each must carry the full prefer-MCP / CLI-parity decision
- * — they must NOT be split by surface. That split was the bug: a CLAUDE.md that
+ * surface it has, so each must carry the full either-surface decision — they
+ * must NOT be split by surface. That split was the bug: a CLAUDE.md that
  * only described MCP left an MCP-banned Claude agent with no path, even though
  * the `rvr` CLI offers identical functionality. The two *fetchable* instruction
  * blobs in llm-instructions.ts stay surface-specific because they are delivered
  * THROUGH a surface (MCP handshake vs `rvr config llm-instructions`); these
  * files are not. Keep this core as the single source — the per-file wrappers
  * below differ only in their title framing.
+ *
+ * Guidance posture (project.surfaceStrategy, post-#119/#124-#127 parity):
+ * "same store, either surface" — not "prefer MCP". MCP earns writes via
+ * schema-validated params; the CLI earns filterable reads via pipes.
  */
 export const REVERIE_CORE_GUIDE = `## Reverie store
 
-This project keeps durable, cross-session knowledge in a Reverie store (\`.reverie/\`). Two interchangeable surfaces reach it with the **same functionality — prefer MCP, fall back to the CLI**:
+This project keeps durable, cross-session knowledge in a Reverie store (\`.reverie/\`). Two interchangeable surfaces reach it — **same store, same functionality, either surface**:
 
-- **MCP tools** — \`reverie_context\`, \`reverie_get\`, \`reverie_set\`, \`reverie_find\`, … Use these whenever an MCP server is connected.
-- **\`rvr\` CLI** — \`rvr context\`, \`rvr get\`, \`rvr set\`, \`rvr find\`, … Use this when MCP is unavailable. Every MCP tool has an exact \`rvr\` equivalent: run \`rvr manifest --json\` for the full MCP-tool ↔ CLI-command map, and \`rvr config llm-instructions --surface cli\` for CLI specifics (the \`--json\` envelope, scope flags, confirm flow).
+- **MCP tools** — \`reverie_context\`, \`reverie_get\`, \`reverie_set\`, \`reverie_find\`, … Schema-validated params make these the safest write path; use them whenever an MCP server is connected.
+- **\`rvr\` CLI** — \`rvr context\`, \`rvr get\`, \`rvr set\`, \`rvr find\`, … The only path when MCP is unavailable, and the better read path when you'd filter — pipe \`--json\` output (e.g. through \`jq\`) so only the distilled answer enters context. Every MCP tool has an exact \`rvr\` equivalent: run \`rvr manifest --json\` for the full MCP-tool ↔ CLI-command map, and \`rvr config llm-instructions --surface cli\` for CLI specifics (the \`--json\` envelope, scope flags, confirm flow, \`RVR_SESSION\`).
 
 CLI commands emit a single machine-readable envelope with \`--json\` (or \`RVR_OUTPUT=json\`): \`{ "reverie": "1", "ok": true, "command": "…", "result": …, "error": { "code": … }, "warnings": [] }\`. Branch on \`error.code\`, not on prose.
 
@@ -74,7 +78,7 @@ ${REVERIE_FIRST_SESSION}
 /**
  * AGENTS.md — the emerging cross-agent convention (Cursor, Copilot, Gemini,
  * Codex all read it). Same operational core as CLAUDE.md, agent-agnostic title.
- * It deliberately names BOTH surfaces (prefer MCP, fall back to CLI) so an
+ * It deliberately names BOTH surfaces (same store, either surface) so an
  * agent without MCP still finds the identical CLI path.
  */
 export const AGENTS_MD_TEMPLATE = `# Reverie — agent guide
