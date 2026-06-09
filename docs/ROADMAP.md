@@ -12,6 +12,19 @@ Reverie 1.0.0 stable shipped 2026-05-07, following a rebrand from codexCLI. See 
 
 ## What's Next
 
+### Next Release — v1.2.0: Surface Token Diet & Agent-Surface Parity
+
+Data-picked 2026-06-09 from measured MCP/CLI token economics (`context.surfaceTokenEconomics` in the store). Brings the MCP surface to token parity with the CLI, the CLI to statefulness parity with MCP, and closes the [#117](https://github.com/seabearDEV/reverie/issues/117) arc.
+
+- **Lower default bootstrap budget** below MCP-client large-response warnings ([#124](https://github.com/seabearDEV/reverie/issues/124))
+- **Quiet `reverie_set` confirmation** — drop the full-value echo ([#125](https://github.com/seabearDEV/reverie/issues/125))
+- **Handshake diet** — `DEFAULT_LLM_INSTRUCTIONS` ≤2KB, tools/list trimmed, size regression check ([#126](https://github.com/seabearDEV/reverie/issues/126))
+- **Projection params** for MCP read tools — keys-only, size-only ([#127](https://github.com/seabearDEV/reverie/issues/127))
+- **CLI session-state & observability parity** — WS3 of #117 ([#119](https://github.com/seabearDEV/reverie/issues/119))
+- **Envelope from handler return** — refactor away scattered `setResult` calls ([#120](https://github.com/seabearDEV/reverie/issues/120))
+
+Themes beyond v1.2.0 are picked from soak telemetry per the soak-exit policy (day-7 checkpoint for the current cycle: 2026-06-15) — leading candidates below.
+
 ### Smarter Knowledge Management
 
 Make the knowledge base aware of the code it describes, and easier to navigate.
@@ -21,10 +34,6 @@ Make the knowledge base aware of the code it describes, and easier to navigate.
 - **Fuzzy finder** — interactive search via fzf ([#13](https://github.com/seabearDEV/reverie/issues/13)) · leading next-theme candidate
 - **Boolean search** — AND, OR, NOT operators ([#43](https://github.com/seabearDEV/reverie/issues/43)) · leading next-theme candidate
 - **Richer data types** — lists, multi-line values, typed JSON ([#44](https://github.com/seabearDEV/reverie/issues/44))
-
-### Agent Surface
-
-- **CLI session parity (WS3 of #117)** — `RVR_SESSION`-bridged write-amp guard, miss-path tracking, and `aliasResolved` capture on the CLI, so CLI-agent usage is measured and guard-railed like MCP ([#119](https://github.com/seabearDEV/reverie/issues/119), deferred until telemetry shows the CLI-agent path is material)
 
 ### Team & Collaboration
 

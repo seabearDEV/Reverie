@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — Store hygiene: 14 historical entries compressed, default-tier bootstrap 49.9KB→36.4KB. Measured MCP-vs-CLI token economics (context.surfaceTokenEconomics) → filed token-efficiency batch #124-#127 (budget default, quiet set echo, handshake diet, projection params). New conventions: no commit/issue/PR footers (conventions.commits), handoff-delta discipline (conventions.handoff). Pick up first: #125 (quiet set — biggest win, trivial) or #124. Then: #119 WS3, #120, #84.",
+  "value": "2026-06-09 — Store hygiene (bootstrap 49.9KB→36.4KB), measured surface token economics (context.surfaceTokenEconomics), MCP keep-decision recorded (project.surfaceStrategy). ROADMAP DEFINED: milestone v1.2.0 = #124-#127 + #119 + #120 (closes #117 arc); later themes wait for the 2026-06-15 soak checkpoint (project.soakPolicy). New conventions: no footers (conventions.commits), handoff-delta (conventions.handoff). Pick up first: #125 (quiet set echo — trivial, biggest win). Then #124, #126, #127, #119, #120 in any order.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781029486366
+    "updated": 1781030284764
   }
 }
