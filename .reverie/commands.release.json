@@ -1,7 +1,7 @@
 {
-  "value": "git push origin main && VERSION=`node -p \"require('./package.json').version\"` && git tag \"v$VERSION\" && git push origin \"v$VERSION\" && echo \"🚀 Released v$VERSION\"",
+  "value": "git push origin main && VERSION=`bun -p \"require('./package.json').version\"` && git tag \"v$VERSION\" && git push origin \"v$VERSION\" && echo \"🚀 Released v$VERSION\"",
   "meta": {
     "created": 1775362842974,
-    "updated": 1775362842974
+    "updated": 1781031022163
   }
 }

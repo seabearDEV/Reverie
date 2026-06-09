@@ -53,6 +53,7 @@ Make the knowledge base useful for teams, not just solo developers.
 - **`npx reverie`** zero-install usage ([#50](https://github.com/seabearDEV/reverie/issues/50))
 - **IDE extensions** — VS Code and JetBrains ([#51](https://github.com/seabearDEV/reverie/issues/51))
 - **Performance at scale** — benchmarks, lazy loading, indexing ([#48](https://github.com/seabearDEV/reverie/issues/48))
+- **Intel macOS sunset** — arm64-only by Sept 2027, pegged to Homebrew's Intel EOL; universal binary ships until then ([#128](https://github.com/seabearDEV/reverie/issues/128))
 
 ---
 

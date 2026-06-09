@@ -1,0 +1,7 @@
+{
+  "value": "DECIDED 2026-06-09 (#128): keep Intel macOS through v1.x; sunset pegged to Homebrew's published Intel EOL (primary install channel), not ahead of it. SCHEDULE: Sept 2026 (brew Intel→Tier 3) add README best-effort note; Sept 2027 (brew Intel dead; GH Intel runners retired Aug 2027) go arm64-only — drop x64 slice + lipo from release.yml, formula gains depends_on arch: :arm64 (clean refusal, Intel users stay pinned to last working version). EARLY TRIPWIRES: Bun drops bun-darwin-x64 (forced); GH arm64 runners lose Rosetta (breaks the `arch -x86_64` smoke test → slice ships untested); adoption spike → FIRST split per-arch macOS artifacts (formula already branches per-arch for Linux) to halve every download and finally measure Intel share. FACTS (2026-06-09): rvr-macos-universal 130MB ≈ 2×65MB slices — universal hides the Intel/AS split in download stats; the 1-per-release linux-x64/arm64 \"downloads\" are the update-homebrew job's own checksum fetches, NOT users; rvr-win-x64.exe has 0 downloads ever (#49 untested); real human pulls ≈ all macOS so far. Apple: Tahoe(26)=last Intel macOS, sec updates ~fall 2028; macOS 27 AS-only; Rosetta gone macOS 28. Bun darwin-x64 fully supported (macOS 13+).",
+  "meta": {
+    "created": 1781031381694,
+    "updated": 1781031381694
+  }
+}

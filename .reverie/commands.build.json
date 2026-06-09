@@ -1,7 +1,7 @@
 {
-  "value": "npm run build",
+  "value": "bun run build",
   "meta": {
     "created": 1775526064911,
-    "updated": 1775526064911
+    "updated": 1781031018895
   }
 }

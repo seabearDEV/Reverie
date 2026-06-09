@@ -1,7 +1,7 @@
 {
-  "value": "rm -rf dist && npm run build",
+  "value": "rm -rf dist && bun run build",
   "meta": {
     "created": 1775353133317,
-    "updated": 1775353133317
+    "updated": 1781031021344
   }
 }

@@ -1,7 +1,7 @@
 {
-  "value": "npm run build && npm run lint && npm test",
+  "value": "bun run build && bun run lint && bun run test",
   "meta": {
     "created": 1775353132791,
-    "updated": 1775353132791
+    "updated": 1781031020781
   }
 }

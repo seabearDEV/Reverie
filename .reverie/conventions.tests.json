@@ -1,7 +1,7 @@
 {
-  "value": "Vitest with globals. Unit tests mock fs/store. Integration tests use temp dirs via RVR_DATA_DIR.",
+  "value": "bun:test, not vitest (vitest fully removed from deps 2026-05-08 — porting patterns in [[context.bunTestCompat]], runner flags in [[context.devWorkflow]]). Unit tests mock fs/store. Integration tests use temp dirs via RVR_DATA_DIR.",
   "meta": {
     "created": 1775347268052,
-    "updated": 1778164575552
+    "updated": 1781030639407
   }
 }
