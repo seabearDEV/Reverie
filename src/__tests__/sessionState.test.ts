@@ -102,6 +102,21 @@ describe('recordCliWrite (#119/#101)', () => {
     const state = loadSessionState('sess4');
     expect(state.writes['files.a']).toHaveLength(1);
   });
+
+  it('drops non-number timestamps from a structurally-valid file', () => {
+    // Corrupt leaves must not silently suppress the amp warning: NaN math
+    // would filter them as "expired" without any visible failure.
+    fs.mkdirSync(sessionsDir(), { recursive: true });
+    const t0 = Date.now();
+    fs.writeFileSync(path.join(sessionsDir(), 'sessX.json'), JSON.stringify({
+      v: 1, updatedAt: t0,
+      writes: { 'files.a': [null, 'abc', {}, t0], 'files.b': 'not-an-array' },
+      missWindows: [],
+    }));
+    const state = loadSessionState('sessX', t0);
+    expect(state.writes['files.a']).toEqual([t0]);
+    expect(state.writes['files.b']).toBeUndefined();
+  });
 });
 
 describe('trackCliMissPath (#119)', () => {
@@ -157,5 +172,23 @@ describe('pruneStaleSessions (#119)', () => {
     pruneStaleSessions();
     expect(fs.existsSync(oldFile)).toBe(false);
     expect(fs.existsSync(freshFile)).toBe(true);
+  });
+
+  it('skips a stale file whose lock is held by a concurrent writer', () => {
+    // A prune racing an in-flight updateSessionState must not unlink the
+    // file out from under the lock holder — the holder's tmp+rename save
+    // would silently resurrect it and the prune's delete would be undone.
+    fs.mkdirSync(sessionsDir(), { recursive: true });
+    const lockedFile = path.join(sessionsDir(), 'locked.json');
+    fs.writeFileSync(lockedFile, '{}');
+    const old = (Date.now() - 25 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(lockedFile, old, old);
+    fs.writeFileSync(`${lockedFile}.lock`, String(process.pid)); // fresh lock = held
+    try {
+      pruneStaleSessions();
+      expect(fs.existsSync(lockedFile)).toBe(true);
+    } finally {
+      fs.unlinkSync(`${lockedFile}.lock`);
+    }
   });
 });

@@ -1401,7 +1401,7 @@ server.tool(
 
 // --- reverie_context ---
 
-import { filterEntriesByTier, computeContextSizes, formatContextSizeReport } from "./commands/context";
+import { filterEntriesByTier, computeContextSizeReport, formatContextSizeReport } from "./commands/context";
 import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from "./utils/contextBudget";
 
 server.tool(
@@ -1422,10 +1422,11 @@ server.tool(
       const effectiveTier = tier ?? 'standard';
 
       // Size projection (#127): answer "how big is my bootstrap" without
-      // paying for the bootstrap. Skips handoff/shed/render entirely.
+      // paying for the bootstrap. Estimates handoff/alias/footer overhead
+      // without rendering.
       if (sizeOnly) {
         const header = hasProject ? `[project: ${projectFile}]` : '[project: NONE]';
-        return textResponse(`${header}\n\n${formatContextSizeReport(computeContextSizes(flat, effectiveTier))}`);
+        return textResponse(`${header}\n\n${formatContextSizeReport(computeContextSizeReport(flat, effectiveTier, effectiveScope))}`);
       }
 
       const filtered = filterEntriesByTier(flat, effectiveTier);

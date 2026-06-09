@@ -266,10 +266,15 @@ export async function withCliInstrumentation<T>(
       }
     }
 
-    // Redundant write detection
+    // Redundant = value didn't change on a true mutation. Match the MCP
+    // wrapper (mcp-server.ts): exec is excluded because a run never changes
+    // the stored command, so before === after is trivially true and would
+    // mis-tag every `run` as a redundant write; removes never fire because
+    // after is undefined.
     const isReadOnlyWrite = ctx.tool === 'reverie_rename' ||
-      (ctx.tool === 'reverie_run' && ctx.params?.dry === true);
-    const redundant = isWrite && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after
+      (ctx.tool === 'reverie_run' && ctx.params?.dry === true) ||
+      (ctx.tool === 'reverie_import' && ctx.params?.preview === true);
+    const redundant = op === 'write' && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after
       ? true
       : undefined;
 

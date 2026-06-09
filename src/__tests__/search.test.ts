@@ -125,6 +125,15 @@ describe('searchEntries', () => {
     expect(dataCount).toBe(4);
   });
 
+  it('--keys projects values out of the JSON result (#127, MCP keysOnly parity)', () => {
+    configureOutput({ json: true, command: 'find' });
+    searchEntries('server', { keys: true });
+    const result = buildEnvelope().result as { entries?: string[] };
+    expect(Array.isArray(result.entries)).toBe(true);
+    expect(result.entries).toHaveLength(4);
+    expect(JSON.stringify(result.entries)).not.toContain('192.168.1.100');
+  });
+
   it('supports --values flag (key matches excluded)', () => {
     // '8080' is in values but not keys
     const { dataCount } = searchEntries('8080', { values: true });

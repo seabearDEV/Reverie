@@ -78,12 +78,14 @@ function displaySearchResults(
     if (options.tree) {
       const matchesObj = {};
       dataMatchKeys.forEach(key => {
-        setNestedValue(matchesObj, key, dataMatches[key]);
+        // --keys is a projection too (#127): don't render the values.
+        setNestedValue(matchesObj, key, options.keys ? '' : dataMatches[key]);
       });
       displayTree(matchesObj, buildKeyToAliasMap(aliases), '', '', false, searchTerm);
     } else {
       Object.entries(dataMatches).forEach(([key, value]) => {
-        formatKeyValue(key, value, searchTerm);
+        if (options.keys) console.log(highlightMatch(key, searchTerm));
+        else formatKeyValue(key, value, searchTerm);
       });
     }
   }
@@ -137,8 +139,10 @@ export function searchEntries(searchTerm: string, options: SearchOptions = {}): 
   const totalMatches = dataCount + aliasCount;
 
   if (json) {
-    const result: { entries?: Record<string, string>, aliases?: Record<string, string> } = {};
-    if (!options.aliases) result.entries = dataMatches;
+    const result: { entries?: Record<string, string> | string[], aliases?: Record<string, string> } = {};
+    // --keys is a projection too (#127, matching MCP reverie_find keysOnly):
+    // the caller asked to match on keys, so don't make them pay for values.
+    if (!options.aliases) result.entries = options.keys ? Object.keys(dataMatches) : dataMatches;
     if (!options.entries) result.aliases = aliasMatches;
     setResult(result);
     return { dataCount, aliasCount };

@@ -42,6 +42,23 @@ function sessionFilePath(id: string): string {
   return path.join(sessionsDir(), `${id}.json`);
 }
 
+/**
+ * Per-element validation: a structurally-valid file with corrupt leaves
+ * (e.g. `writes: {"k": [null, "x"]}`) must not silently feed garbage into
+ * the window math — `NaN > cutoff` is false, which would suppress the
+ * write-amp warning without any visible failure.
+ */
+function sanitizeWrites(raw: unknown): Record<string, number[]> {
+  const out = Object.create(null) as Record<string, number[]>;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (!Array.isArray(v)) continue;
+      out[k] = v.filter((ts): ts is number => typeof ts === 'number' && Number.isFinite(ts));
+    }
+  }
+  return out;
+}
+
 /** Load the session state, treating missing/corrupt files as empty (#119). */
 export function loadSessionState(id: string, now = Date.now()): SessionStateFile {
   try {
@@ -51,9 +68,7 @@ export function loadSessionState(id: string, now = Date.now()): SessionStateFile
     return {
       v: 1,
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : now,
-      writes: parsed.writes && typeof parsed.writes === 'object' && !Array.isArray(parsed.writes)
-        ? Object.assign(Object.create(null) as Record<string, number[]>, parsed.writes)
-        : emptyState(now).writes,
+      writes: sanitizeWrites(parsed.writes),
       missWindows: Array.isArray(parsed.missWindows) ? parsed.missWindows : [],
     };
   } catch (err) {
@@ -104,8 +119,17 @@ export function pruneStaleSessions(now = Date.now()): void {
       if (!name.endsWith('.json')) continue;
       const p = path.join(sessionsDir(), name);
       try {
-        if (now - fs.statSync(p).mtimeMs > SESSION_TTL_MS) fs.unlinkSync(p);
-      } catch { /* concurrent prune — ignore */ }
+        if (now - fs.statSync(p).mtimeMs <= SESSION_TTL_MS) continue;
+        // Delete under the session's own lock, re-checking staleness inside
+        // it: an unlocked unlink can race a concurrent updateSessionState
+        // holder, whose tmp+rename save would silently resurrect the file
+        // (and drop the state it was writing).
+        withFileLock(p, () => {
+          try {
+            if (now - fs.statSync(p).mtimeMs > SESSION_TTL_MS) fs.unlinkSync(p);
+          } catch { /* already gone */ }
+        });
+      } catch { /* lock contention or concurrent prune — skip this file */ }
     }
   } catch { /* dir missing — nothing to prune */ }
 }

@@ -154,8 +154,10 @@ export class MissWindowTracker {
   private windows = new Map<string, OpenMissWindow>();
 
   /**
-   * Called after every MCP tool call. Returns closed MissPath records (if any).
-   * A single call can close multiple windows (e.g. timeout sweep + writeback).
+   * Called after every tool call on either surface — directly by the MCP
+   * wrapper, per CLI invocation via sessionState's trackCliMissPath (#119).
+   * Returns closed MissPath records (if any). A single call can close
+   * multiple windows (e.g. timeout sweep + writeback).
    */
   onToolCall(params: {
     session: string;

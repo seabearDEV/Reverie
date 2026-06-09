@@ -206,9 +206,15 @@ describe('CLI JSON envelope (#117)', () => {
       'alias list',
       'confirm set guard.k',
       'confirm remove guard.k',
+      // value-less set variants: confirm-only updates
+      'set guard.k --confirm',
+      'set guard.k --no-confirm',
       'copy guard.k guard.k2',
       'rename guard.k2 guard.k3',
       'alias remove gk',
+      // value-less set variant: alias-only update (after `alias remove gk` —
+      // an entry holds one alias, so setting it earlier would replace gk)
+      'set guard.k -a gkalias',
       'config set theme dark',
       'config get theme',
       // -o keeps the export artifact in the test dir instead of repo cwd

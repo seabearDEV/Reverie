@@ -247,7 +247,7 @@ async function handlePostSetConfirm(key: string, confirm: boolean | undefined, s
   }
 }
 
-export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string): Promise<{ key: string; alias?: string } | undefined> {
+export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string): Promise<{ key: string; alias?: string; confirm?: boolean } | undefined> {
   debug('setEntry called', { key, force, encrypt, alias, confirm, global });
   const scope = toScope(global);
   try {
@@ -273,7 +273,9 @@ export async function setEntry(key: string, value: string | undefined, force = f
         if (alias) {
           setAlias(alias, key, scope);
         }
-        return;
+        // Return a result so the #120 wrapper doesn't emit a result-less ok
+        // envelope — `set <key> --confirm` succeeds without storing a value.
+        return { key, confirm, ...(alias ? { alias } : {}) };
       }
       if (!alias) {
         printError('Missing value. Provide a value or use --alias (-a) to update an alias.', 'INPUT_REQUIRED');
@@ -287,7 +289,7 @@ export async function setEntry(key: string, value: string | undefined, force = f
         return;
       }
       setAlias(alias, key, scope);
-      return;
+      return { key, alias };
     }
 
     const existing = getValue(key, scope);
