@@ -423,7 +423,7 @@ confirmCommand
     const resolvedKey = resolveKey(key);
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'reverie_confirm_set', key: resolvedKey, scope, params: { key: resolvedKey } },
+      { tool: 'reverie_confirm_set', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
         setConfirm(resolvedKey, scope);
         if (isJsonMode()) setResult({ key: resolvedKey, confirm: true });
@@ -440,7 +440,7 @@ confirmCommand
     const resolvedKey = resolveKey(key);
     const scope = options.global ? 'global' as const : undefined;
     await withCliInstrumentation(
-      { tool: 'reverie_confirm_remove', key: resolvedKey, scope, params: { key: resolvedKey } },
+      { tool: 'reverie_confirm_remove', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
         removeConfirm(resolvedKey, scope);
         if (isJsonMode()) setResult({ key: resolvedKey, confirm: false });

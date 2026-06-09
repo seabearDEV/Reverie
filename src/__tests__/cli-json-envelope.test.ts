@@ -165,4 +165,26 @@ describe('CLI JSON envelope (#117)', () => {
     expect(env.ok).toBe(false);
     expect(env.error.code).toBe('INVALID_INPUT');
   });
+
+  // ── #119 WS3: RVR_SESSION-bridged write-amp guard ─────────────────────
+
+  it('3rd same-key set sharing RVR_SESSION emits a WRITE_AMP warning in the envelope', () => {
+    const session = { RVR_SESSION: 'ws3-amp-test' };
+    const first = parse(run('--json set ws3.k "v1"', session).stdout);
+    expect(first.warnings ?? []).toHaveLength(0);
+    parse(run('--json set ws3.k "v2"', session).stdout);
+    const third = parse(run('--json set ws3.k "v3"', session).stdout);
+    expect(third.ok).toBe(true);
+    const amp = (third.warnings as { code: string; count?: number }[]).find(w => w.code === 'WRITE_AMP');
+    expect(amp).toBeDefined();
+    expect(amp!.count).toBe(3);
+  });
+
+  it('same three sets without RVR_SESSION stay warning-free (per-process sessions)', () => {
+    parse(run('--json set ws3.solo "v1"').stdout);
+    parse(run('--json set ws3.solo "v2"').stdout);
+    const third = parse(run('--json set ws3.solo "v3"').stdout);
+    expect(third.ok).toBe(true);
+    expect(((third.warnings ?? []) as { code: string }[]).filter(w => w.code === 'WRITE_AMP')).toHaveLength(0);
+  });
 });

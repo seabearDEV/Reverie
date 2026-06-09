@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **CLI session-state & observability parity — WS3 of #117** ([#119](https://github.com/seabearDEV/reverie/issues/119)). Closes the CLI-agent telemetry blind spot for the MCP-banned cohort:
+  - **`RVR_SESSION`**: export any id once per agent session and every `rvr` invocation sharing it counts as one session, with guardrail state persisted to `~/.reverie/store/sessions/<id>.json` (atomic, lock-guarded, TTL-pruned after 24h; corrupt files degrade to empty, never crash a command). Unset → per-process random id, exactly the old behavior.
+  - **Write-amp guard on CLI `set`** (#101 parity): 3rd+ write of the same key within 30 minutes adds a `WRITE_AMP` warning (with `count`) to the JSON envelope's `warnings[]` — stderr in human mode — plus the same `writeAmpWarning`/`writeAmpCount` telemetry and audit fields MCP emits. The window math is shared code (`pruneAndRecord`), not a re-implementation.
+  - **Miss-path tracking on CLI reads**: read misses open exploration-cost windows that persist across invocations and close on writeback/hit/timeout, feeding the same `reverie_stats` calibration as MCP sessions. Skipped without `RVR_SESSION` (a window dying with a one-shot process would log noise).
+  - **`aliasResolved` audit capture fixed** for `confirm set`/`confirm remove`, which pre-resolved aliases and dropped the raw key — CLI audit rows there never recorded alias→canonical resolution (gap noted in `context.aliasResolvedCapture`).
 - **Projection params for read tools** ([#127](https://github.com/seabearDEV/reverie/issues/127)) — pay tokens for the distilled answer, not the full payload, matching what CLI pipes already allowed. `reverie_context` gains `sizeOnly: true` (MCP) / `rvr context --size-only` (CLI): per-namespace entry/byte counts, total, and the effective budget — the tool-native answer to "how big is my bootstrap". `reverie_find`'s `keysOnly` now also projects values out of the response (it matched on keys but still echoed every value). `reverie_get` listings already project (`values` defaults to false) — verified, no change.
 
 ### Changed

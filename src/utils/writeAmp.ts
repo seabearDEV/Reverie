@@ -1,7 +1,9 @@
 // Write-amplification guard (#101). Tracks per-session-per-key write
 // timestamps in memory so we can warn agents when the same key is rewritten
-// 3+ times within a 30-min sliding window. MCP-only: CLI invocations are
-// per-process and have no multi-call session for the guard to attach to.
+// 3+ times within a 30-min sliding window. The in-memory map serves the
+// long-lived MCP server; CLI invocations sharing RVR_SESSION run the same
+// window math against the on-disk session state file (#119, sessionState.ts)
+// via pruneAndRecord below.
 
 const WINDOW_MS = 30 * 60 * 1000;
 const THRESHOLD = 3;
@@ -16,6 +18,21 @@ const sessionWrites = new Map<string, Map<string, number[]>>();
 export interface WriteAmpResult {
   count: number;
   firstWriteMsAgo: number;
+}
+
+/**
+ * Pure window math shared by the in-memory (MCP) and on-disk (CLI, #119)
+ * guards: prune `prior` timestamps to the 30-min window, record `now`, and
+ * report whether the threshold tripped.
+ */
+export function pruneAndRecord(prior: number[], now: number): { timestamps: number[]; result: WriteAmpResult | null } {
+  const cutoff = now - WINDOW_MS;
+  const timestamps = prior.filter(ts => ts > cutoff);
+  timestamps.push(now);
+  const result = timestamps.length >= THRESHOLD
+    ? { count: timestamps.length, firstWriteMsAgo: now - timestamps[0] }
+    : null;
+  return { timestamps, result };
 }
 
 /**
@@ -53,17 +70,9 @@ export function recordWrite(sessionId: string, key: string, now = Date.now()): W
     }
   }
 
-  const prior = (perSession.get(key) ?? []).filter(ts => ts > cutoff);
-  prior.push(now);
-  perSession.set(key, prior);
-
-  if (prior.length >= THRESHOLD) {
-    return {
-      count: prior.length,
-      firstWriteMsAgo: now - prior[0],
-    };
-  }
-  return null;
+  const { timestamps, result } = pruneAndRecord(perSession.get(key) ?? [], now);
+  perSession.set(key, timestamps);
+  return result;
 }
 
 /**
