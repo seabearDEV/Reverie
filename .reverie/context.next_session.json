@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — v1.2.0 (#125 #124 #126 #127 #119 #120) on PR #129 + review-fix commit: find --keys parity, size-only overhead accounting, prune-under-lock, session-file leaf validation, run-not-redundant, value-less set results (1459 tests green). Details + post-merge follow-ups in project.inFlight. Pick up first: check PR #129 review state — if merged, do the follow-ups (soften prefer-MCP guidance, close #117, cut v1.2.0); if not, address feedback. Soak checkpoint 2026-06-15 next.",
+  "value": "2026-06-09 — PR #129 merged; milestone v1.2.0 closed; guidance softened + CHANGELOG release heading committed locally on main (cefbb2d) BUT NOT PUSHED (agent push-to-main denied). Pick up first: verify the user ran `git push origin main && git tag v1.2.0 && git push origin v1.2.0` — if yes, check the release workflow completed (GitHub Release + Homebrew formula) and verify `brew upgrade rvr` serves 1.2.0; if no, that push is the only blocker. Then: soak checkpoint 2026-06-15. State details in project.inFlight.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781036646603
+    "updated": 1781037728244
   }
 }
