@@ -580,6 +580,16 @@ describe('MCP Server Tools', () => {
       });
       expect(result.content[0].text).toContain('No results');
     });
+
+    it('keysOnly projects values out of the response (#127)', async () => {
+      Object.assign(mockData, { server: { ip: '10.0.0.1' } });
+      const result = await toolHandlers['reverie_find']({
+        query: 'server', keysOnly: true,
+        aliasesOnly: undefined, entriesOnly: undefined,
+      });
+      expect(result.content[0].text).toContain('server.ip');
+      expect(result.content[0].text).not.toContain('10.0.0.1');
+    });
   });
 
   describe('reverie_alias_set', () => {
@@ -1019,6 +1029,19 @@ describe('MCP Server Tools', () => {
     it('returns message when no entries stored', async () => {
       const result = await toolHandlers['reverie_context']({});
       expect(result.content[0].text).toContain('No entries stored');
+    });
+
+    it('sizeOnly returns per-namespace counts without entry content (#127)', async () => {
+      Object.assign(mockData, { server: { ip: '10.0.0.1' }, project: { name: 'test' } });
+      const result = await toolHandlers['reverie_context']({ sizeOnly: true });
+      const text = result.content[0].text;
+      expect(text).toContain('Context size (tier: standard)');
+      expect(text).toContain('server');
+      expect(text).toContain('total');
+      expect(text).toContain('Budget:');
+      expect(text).toContain('2 entries');
+      expect(text).not.toContain('10.0.0.1');
+      expect(text).not.toContain('test');
     });
 
     it('shows entries without aliases section when no aliases exist', async () => {

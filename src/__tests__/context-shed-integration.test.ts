@@ -179,3 +179,41 @@ describe('showContext shed integration (#100)', () => {
     }
   });
 });
+
+describe('showContext --size-only (#127)', () => {
+  it('reports per-namespace counts and budget without entry content', () => {
+    mockGetEntriesFlat.mockReturnValue({
+      'project.name': 'reverie',
+      'files.a': 'x'.repeat(100),
+    });
+    showContext({ plain: true, sizeOnly: true });
+    const output = logged.join('\n');
+    expect(output).toContain('Context size (tier: standard)');
+    expect(output).toContain('total');
+    expect(output).toContain('Budget:');
+    expect(output).not.toContain('reverie');
+    expect(output).not.toContain('xxxx');
+  });
+
+  it('returns the structured report in JSON mode', () => {
+    mockGetEntriesFlat.mockReturnValue({
+      'project.name': 'reverie',
+      'context.gotcha': 'beware',
+    });
+    const result = contextJson({ sizeOnly: true });
+    expect(result.totalEntries).toBe(2);
+    expect(result.budgetBytes).toBe(50 * 1024);
+    expect(result.namespaces.map((n: { ns: string }) => n.ns).sort()).toEqual(['context', 'project']);
+    expect(JSON.stringify(result)).not.toContain('beware');
+  });
+
+  it('respects the tier filter', () => {
+    mockGetEntriesFlat.mockReturnValue({
+      'project.name': 'reverie',
+      'arch.pattern': 'MVC',
+    });
+    const result = contextJson({ sizeOnly: true, tier: 'essential' });
+    expect(result.totalEntries).toBe(1);
+    expect(result.namespaces.map((n: { ns: string }) => n.ns)).toEqual(['project']);
+  });
+});

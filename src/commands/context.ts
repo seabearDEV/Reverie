@@ -30,6 +30,66 @@ export function filterEntriesByTier(
   );
 }
 
+// ── Size projection (#127) ───────────────────────────────────────────
+// Answers "how big is my bootstrap" without paying for the bootstrap:
+// per-namespace entry/byte counts over the tier-filtered store, plus the
+// effective budget. Shared by MCP sizeOnly and CLI --size-only.
+
+export interface ContextSizeReport {
+  tier: 'essential' | 'standard' | 'full';
+  namespaces: { ns: string; entries: number; bytes: number }[];
+  totalEntries: number;
+  totalBytes: number;
+  budgetBytes: number;
+  fitsBudget: boolean;
+}
+
+export function computeContextSizes(
+  flat: Record<string, string>,
+  tier: 'essential' | 'standard' | 'full'
+): ContextSizeReport {
+  const filtered = filterEntriesByTier(flat, tier);
+  const byNs = new Map<string, { entries: number; bytes: number }>();
+  let totalBytes = 0;
+  for (const [k, v] of Object.entries(filtered)) {
+    const display = isEncrypted(v) ? '[encrypted]' : v;
+    // Byte cost as rendered in a bootstrap response: "key: value\n".
+    const bytes = Buffer.byteLength(`${k}: ${display}\n`, 'utf8');
+    const ns = k.includes('.') ? k.slice(0, k.indexOf('.')) : k;
+    const agg = byNs.get(ns) ?? { entries: 0, bytes: 0 };
+    agg.entries += 1;
+    agg.bytes += bytes;
+    byNs.set(ns, agg);
+    totalBytes += bytes;
+  }
+  const envOverride = process.env.RVR_BOOTSTRAP_MAX_BYTES;
+  const budgetBytes = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
+    ? Number(envOverride)
+    : (loadConfig().bootstrap_max_response_bytes || DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES);
+  return {
+    tier,
+    namespaces: [...byNs.entries()]
+      .map(([ns, a]) => ({ ns, entries: a.entries, bytes: a.bytes }))
+      .sort((a, b) => b.bytes - a.bytes),
+    totalEntries: Object.keys(filtered).length,
+    totalBytes,
+    budgetBytes,
+    fitsBudget: tier === 'full' || totalBytes <= budgetBytes,
+  };
+}
+
+export function formatContextSizeReport(report: ContextSizeReport): string {
+  const lines = [`Context size (tier: ${report.tier}):`];
+  for (const n of report.namespaces) {
+    lines.push(`  ${n.ns.padEnd(14)} ${String(n.entries).padStart(4)} entries  ${String(n.bytes).padStart(8)}B`);
+  }
+  lines.push(`  ${'total'.padEnd(14)} ${String(report.totalEntries).padStart(4)} entries  ${String(report.totalBytes).padStart(8)}B`);
+  lines.push(report.tier === 'full'
+    ? `Budget: ${report.budgetBytes}B (tier "full" bypasses the budget)`
+    : `Budget: ${report.budgetBytes}B — entry bytes ${report.fitsBudget ? 'fit' : 'EXCEED the budget; a bootstrap at this tier will shed'} (response overhead excluded)`);
+  return lines.join('\n');
+}
+
 // ── CLI context command ──────────────────────────────────────────────
 
 export interface ContextOptions {
@@ -37,6 +97,7 @@ export interface ContextOptions {
   global?: boolean | undefined;
   plain?: boolean | undefined;
   json?: boolean | undefined;
+  sizeOnly?: boolean | undefined;
 }
 
 export function showContext(options: ContextOptions = {}): void {
@@ -44,6 +105,19 @@ export function showContext(options: ContextOptions = {}): void {
   const tier = (options.tier ?? 'standard') as 'essential' | 'standard' | 'full';
 
   const flat = getEntriesFlat(scope);
+
+  // Size projection (#127): report what a bootstrap would cost instead of
+  // paying it. Skips handoff/shed/render entirely.
+  if (options.sizeOnly) {
+    const report = computeContextSizes(flat, tier);
+    if (isJsonMode()) {
+      setResult(report);
+    } else {
+      console.log(formatContextSizeReport(report));
+    }
+    return;
+  }
+
   const filtered = filterEntriesByTier(flat, tier);
   const aliases = loadAliases(scope);
   const meta = scope === 'global' ? loadMeta('global') : loadMetaMerged();

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Projection params for read tools** ([#127](https://github.com/seabearDEV/reverie/issues/127)) — pay tokens for the distilled answer, not the full payload, matching what CLI pipes already allowed. `reverie_context` gains `sizeOnly: true` (MCP) / `rvr context --size-only` (CLI): per-namespace entry/byte counts, total, and the effective budget — the tool-native answer to "how big is my bootstrap". `reverie_find`'s `keysOnly` now also projects values out of the response (it matched on keys but still echoed every value). `reverie_get` listings already project (`values` defaults to false) — verified, no change.
+
 ### Changed
 
 - **Default `bootstrap_max_response_bytes` lowered 50KB → 38KB** ([#124](https://github.com/seabearDEV/reverie/issues/124)). A budget-filling `reverie_context` response at the old default was ~12.6k tokens — above the ~10k threshold where MCP clients warn about large responses. 38KB ≈ 9.5k tokens keeps a full bootstrap under the warning with headroom. Stores between 38–50KB will start seeing `[trimmed: …]` notices on standard tier; the old ceiling is one `reverie_config_set bootstrap_max_response_bytes 51200` away.

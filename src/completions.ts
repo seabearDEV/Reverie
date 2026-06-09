@@ -217,6 +217,7 @@ const CLI_TREE: Record<string, CommandDef> = {
       '--plain': FLAG_DESCRIPTIONS['--plain'], '-p': FLAG_DESCRIPTIONS['--plain'],
       '--json': 'Output as JSON', '-j': 'Output as JSON',
       '--global': FLAG_DESCRIPTIONS['--global'], '-G': FLAG_DESCRIPTIONS['-G'],
+      '--size-only': 'Per-namespace entry/byte counts instead of content',
     },
     argType: null,
     description: 'Show project knowledge summary',

@@ -790,7 +790,7 @@ server.tool(
   {
     query: z.string().describe("Query string to find (case-insensitive substring, or regex if regex=true)"),
     regex: z.boolean().optional().describe("Treat query as a regular expression"),
-    keysOnly: z.boolean().optional().describe("Match against keys only (skip values)"),
+    keysOnly: z.boolean().optional().describe("Match against keys only and return keys without values"),
     valuesOnly: z.boolean().optional().describe("Match against values only (skip keys)"),
     aliasesOnly: z.boolean().optional().describe("Search only in aliases"),
     entriesOnly: z.boolean().optional().describe("Search only in data entries"),
@@ -827,7 +827,9 @@ server.tool(
           const valueMatch = !keysOnly && !encrypted && match(String(v));
 
           if (keyMatch || valueMatch) {
-            results.push(`${k}: ${encrypted ? '[encrypted]' : v}`);
+            // keysOnly is a projection too (#127): the caller asked to match
+            // on keys, so don't make them pay for the values in the response.
+            results.push(keysOnly ? k : `${k}: ${encrypted ? '[encrypted]' : v}`);
           }
         }
       }
@@ -1399,7 +1401,7 @@ server.tool(
 
 // --- reverie_context ---
 
-import { filterEntriesByTier } from "./commands/context";
+import { filterEntriesByTier, computeContextSizes, formatContextSizeReport } from "./commands/context";
 import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from "./utils/contextBudget";
 
 server.tool(
@@ -1408,8 +1410,9 @@ server.tool(
   {
     scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
     tier: z.enum(["essential", "standard", "full"]).optional().describe("Context tier: essential (project/commands/conventions only — for focused work or when standard overflows), standard (default, excludes arch.* — typical session start), full (everything — for refactoring, architectural changes, or onboarding). See docs/schema-guide.md \"Bootstrap tiers\""),
+    sizeOnly: z.boolean().optional().describe("Return per-namespace entry/byte counts and the budget instead of content"),
   },
-  async ({ scope: scopeParam, tier }) => {
+  async ({ scope: scopeParam, tier, sizeOnly }) => {
     try {
       const projectFile = findProjectFile();
       const hasProject = !!projectFile;
@@ -1417,6 +1420,14 @@ server.tool(
 
       const flat = getEntriesFlat(effectiveScope);
       const effectiveTier = tier ?? 'standard';
+
+      // Size projection (#127): answer "how big is my bootstrap" without
+      // paying for the bootstrap. Skips handoff/shed/render entirely.
+      if (sizeOnly) {
+        const header = hasProject ? `[project: ${projectFile}]` : '[project: NONE]';
+        return textResponse(`${header}\n\n${formatContextSizeReport(computeContextSizes(flat, effectiveTier))}`);
+      }
+
       const filtered = filterEntriesByTier(flat, effectiveTier);
       const aliases = loadAliases(effectiveScope);
 

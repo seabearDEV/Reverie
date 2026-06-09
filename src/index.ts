@@ -483,10 +483,11 @@ reverie
   .option('-G, --global', 'Target global data store')
   .option('-p, --plain', 'Output plain text without colors')
   .option('-j, --json', 'Output as JSON')
-  .action(async (options: { tier?: string, global?: boolean, plain?: boolean, json?: boolean }) => {
+  .option('--size-only', 'Report per-namespace entry/byte counts and the budget instead of content')
+  .action(async (options: { tier?: string, global?: boolean, plain?: boolean, json?: boolean, sizeOnly?: boolean }) => {
     const scope = options.global ? 'global' as const : undefined;
     await withPager(() => withCliInstrumentation(
-      { tool: 'reverie_context', scope, params: { tier: options.tier } },
+      { tool: 'reverie_context', scope, params: { tier: options.tier, sizeOnly: options.sizeOnly } },
       () => commands.showContext(options)
     ));
   });
