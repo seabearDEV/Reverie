@@ -75,7 +75,7 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Telemetry & Audit**: Track usage patterns with scope-aware telemetry (`rvr stats`) and full audit log with before/after diffs, hit/miss tracking, and per-entry metrics (`rvr audit --detailed`). Includes [net token savings with self-calibrating exploration cost estimates](docs/token-savings.md), miss-path tracking, and per-agent breakdown.
 - **Cross-Session Handoff**: `reverie_context` surfaces a top banner from `context.next_session` so the next session reads where things stand before any other work (auto-staled past 7 days)
 - **Project-Resolution Guardrail**: writes refuse with a structured `PROJECT_UNRESOLVED` error when no `.reverie/` resolves and no explicit scope is given — prevents project-shaped data from silently landing in the global store
-- **Bootstrap Size Budget**: `reverie_context` sheds entries by priority when the projected response exceeds `bootstrap_max_response_bytes` (default 50KB) — `files.*` first, then `arch.*`, then large `context.*` largest-first, with a one-line trimmed-notice listing what was dropped. `tier:"full"` opts out
+- **Bootstrap Size Budget**: `reverie_context` sheds entries by priority when the projected response exceeds `bootstrap_max_response_bytes` (default 38KB) — `files.*` first, then `arch.*`, then large `context.*` largest-first, with a one-line trimmed-notice listing what was dropped. `tier:"full"` opts out
 - **Write-Amp Guard**: `reverie_set` warns on the 3rd+ write of the same key in a session within 30 minutes — informational, the write still succeeds. Helps agents notice when a key is being used as scratch space rather than a stable seed
 
 ## Installation

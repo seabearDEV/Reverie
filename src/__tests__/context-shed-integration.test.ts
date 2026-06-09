@@ -17,6 +17,7 @@ vi.mock('../store', () => ({
 }));
 vi.mock('../config', () => ({
   loadConfig: vi.fn(() => ({ bootstrap_max_response_bytes: 50 * 1024 })),
+  DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES: 38 * 1024,
 }));
 vi.mock('../utils/handoff', () => ({
   HANDOFF_KEY: 'context.next_session',

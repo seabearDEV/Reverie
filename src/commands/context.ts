@@ -6,7 +6,7 @@ import { color } from '../formatting';
 import { getBinaryName } from '../utils/binaryName';
 import { HANDOFF_KEY, buildHandoffBanner } from '../utils/handoff';
 import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from '../utils/contextBudget';
-import { loadConfig } from '../config';
+import { loadConfig, DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES } from '../config';
 import { isJsonMode, setResult, addWarning } from '../utils/output';
 
 // ── Tier filtering (shared with MCP server) ──────────────────────────
@@ -77,7 +77,7 @@ export function showContext(options: ContextOptions = {}): void {
     const envOverride = process.env.RVR_BOOTSTRAP_MAX_BYTES;
     const budget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
       ? Number(envOverride)
-      : (loadConfig().bootstrap_max_response_bytes || 50 * 1024);
+      : (loadConfig().bootstrap_max_response_bytes || DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES);
 
     // Estimate non-entry overhead using Buffer.byteLength for accurate UTF-8
     // byte counts — covers handoff banner, aliases section, tier footer, and a

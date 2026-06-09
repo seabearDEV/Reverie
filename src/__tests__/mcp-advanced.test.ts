@@ -256,6 +256,7 @@ vi.mock('../formatting', () => {
 });
 
 vi.mock('../config', () => ({
+  DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES: 38 * 1024,
   loadConfig: vi.fn(() => ({ ...mockConfig })),
   getConfigSetting: vi.fn((key: string) => mockConfig[key] ?? null),
   setConfigSetting: vi.fn((key: string, value: any) => { mockConfig[key] = value; }),

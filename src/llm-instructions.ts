@@ -27,7 +27,7 @@ SCOPE:
 - If a write tool returns an error with code "PROJECT_UNRESOLVED", project resolution failed (no .reverie/ found). Either run reverie_init to create a project store, or retry with explicit scope: "global" if the entry is genuinely user-level. Reads still fall through to global automatically — only writes refuse.
 
 GUARDRAILS:
-- reverie_context may prepend a "[trimmed: ...]" notice when the response would exceed the configured size budget (default 50KB). Listed namespaces were dropped to fit; fetch the specific entries via reverie_get <key>, or call reverie_context with tier:"full" to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never trimmed.
+- reverie_context may prepend a "[trimmed: ...]" notice when the response would exceed the configured size budget (default 38KB). Listed namespaces were dropped to fit; fetch the specific entries via reverie_get <key>, or call reverie_context with tier:"full" to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never trimmed.
 - reverie_context may also prepend a "[warning: ... still exceeds budget after shedding ...]" notice. This means the never-shed namespaces alone are over budget — surface this to the user so they can either raise bootstrap_max_response_bytes via reverie_config_set or audit project.*, conventions.*, commands.*, deps.*, and context.next_session for over-long entries.
 - reverie_set may append a "warning: this key has been written N times in this session" line on the 3rd+ write of the same key within 30 minutes. The write succeeded; the warning is a nudge to consider whether the entry has stabilized. Files-style keys (files.*) used as scratch space rather than seeds are the most common trigger — see conventions.seedDensity.
 
@@ -136,7 +136,7 @@ SCOPE:
 - If a write fails with error code PROJECT_UNRESOLVED, project resolution failed (no .reverie/ found). Either run \`rvr init\` to create a project store, or retry with \`--global\` if the entry is genuinely user-level. Reads still fall through to global automatically — only writes refuse.
 
 GUARDRAILS:
-- \`rvr context\` may add a "[trimmed: ...]" warning when the response would exceed the configured size budget (default 50KB). Listed namespaces were dropped to fit; fetch the specific entries via \`rvr get <key>\`, or run \`rvr context --tier full\` to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never trimmed.
+- \`rvr context\` may add a "[trimmed: ...]" warning when the response would exceed the configured size budget (default 38KB). Listed namespaces were dropped to fit; fetch the specific entries via \`rvr get <key>\`, or run \`rvr context --tier full\` to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never trimmed.
 - In JSON mode these notices appear in the envelope's "warnings" array (and "result.degraded"/"result.shedNamespaces").
 
 EXECUTION:

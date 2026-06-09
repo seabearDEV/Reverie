@@ -320,7 +320,7 @@ The tiers are inclusive cones: `essential ⊂ standard ⊂ full`. There's no way
 
 ### Relationship to the size budget (#100)
 
-When the projected response would exceed `bootstrap_max_response_bytes` (default 50KB), `reverie_context` automatically sheds entries by priority — `files.*` first, then `arch.*`, then large `context.*` (largest-first). `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never shed. A `[trimmed: …]` notice at the top of the response names what was dropped and points at `reverie_get <key>` or `tier:"full"` for retrieval.
+When the projected response would exceed `bootstrap_max_response_bytes` (default 38KB), `reverie_context` automatically sheds entries by priority — `files.*` first, then `arch.*`, then large `context.*` (largest-first). `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never shed. A `[trimmed: …]` notice at the top of the response names what was dropped and points at `reverie_get <key>` or `tier:"full"` for retrieval.
 
 `tier: "full"` opts out of degradation entirely. If you ask for the full payload, you get the full payload — even if that means hitting the host cap. The shed only fires for `essential` and `standard`.
 

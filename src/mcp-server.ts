@@ -34,7 +34,7 @@ import {
 import { fileURLToPath } from "url";
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll } from "./store";
 import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
-import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
+import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS, DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES } from "./config";
 import { deepMerge } from "./utils/deepMerge";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
@@ -1452,7 +1452,7 @@ server.tool(
       let pathologicalOverflow = false;
       let kept: Record<string, string> = displayed;
       if (effectiveTier !== 'full') {
-        const budget = (loadConfig().bootstrap_max_response_bytes) || 50 * 1024;
+        const budget = (loadConfig().bootstrap_max_response_bytes) || DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES;
         const envOverride = process.env.RVR_BOOTSTRAP_MAX_BYTES;
         const effectiveBudget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
           ? Number(envOverride)
