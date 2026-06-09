@@ -276,13 +276,9 @@ reverie
     const resolvedOld = options.alias ? oldName : resolveKey(oldName);
     await withCliInstrumentation(
       { tool: 'reverie_rename', key: resolvedOld, rawKey: oldName, scope, params: { oldKey: resolvedOld, newKey: newName } },
-      () => {
-        if (options.alias) {
-          commands.renameEntry(oldName, newName, true, undefined, options.global);
-        } else {
-          commands.renameEntry(resolvedOld, newName, false, options.setAlias, options.global);
-        }
-      }
+      () => options.alias
+        ? commands.renameEntry(oldName, newName, true, undefined, options.global)
+        : commands.renameEntry(resolvedOld, newName, false, options.setAlias, options.global)
     );
   });
 
@@ -304,15 +300,14 @@ reverie
       async () => {
         if (options.alias) {
           const removed = removeAlias(key, scope);
-          if (removed) {
-            if (isJsonMode()) setResult({ alias: key, removed: true });
-            else console.log(`Alias '${key}' removed successfully.`);
-          } else {
+          if (!removed) {
             printError(`Alias '${key}' not found.`, 'NOT_FOUND');
+            return undefined;
           }
-        } else {
-          await commands.removeEntry(resolvedKey, options.force, options.global);
+          console.log(`Alias '${key}' removed successfully.`);
+          return { alias: key, removed: true };
         }
+        return await commands.removeEntry(resolvedKey, options.force, options.global);
       }
     );
   });
@@ -333,7 +328,7 @@ aliasCommand
       { tool: 'reverie_alias_set', key: name, scope, params: { alias: name, path: targetPath } },
       () => {
         setAlias(name, targetPath, scope);
-        if (isJsonMode()) setResult({ alias: name, target: targetPath });
+        return { alias: name, target: targetPath };
       }
     );
   });
@@ -348,12 +343,12 @@ aliasCommand
       { tool: 'reverie_alias_remove', key: name, scope, params: { alias: name } },
       () => {
         const removed = removeAlias(name, scope);
-        if (removed) {
-          if (isJsonMode()) setResult({ alias: name, removed: true });
-          else console.log(`Alias '${name}' removed.`);
-        } else {
+        if (!removed) {
           printError(`Alias '${name}' not found.`, 'NOT_FOUND');
+          return undefined;
         }
+        console.log(`Alias '${name}' removed.`);
+        return { alias: name, removed: true };
       }
     );
   });
@@ -395,16 +390,16 @@ aliasCommand
       () => {
         const result = renameAlias(oldName, newName, scope);
         if (result) {
-          if (isJsonMode()) setResult({ from: oldName, to: newName });
-          else console.log(`Alias '${oldName}' renamed to '${newName}'.`);
-        } else {
-          const aliases = loadAliases(scope);
-          if (!(oldName in aliases)) {
-            printError(`Alias '${oldName}' not found.`, 'NOT_FOUND');
-          } else {
-            printError(`Alias '${newName}' already exists.`, 'INVALID_INPUT');
-          }
+          console.log(`Alias '${oldName}' renamed to '${newName}'.`);
+          return { from: oldName, to: newName };
         }
+        const aliases = loadAliases(scope);
+        if (!(oldName in aliases)) {
+          printError(`Alias '${oldName}' not found.`, 'NOT_FOUND');
+        } else {
+          printError(`Alias '${newName}' already exists.`, 'INVALID_INPUT');
+        }
+        return undefined;
       }
     );
   });
@@ -426,8 +421,8 @@ confirmCommand
       { tool: 'reverie_confirm_set', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
         setConfirm(resolvedKey, scope);
-        if (isJsonMode()) setResult({ key: resolvedKey, confirm: true });
-        else console.log(`Entry '${resolvedKey}' now requires confirmation to run.`);
+        console.log(`Entry '${resolvedKey}' now requires confirmation to run.`);
+        return { key: resolvedKey, confirm: true };
       }
     );
   });
@@ -443,8 +438,8 @@ confirmCommand
       { tool: 'reverie_confirm_remove', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
         removeConfirm(resolvedKey, scope);
-        if (isJsonMode()) setResult({ key: resolvedKey, confirm: false });
-        else console.log(`Confirmation removed from '${resolvedKey}'.`);
+        console.log(`Confirmation removed from '${resolvedKey}'.`);
+        return { key: resolvedKey, confirm: false };
       }
     );
   });
@@ -625,7 +620,7 @@ const configCommand = reverie
   .command('config')
   .description('Manage configuration settings')
   .action(async () => {
-    await withPager(() => commands.handleConfig());
+    await withPager(() => { commands.handleConfig(); });
   });
 
 configCommand

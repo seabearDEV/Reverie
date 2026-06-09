@@ -247,7 +247,7 @@ async function handlePostSetConfirm(key: string, confirm: boolean | undefined, s
   }
 }
 
-export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string): Promise<void> {
+export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string): Promise<{ key: string; alias?: string } | undefined> {
   debug('setEntry called', { key, force, encrypt, alias, confirm, global });
   const scope = toScope(global);
   try {
@@ -318,9 +318,10 @@ export async function setEntry(key: string, value: string | undefined, force = f
     }
 
     await handlePostSetConfirm(key, confirm, scope);
-    if (isJsonMode()) setResult({ key, ...(alias ? { alias } : {}) });
+    return { key, ...(alias ? { alias } : {}) };
   } catch (error) {
     handleError('Failed to set entry:', error);
+    return undefined;
   }
 }
 
@@ -674,7 +675,7 @@ export async function editEntry(key: string, options: { decrypt?: boolean, globa
   }
 }
 
-export async function removeEntry(key: string, force = false, global?: boolean): Promise<void> {
+export async function removeEntry(key: string, force = false, global?: boolean): Promise<{ key: string; removed: true } | undefined> {
   debug('removeEntry called', { key, force, global });
   const scope = toScope(global);
 
@@ -701,10 +702,10 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   removeConfirmForKey(key, scope);
 
   printSuccess(`Entry '${key}' removed successfully.`);
-  if (isJsonMode()) setResult({ key, removed: true });
+  return { key, removed: true };
 }
 
-export async function copyEntry(sourceKey: string, destKey: string, force = false, global?: boolean): Promise<void> {
+export async function copyEntry(sourceKey: string, destKey: string, force = false, global?: boolean): Promise<{ source: string; dest: string } | undefined> {
   debug('copyEntry called', { sourceKey, destKey, force, global });
   const scope = toScope(global);
   try {
@@ -743,13 +744,14 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
     }
 
     printSuccess(`Entry '${sourceKey}' copied to '${destKey}'.`);
-    if (isJsonMode()) setResult({ source: sourceKey, dest: destKey });
+    return { source: sourceKey, dest: destKey };
   } catch (error) {
     handleError('Failed to copy entry:', error);
+    return undefined;
   }
 }
 
-export function renameEntry(oldKey: string, newKey: string, aliasMode = false, newAlias?: string, global?: boolean): void {
+export function renameEntry(oldKey: string, newKey: string, aliasMode = false, newAlias?: string, global?: boolean): { from: string; to: string; kind: string; alias?: string } | undefined {
   debug('renameEntry called', { oldKey, newKey, aliasMode, newAlias, global });
   const scope = toScope(global);
 
@@ -766,8 +768,7 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
       return;
     }
     printSuccess(`Alias '${oldKey}' renamed to '${newKey}'.`);
-    if (isJsonMode()) setResult({ from: oldKey, to: newKey, kind: 'alias' });
-    return;
+    return { from: oldKey, to: newKey, kind: 'alias' };
   }
 
   // Entry key rename
@@ -844,5 +845,5 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   }
 
   printSuccess(`Entry '${oldKey}' renamed to '${newKey}'.`);
-  if (isJsonMode()) setResult({ from: oldKey, to: newKey, kind: 'entry', ...(newAlias ? { alias: newAlias } : {}) });
+  return { from: oldKey, to: newKey, kind: 'entry', ...(newAlias ? { alias: newAlias } : {}) };
 }

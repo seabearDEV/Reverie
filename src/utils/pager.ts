@@ -8,14 +8,14 @@ import { addResponseBytes } from './responseMeasure';
  * Pager resolution: RVR_PAGER env → PAGER env → "less -FRX"
  * Skips paging entirely when stdout is not a TTY (piped output).
  */
-export async function withPager(fn: () => void | Promise<void>): Promise<void> {
+export async function withPager<T = void>(fn: () => T | Promise<T>): Promise<T | undefined> {
   // If not a TTY, just run directly — no buffering needed
   if (!process.stdout.isTTY) {
-    await fn();
-    return;
+    return await fn();
   }
 
   const chunks: (string | Uint8Array)[] = [];
+  let result: T | undefined;
   // eslint-disable-next-line @typescript-eslint/unbound-method
   const originalWrite = process.stdout.write;
 
@@ -33,7 +33,7 @@ export async function withPager(fn: () => void | Promise<void>): Promise<void> {
   };
 
   try {
-    await fn();
+    result = await fn();
   } finally {
     // Always restore original write
     process.stdout.write = originalWrite;
@@ -53,7 +53,7 @@ export async function withPager(fn: () => void | Promise<void>): Promise<void> {
 
   if (lineCount <= rows - 5) {
     originalWrite.call(process.stdout, buffer);
-    return;
+    return result;
   }
 
   // Spawn pager
@@ -62,7 +62,7 @@ export async function withPager(fn: () => void | Promise<void>): Promise<void> {
   const pagerBin = parts[0];
   const pagerArgs = parts.slice(1);
 
-  return new Promise<void>((resolve) => {
+  return new Promise<T | undefined>((resolve) => {
     const child = spawn(pagerBin, pagerArgs, {
       stdio: ['pipe', process.stdout, process.stderr],
     });
@@ -75,7 +75,7 @@ export async function withPager(fn: () => void | Promise<void>): Promise<void> {
       // automatically — so no explicit count is needed here.
       spawnFailed = true;
       originalWrite.call(process.stdout, buffer);
-      resolve();
+      resolve(result);
     });
 
     child.on('close', () => {
@@ -86,7 +86,7 @@ export async function withPager(fn: () => void | Promise<void>): Promise<void> {
       if (!spawnFailed) {
         addResponseBytes(Buffer.byteLength(buffer, 'utf8'));
       }
-      resolve();
+      resolve(result);
     });
 
     child.stdin.on('error', () => {

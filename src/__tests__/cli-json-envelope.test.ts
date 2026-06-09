@@ -187,4 +187,43 @@ describe('CLI JSON envelope (#117)', () => {
     expect(third.ok).toBe(true);
     expect(((third.warnings ?? []) as { code: string }[]).filter(w => w.code === 'WRITE_AMP')).toHaveLength(0);
   });
+
+  // ── #120 guard: no result-less ok envelopes, no stdout pollution ───────
+  // Every successful JSON-mode command must carry a `result` (an ok envelope
+  // with no result means the handler's output was silently dropped — the
+  // config get/set bug class), and stdout must be exactly one parseable JSON
+  // document (pollution means a console.log escaped the sink — the
+  // config examples bug class). parse() throws on polluted stdout.
+
+  it('every successful command emits an envelope with a result', () => {
+    const commands = [
+      'set guard.k "v"',
+      'get guard.k',
+      'find guard',
+      'context',
+      'context --size-only',
+      'alias set gk guard.k',
+      'alias list',
+      'confirm set guard.k',
+      'confirm remove guard.k',
+      'copy guard.k guard.k2',
+      'rename guard.k2 guard.k3',
+      'alias remove gk',
+      'config set theme dark',
+      'config get theme',
+      // -o keeps the export artifact in the test dir instead of repo cwd
+      `data export entries -o ${path.join(testDir, 'guard-export.json')}`,
+      'stale',
+      'lint',
+      'manifest',
+      'stats',
+    ];
+    for (const cmd of commands) {
+      const r = run(`--json ${cmd}`);
+      const env = parse(r.stdout);
+      expect(env.reverie, `${cmd}: not an envelope`).toBe('1');
+      expect(env.ok, `${cmd}: failed — ${JSON.stringify(env.error)}`).toBe(true);
+      expect(env.result !== undefined, `${cmd}: ok envelope without result`).toBe(true);
+    }
+  });
 });

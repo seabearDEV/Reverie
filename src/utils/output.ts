@@ -109,6 +109,15 @@ export function setResult(value: unknown): void {
   state.resultSet = true;
 }
 
+/**
+ * Whether a result was explicitly recorded. Used by the instrumentation
+ * wrapper (#120) to derive the envelope result from the handler's return
+ * value only when the handler didn't set one itself.
+ */
+export function hasResult(): boolean {
+  return state.resultSet;
+}
+
 /** Record a non-fatal warning. `code` defaults to a generic WARNING bucket. */
 export function addWarning(message: string, code = 'WARNING', count?: number): void {
   if (!message) return;

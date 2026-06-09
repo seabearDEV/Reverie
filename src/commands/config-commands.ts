@@ -45,39 +45,36 @@ export function handleConfig(setting?: string, value?: string, options?: { list?
   if (!value) {
     const currentValue = getConfigSetting(setting);
     if (currentValue !== null) {
-      if (isJsonMode()) setResult({ [setting]: currentValue });
-      else console.log(`${color.green(setting)}: ${currentValue}`);
-    } else {
-      printError(`Setting '${setting}' does not exist`, 'NOT_FOUND');
+      console.log(`${color.green(setting)}: ${currentValue}`);
+      return { [setting]: currentValue };
     }
-    return;
+    printError(`Setting '${setting}' does not exist`, 'NOT_FOUND');
+    return undefined;
   }
 
   // If both setting and value provided, update the setting
   setConfigSetting(setting, value);
   resetColorCache();
-  if (isJsonMode()) setResult({ [setting]: value });
-  else console.log(`Updated ${color.green(setting)} to: ${value}`);
+  console.log(`Updated ${color.green(setting)} to: ${value}`);
+  return { [setting]: value };
 }
 
-export function configSet(setting: string, value: string): void {
+export function configSet(setting: string, value: string): { key: string; value: string; previous: unknown } | undefined {
   debug('configSet called', { setting, value });
   try {
     const previous = getConfigSetting(setting);
 
     setConfigSetting(setting, value);
     resetColorCache();
-    if (isJsonMode()) {
-      setResult({ key: setting, value, previous });
-    } else {
-      console.log(`Changing ${setting} from ${previous} to ${value}`);
-      console.log(`${setting} set to ${value}`);
-    }
+    console.log(`Changing ${setting} from ${previous} to ${value}`);
+    console.log(`${setting} set to ${value}`);
+    return { key: setting, value, previous };
   } catch (error) {
     if (isJsonMode()) {
       failJson('IO', `Error setting config ${setting}: ${String(error)}`);
     } else {
       printError(`Error setting config ${setting}: ${String(error)}`);
     }
+    return undefined;
   }
 }

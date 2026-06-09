@@ -10,7 +10,7 @@ import { formatWriteAmpWarning, WriteAmpResult } from './writeAmp';
 import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
 import { ProjectResolutionError } from '../projectResolution';
-import { isJsonMode, failJson, emitEnvelope, addWarning } from './output';
+import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
@@ -372,6 +372,15 @@ export async function withCliInstrumentation<T>(
     // any error are derived inside buildEnvelope from exitCode + recorded
     // failure. Idempotent: a no-op if something already emitted.
     if (jsonMode) {
+      // #120: derive the envelope result from the handler's return value.
+      // Populating `result` stops being per-site setResult discipline —
+      // a handler that returns its payload gets it into the envelope.
+      // Explicit setResult/failJson still win (handlers that need a result
+      // alongside an error, or a result shaped differently from the value
+      // they return to the wrapper for hit detection, e.g. searchEntries).
+      if (success && !hasError() && result !== undefined && !hasResult()) {
+        setResult(result);
+      }
       emitEnvelope((s) => { (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(s); });
     }
   }
