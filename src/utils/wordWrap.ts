@@ -8,6 +8,8 @@ export function interpretEscapes(str: string): string {
   });
 }
 
+// Matching the ESC control character is the whole point here (ANSI SGR codes).
+// eslint-disable-next-line no-control-regex
 const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
 
 export function stripAnsi(str: string): string {

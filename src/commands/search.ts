@@ -24,7 +24,7 @@ function buildMatcher(searchTerm: string, useRegex: boolean): MatchFn {
     } catch (err) {
       // Re-throw with a clearer message so callers can handle and report it
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to compile regex pattern: ${message}`);
+      throw new Error(`Failed to compile regex pattern: ${message}`, { cause: err });
     }
     return (text: string) => re.test(text);
   }

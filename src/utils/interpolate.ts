@@ -169,6 +169,11 @@ function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCa
     return result;
   } catch (err: unknown) {
     const code = (err && typeof err === 'object' && 'status' in err) ? Number((err as { status: number }).status) : 1;
+    // No `cause` on purpose: the ExecSyncError carries the child's stdout/stderr
+    // buffers, and this message is deliberately terse (exit code only). Attaching
+    // the original error would let any handler that inspects the cause chain
+    // surface command output the message intentionally withholds.
+    // eslint-disable-next-line preserve-caught-error
     throw new Error(`Exec interpolation failed: "${ref}" exited with code ${code}`);
   }
 }

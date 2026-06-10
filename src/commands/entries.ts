@@ -574,7 +574,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
       process.exitCode = 1;
       return;
     }
-    let decryptedDisplay = decrypted;
+    let decryptedDisplay: string;
     try {
       decryptedDisplay = interpolate(decrypted);
     } catch (err) {

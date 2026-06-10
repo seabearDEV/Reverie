@@ -142,7 +142,8 @@ export function ensureDataDirectoryExists(): string {
         } catch (err) {
           throw new Error(
             `Failed to migrate legacy global store ${legacyGlobalPath} → ${dataDir}: ${String(err)}. ` +
-            `Move or remove one of these paths and retry.`
+            `Move or remove one of these paths and retry.`,
+            { cause: err }
           );
         }
       } else {

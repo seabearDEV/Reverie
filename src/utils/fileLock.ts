@@ -45,7 +45,7 @@ function acquireLock(filePath: string, maxRetries = 5): void {
           continue;
         }
 
-        throw new Error(`Unable to acquire lock on ${filePath} after ${maxRetries} retries.`);
+        throw new Error(`Unable to acquire lock on ${filePath} after ${maxRetries} retries.`, { cause: err });
       }
       throw err;
     }

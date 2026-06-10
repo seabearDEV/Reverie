@@ -376,6 +376,7 @@ function getDynamicValues(argType: ArgType): CompletionItem[] {
       return EXPORT_TYPES.map(t => ({ value: t, description: 'Export type', group: 'types' }));
     case 'resetType':
       return RESET_TYPES.map(t => ({ value: t, description: 'Reset type', group: 'types' }));
+    case null:
     default:
       return [];
   }
@@ -610,23 +611,23 @@ _${bin}_completions() {
   local grp_name _${binVar}_val
   local -a _${binVar}_items _${binVar}_dot _${binVar}_desc _${binVar}_plain
   for grp_name in \${(ko)groups}; do
-    _${binVar}_items=("\${(@s:|:)groups[\$grp_name]}")
+    _${binVar}_items=("\${(@s:|:)groups[$grp_name]}")
     _${binVar}_dot=()
     _${binVar}_desc=()
     _${binVar}_plain=()
     for _${binVar}_val in "\${_${binVar}_items[@]}"; do
       local _${binVar}_key="\${_${binVar}_val%%\${us}*}"
       local _${binVar}_dsc="\${_${binVar}_val#*\${us}}"
-      if [[ "\$_${binVar}_key" == *. ]]; then
-        _${binVar}_dot+=("\$_${binVar}_key")
-      elif [[ "\$_${binVar}_val" == *\${us}* && -n "\$_${binVar}_dsc" ]]; then
+      if [[ "$_${binVar}_key" == *. ]]; then
+        _${binVar}_dot+=("$_${binVar}_key")
+      elif [[ "$_${binVar}_val" == *\${us}* && -n "$_${binVar}_dsc" ]]; then
         local _${binVar}_escaped="\${_${binVar}_key//:/\\:}"
         _${binVar}_desc+=("\${_${binVar}_escaped}:\${_${binVar}_dsc}")
       else
-        _${binVar}_plain+=("\$_${binVar}_key")
+        _${binVar}_plain+=("$_${binVar}_key")
       fi
     done
-    (( \${#_${binVar}_desc} )) && _describe "\$grp_name" _${binVar}_desc
+    (( \${#_${binVar}_desc} )) && _describe "$grp_name" _${binVar}_desc
     (( \${#_${binVar}_plain} )) && compadd -- "\${_${binVar}_plain[@]}"
     (( \${#_${binVar}_dot} )) && compadd -S '' -- "\${_${binVar}_dot[@]}"
   done
@@ -718,7 +719,7 @@ ${bin}() {
   } else {
     const historyBlock = shell.endsWith('/zsh')
       ? `\n# Reverie - exclude from shell history (${bin} set/s commands may contain sensitive values)\n[[ -z \${functions[add-zsh-hook]} ]] && autoload -Uz add-zsh-hook\n${historyMarker}() { [[ $1 != ${bin}\\ (set|s)\\ * ]] }\nadd-zsh-hook zshaddhistory ${historyMarker}\n`
-      : `\n# Reverie - exclude from shell history (${bin} set/s commands may contain sensitive values)\nHISTIGNORE="\${HISTIGNORE:+\$HISTIGNORE:}${bin} set *:${bin} s *"\n`;
+      : `\n# Reverie - exclude from shell history (${bin} set/s commands may contain sensitive values)\nHISTIGNORE="\${HISTIGNORE:+$HISTIGNORE:}${bin} set *:${bin} s *"\n`;
     fs.appendFileSync(rcFile, historyBlock, 'utf8');
     console.log(`History exclusion installed in ${rcFile}`);
   }
