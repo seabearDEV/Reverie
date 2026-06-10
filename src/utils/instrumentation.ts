@@ -4,7 +4,7 @@ import { Scope } from '../store';
 import { getValue, getEntriesFlat } from '../storage';
 import { loadAliases, resolveKey } from '../alias';
 import { sanitizeValue, sanitizeParams, logAudit } from './audit';
-import { logToolCall, classifyOp, TelemetryExtras, extractNamespace, appendMissPath } from './telemetry';
+import { logToolCall, classifyOp, TelemetryEntry, TelemetryExtras, extractNamespace, appendMissPath } from './telemetry';
 import { recordCliWrite, trackCliMissPath } from './sessionState';
 import { formatWriteAmpWarning, WriteAmpResult } from './writeAmp';
 import { findProjectFile } from '../store';
@@ -41,6 +41,79 @@ export function captureValue(tool: string, key: string | undefined, scope: Scope
     if (val === undefined) return undefined;
     return sanitizeValue(typeof val === 'object' ? JSON.stringify(val) : String(val));
   } catch { return undefined; }
+}
+
+/**
+ * Pre-capture the source value for reverie_copy's after diff (avoids a race
+ * with concurrent writes). Shared between MCP and CLI wrappers.
+ */
+export function captureCopySource(sourceKey: string | undefined, scope: Scope): string | undefined {
+  if (!sourceKey) return undefined;
+  try {
+    const resolved = resolveKey(sourceKey, scope);
+    const val = getValue(resolved, scope);
+    return val !== undefined
+      ? sanitizeValue(typeof val === 'object' ? JSON.stringify(val) : String(val))
+      : undefined;
+  } catch { return undefined; }
+}
+
+/** Before/after capture for BULK_OPS — whole-store ops log an entry count. */
+export function captureBulkCount(scope: Scope): string | undefined {
+  try {
+    return `${Object.keys(getEntriesFlat(scope)).length} entries`;
+  } catch { return undefined; }
+}
+
+export interface AfterValueInputs {
+  /** Explicit after-value for set/config_set (pre-sanitize). */
+  writeValue?: string | undefined;
+  before?: string | undefined;
+  copySourceValue?: string | undefined;
+  /** Target path for alias_set. */
+  aliasPath?: string | undefined;
+  key?: string | undefined;
+  scope: Scope;
+}
+
+/**
+ * Derive the after-value for a non-bulk write from params/before rather than
+ * re-reading the store (concurrent requests can race and corrupt the read).
+ * The per-tool semantics here have diverged between wrappers before (#94) —
+ * keep this the single home.
+ */
+export function deriveAfterValue(tool: string, inputs: AfterValueInputs): string | undefined {
+  if (tool === 'reverie_set' || tool === 'reverie_config_set') return sanitizeValue(inputs.writeValue);
+  if (tool === 'reverie_copy') return inputs.copySourceValue;
+  if (tool === 'reverie_rename') return inputs.before; // Rename preserves the value
+  if (tool === 'reverie_remove' || tool === 'reverie_alias_remove') return undefined; // Deleted
+  if (tool === 'reverie_alias_set') return inputs.aliasPath;
+  // Fallback: re-read (only for unexpected tool names)
+  return captureValue(tool, inputs.key, inputs.scope);
+}
+
+/**
+ * Redundant = value didn't change on a true mutation. Excluded:
+ *   - rename (key move, not value change)
+ *   - run --dry (read-only) and import --preview (read-only)
+ *   - exec ops (reverie_run): the stored command never changes during a run,
+ *     so before === after is trivially true and would mis-tag every run as a
+ *     "redundant write" — but runs aren't writes at all
+ *   - removes never fire because after is undefined
+ */
+export function isRedundantWrite(
+  tool: string,
+  op: TelemetryEntry['op'],
+  params: Record<string, unknown> | undefined,
+  before: string | undefined,
+  after: string | undefined,
+): true | undefined {
+  const isReadOnlyWrite = tool === 'reverie_rename' ||
+    (tool === 'reverie_run' && params?.dry === true) ||
+    (tool === 'reverie_import' && params?.preview === true);
+  return op === 'write' && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after
+    ? true
+    : undefined;
 }
 
 // ── CLI Instrumentation Wrapper ──────────────────────────────────────
@@ -98,21 +171,11 @@ export async function withCliInstrumentation<T>(
   let copySourceValue: string | undefined;
   if (isWrite && !BULK_OPS.has(ctx.tool)) {
     before = captureValue(ctx.tool, ctx.key, scope);
-    // Pre-capture source value for copy
-    if (ctx.tool === 'reverie_copy' && ctx.copySourceKey) {
-      try {
-        const resolved = resolveKey(ctx.copySourceKey, scope);
-        const val = getValue(resolved, scope);
-        copySourceValue = val !== undefined
-          ? sanitizeValue(typeof val === 'object' ? JSON.stringify(val) : String(val))
-          : undefined;
-      } catch { /* ignore */ }
+    if (ctx.tool === 'reverie_copy') {
+      copySourceValue = captureCopySource(ctx.copySourceKey, scope);
     }
   } else if (isWrite && BULK_OPS.has(ctx.tool)) {
-    try {
-      const count = Object.keys(getEntriesFlat(scope)).length;
-      before = `${count} entries`;
-    } catch { /* ignore */ }
+    before = captureBulkCount(scope);
   }
 
   // Begin measuring stdout output for responseSize. We monkey-patch
@@ -221,28 +284,19 @@ export async function withCliInstrumentation<T>(
 
     const duration = Date.now() - startTime;
 
-    // After-value derivation (same strategy as MCP — derive from params, not re-read)
+    // After-value derivation: shared with the MCP wrapper via deriveAfterValue.
     let after: string | undefined;
     if (isWrite && success && !BULK_OPS.has(ctx.tool)) {
-      if (ctx.tool === 'reverie_set' || ctx.tool === 'reverie_config_set') {
-        after = sanitizeValue(ctx.writeValue);
-      } else if (ctx.tool === 'reverie_copy') {
-        after = copySourceValue;
-      } else if (ctx.tool === 'reverie_rename') {
-        after = before; // Value preserved on rename
-      } else if (ctx.tool === 'reverie_remove' || ctx.tool === 'reverie_alias_remove') {
-        after = undefined; // Deleted
-      } else if (ctx.tool === 'reverie_alias_set') {
-        after = ctx.params?.path as string | undefined ?? ctx.params?.target as string | undefined;
-      } else {
-        // Fallback: re-read
-        after = captureValue(ctx.tool, ctx.key, scope);
-      }
+      after = deriveAfterValue(ctx.tool, {
+        writeValue: ctx.writeValue,
+        before,
+        copySourceValue,
+        aliasPath: (ctx.params?.path as string | undefined) ?? (ctx.params?.target as string | undefined),
+        key: ctx.key,
+        scope,
+      });
     } else if (isWrite && BULK_OPS.has(ctx.tool) && success) {
-      try {
-        const count = Object.keys(getEntriesFlat(scope)).length;
-        after = `${count} entries`;
-      } catch { /* ignore */ }
+      after = captureBulkCount(scope);
     }
 
     // Compute metrics. responseSize is the actual stdout byte count
@@ -266,17 +320,7 @@ export async function withCliInstrumentation<T>(
       }
     }
 
-    // Redundant = value didn't change on a true mutation. Match the MCP
-    // wrapper (mcp-server.ts): exec is excluded because a run never changes
-    // the stored command, so before === after is trivially true and would
-    // mis-tag every `run` as a redundant write; removes never fire because
-    // after is undefined.
-    const isReadOnlyWrite = ctx.tool === 'reverie_rename' ||
-      (ctx.tool === 'reverie_run' && ctx.params?.dry === true) ||
-      (ctx.tool === 'reverie_import' && ctx.params?.preview === true);
-    const redundant = op === 'write' && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after
-      ? true
-      : undefined;
+    const redundant = isRedundantWrite(ctx.tool, op, ctx.params, before, after);
 
     // Entry count for reads (from search results or generic)
     let entryCount: number | undefined;
