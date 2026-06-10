@@ -1,0 +1,7 @@
+{
+  "value": "CLI and MCP import disagree on replace-all semantics (found in 2026-06 complexity audit). MCP reverie_import (mcp-server.ts ~1354-1363) clears sections OMITTED from a type:all merge:false import — nextAliases/nextConfirm fall back to {} via 'isAll && !merge ? {} : undefined' — and its comment claims this 'matches the CLI-side replace-everything contract'. But CLI importData (data-management.ts ~358-367) has no such fallback: omitted sections stay untouched. So 'import all' (replace) of an entries-only file wipes aliases+confirm via MCP but preserves them via CLI. One surface is wrong vs the documented contract; decide which and add a cross-surface test. Root cause: the whole import pipeline is implemented twice — consolidation tracked in the complexity-audit report.",
+  "meta": {
+    "created": 1781059770799,
+    "updated": 1781059770799
+  }
+}

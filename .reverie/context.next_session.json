@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — v1.2.1 SHIPPED+VERIFIED (exec-on-read RCE fixed; published, Homebrew 1.2.1, shipped binary passed exploit smoke test). 2ND ADVERSARIAL PASS run + CLEAN: 7 surfaces, 0 findings — incl. fix-review of the v1.2.1 restructured code (CLI run handler, MCP run rewrite, interpolate allowExec core), plus crypto/passwords, completions codegen, config/telemetry sinks, and a DEEP import/export pass. The fix holds up under independent attack; reviewing the FIXED exec/interpolation code again is now diminishing returns — do NOT re-audit it without a code change. Security process codified (docs/security/release-process.md, 3 legs); reusable audit at .claude/workflows/security-audit.js. PICK UP: (1) publish GHSA advisory — draft docs/security/advisory-exec-on-read-rce.md, manual at github.com/.../security/advisories/new; (2) #131 automation + #132 perf CI; (3) #115 BLOCKED — its import path gets its OWN pass WHEN built (that's the one audit still warranted). NPM-NEVER locked (private:true, #50 closed). Next release theme TBD (search #13/#43 vs entry-health #84).",
+  "value": "2026-06-09 — Quality pass shipped: 7 commits d49fe9a..274cd22, gates green (1468 tests). Perf (stats quadratic, mtime fast-skip, MCP leaks), dead code, lint hardening (@eslint/js base), refactors: runGated() single exec gate, shared after-value derivation, jsonl.ts factory, statsReport.ts (CLI section order changed, accepted). FILED #133 import replace-all CLI/MCP divergence (data-loss). TIER-3 backlog (file issues first): import pipeline + #133 fix, rename/copy core, paths.ts dedup, registerTool migration, lint __tests__. STILL PENDING: GHSA advisory publish, #131, #132.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781058349335
+    "updated": 1781062087111
   }
 }

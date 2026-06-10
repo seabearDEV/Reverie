@@ -1,0 +1,7 @@
+{
+  "value": "src/commands/topology.ts contains 3 literal NUL bytes (pairKey separator in template strings, lines 36/41) — grep/ugrep classify the file as BINARY and silently skip it in -r searches (-I). Any grep-based audit misses this file; use grep -a or rg. Consider rewriting as the '\\\\0' escape sequence to fix.",
+  "meta": {
+    "created": 1781060074306,
+    "updated": 1781060074306
+  }
+}
