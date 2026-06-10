@@ -29,7 +29,6 @@
 		"sourceMap": true,
 		"resolveJsonModule": true, // Allow importing JSON files
 		"incremental": true, // Speed up builds by reusing information from previous compilations
-		"importHelpers": true, // Reduce bundle size by importing helpers from tslib
 		"useUnknownInCatchVariables": true // Safer error handling with unknown type for caught errors
 	},
 	"include": ["src/**/*"],

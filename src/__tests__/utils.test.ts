@@ -1,4 +1,4 @@
-import { flattenObject } from '../utils';
+import { flattenObject } from '../utils/objectPath';
 import { debug } from '../utils/debug';
 import { deepMerge } from '../utils/deepMerge';
 
