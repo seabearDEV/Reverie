@@ -1,7 +1,7 @@
-import fs from 'fs';
 import path from 'path';
 import { getDataDirectory, findProjectFile } from './paths';
 import { getSessionId } from './session';
+import { createJsonlLog } from './jsonl';
 
 export interface TelemetryEntry {
   ts: number;
@@ -68,61 +68,16 @@ export function getMissPathsPath(): string {
   return path.join(getDataDirectory(), 'miss-paths.jsonl');
 }
 
-export function appendMissPath(record: MissPath, sync = false): Promise<void> {
-  const line = JSON.stringify(record) + '\n';
-  if (sync) {
-    try { fs.appendFileSync(getMissPathsPath(), line, { mode: 0o600 }); } catch { /* best-effort */ }
-    return Promise.resolve();
-  }
-  return new Promise<void>((resolve) => {
-    fs.appendFile(getMissPathsPath(), line, { mode: 0o600 }, () => resolve());
-  });
-}
+// Shared append-only JSONL machinery (incremental tail cache, 0o600
+// appends) lives in src/utils/jsonl.ts — same factory backs audit.jsonl.
+const missPathLog = createJsonlLog<MissPath>(getMissPathsPath);
 
-function pushMissPathLine(entries: MissPath[], line: string): void {
-  if (!line.trim()) return;
-  try {
-    entries.push(JSON.parse(line) as MissPath);
-  } catch {
-    // Skip malformed lines
-  }
+export function appendMissPath(record: MissPath, sync = false): Promise<void> {
+  return missPathLog.append(record, sync);
 }
 
 export function loadMissPaths(): MissPath[] {
-  const chunkSize = 64 * 1024;
-  const entries: MissPath[] = [];
-
-  try {
-    const fd = fs.openSync(getMissPathsPath(), 'r');
-    const buffer = Buffer.alloc(chunkSize);
-    let remainder = '';
-
-    try {
-      let bytesRead: number;
-      do {
-        bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
-        if (bytesRead <= 0) break;
-
-        const chunk = remainder + buffer.toString('utf8', 0, bytesRead);
-        const lines = chunk.split('\n');
-        remainder = lines.pop() ?? '';
-
-        for (const line of lines) {
-          pushMissPathLine(entries, line);
-        }
-      } while (bytesRead === buffer.length);
-
-      if (remainder) {
-        pushMissPathLine(entries, remainder);
-      }
-
-      return entries;
-    } finally {
-      fs.closeSync(fd);
-    }
-  } catch {
-    return [];
-  }
+  return missPathLog.load();
 }
 
 // ── Miss-window tracker (pure state machine, no I/O) ────────────────
@@ -394,99 +349,18 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     ...extras,
     project,
   };
-  const line = JSON.stringify(entry) + '\n';
-  if (sync) {
-    try { fs.appendFileSync(getTelemetryPath(), line, { mode: 0o600 }); } catch { /* best-effort */ }
-    return Promise.resolve();
-  }
-  return new Promise<void>((resolve) => {
-    fs.appendFile(getTelemetryPath(), line, { mode: 0o600 }, () => resolve());
-  });
+  return telemetryLog.append(entry, sync);
 }
 
-function pushTelemetryLine(entries: TelemetryEntry[], line: string): void {
-  if (!line.trim()) return;
-  try {
-    entries.push(JSON.parse(line) as TelemetryEntry);
-  } catch {
-    // Skip malformed lines
-  }
-}
-
-// ── Incremental tail cache ─────────────────────────────────────────────
-//
-// Mirrors the audit.jsonl tail cache (see src/utils/audit.ts). Telemetry
-// is also append-only, so the same strategy applies: cache parsed entries
-// plus the byte offset of the last read, and on subsequent calls only
-// parse the new tail.
-
-let cachedTelemetryEntries: TelemetryEntry[] = [];
-let cachedTelemetrySize = 0;
-let cachedTelemetryPath = '';
+// Incremental tail cache shared with audit.jsonl — see src/utils/jsonl.ts.
+const telemetryLog = createJsonlLog<TelemetryEntry>(getTelemetryPath);
 
 /**
  * Read and parse the telemetry log. Returns entries in file order
  * (oldest-first, since new entries are appended to the log).
  */
 export function loadTelemetry(): TelemetryEntry[] {
-  const telemetryPath = getTelemetryPath();
-
-  if (telemetryPath !== cachedTelemetryPath) {
-    cachedTelemetryEntries = [];
-    cachedTelemetrySize = 0;
-    cachedTelemetryPath = telemetryPath;
-  }
-
-  let size: number;
-  try {
-    size = fs.statSync(telemetryPath).size;
-  } catch {
-    cachedTelemetryEntries = [];
-    cachedTelemetrySize = 0;
-    return [];
-  }
-
-  if (size < cachedTelemetrySize) {
-    cachedTelemetryEntries = [];
-    cachedTelemetrySize = 0;
-  }
-
-  if (size === cachedTelemetrySize) {
-    return cachedTelemetryEntries.slice();
-  }
-
-  const toRead = size - cachedTelemetrySize;
-  let fd: number;
-  try {
-    fd = fs.openSync(telemetryPath, 'r');
-  } catch {
-    return cachedTelemetryEntries.slice();
-  }
-  try {
-    const buffer = Buffer.alloc(toRead);
-    let total = 0;
-    while (total < toRead) {
-      const n = fs.readSync(fd, buffer, total, toRead - total, cachedTelemetrySize + total);
-      if (n <= 0) break;
-      total += n;
-    }
-    const text = buffer.toString('utf8', 0, total);
-    const lastNewline = text.lastIndexOf('\n');
-    if (lastNewline === -1) {
-      return cachedTelemetryEntries.slice();
-    }
-    const completeText = text.slice(0, lastNewline + 1);
-    const completeBytes = Buffer.byteLength(completeText, 'utf8');
-    const lines = completeText.split('\n');
-    for (const line of lines) {
-      pushTelemetryLine(cachedTelemetryEntries, line);
-    }
-    cachedTelemetrySize += completeBytes;
-  } finally {
-    fs.closeSync(fd);
-  }
-
-  return cachedTelemetryEntries.slice();
+  return telemetryLog.load();
 }
 
 export interface TelemetryStats {

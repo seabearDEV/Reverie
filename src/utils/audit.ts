@@ -1,8 +1,8 @@
-import fs from 'fs';
 import path from 'path';
 import { getDataDirectory, findProjectFile } from './paths';
 import { isEncrypted } from './crypto';
 import { getSessionId } from './session';
+import { createJsonlLog } from './jsonl';
 
 export interface AuditEntry {
   ts: number;
@@ -51,13 +51,13 @@ export interface AuditQueryOptions {
   limit?: number | undefined;
 }
 
-// Self-evicting on settle — in the long-lived MCP server this set must not
-// grow with call count.
-const pendingWrites = new Set<Promise<void>>();
-
 export function getAuditPath(): string {
   return path.join(getDataDirectory(), 'audit.jsonl');
 }
+
+// Shared append-only JSONL machinery (incremental tail cache, 0o600
+// appends, self-evicting pending-write set) lives in src/utils/jsonl.ts.
+const auditLog = createJsonlLog<AuditEntry>(getAuditPath);
 
 const MAX_VALUE_LENGTH = 500;
 
@@ -93,124 +93,21 @@ export function logAudit(partial: Omit<AuditEntry, 'ts' | 'session' | 'agent' | 
     project: projectFile ? path.dirname(projectFile) : undefined,
     agent: process.env.RVR_AGENT_NAME ?? undefined,
   };
-  const line = JSON.stringify(entry) + '\n';
-  if (sync) {
-    try { fs.appendFileSync(getAuditPath(), line, { mode: 0o600 }); } catch { /* best-effort */ }
-    return Promise.resolve();
-  }
-  const p = new Promise<void>((resolve) => {
-    fs.appendFile(getAuditPath(), line, { mode: 0o600 }, () => resolve());
-  });
-  pendingWrites.add(p);
-  void p.finally(() => pendingWrites.delete(p));
-  return p;
+  return auditLog.append(entry, sync);
 }
 
-export async function flushAudit(): Promise<void> {
-  await Promise.all([...pendingWrites]);
+/** Await all pending async audit appends (test hook). */
+export function flushAudit(): Promise<void> {
+  return auditLog.flush();
 }
-
-function pushAuditLine(entries: AuditEntry[], line: string): void {
-  if (!line.trim()) return;
-  try {
-    entries.push(JSON.parse(line) as AuditEntry);
-  } catch {
-    // Skip malformed lines
-  }
-}
-
-// ── Incremental tail cache ─────────────────────────────────────────────
-//
-// audit.jsonl is append-only and grows monotonically. Re-reading the
-// whole file on every loadAuditLog() call costs O(file-size) per
-// invocation, which dominated the reverie_audit tool's cost in v1.11.1
-// manual testing — bulk-batch parallel calls froze the MCP server while
-// queued audit reads serialized through the event loop.
-//
-// This cache holds the parsed entries plus the byte offset of the last
-// successful read. Subsequent reads stat the file: if the size grew, we
-// pread() just the new tail and parse only the new lines. If the size
-// shrank (rotation, truncation, or test cleanup), we drop the cache and
-// fall back to a full re-read on the next call.
-
-let cachedAuditEntries: AuditEntry[] = [];
-let cachedAuditSize = 0;
-let cachedAuditPath = '';
 
 /** Reset the in-memory audit cache. Used by tests that swap RVR_DATA_DIR. */
 export function clearAuditLogCache(): void {
-  cachedAuditEntries = [];
-  cachedAuditSize = 0;
-  cachedAuditPath = '';
-}
-
-/**
- * Refresh the in-memory audit cache from disk. Reads only new tail bytes
- * since the last call. Does not copy — callers that need mutation safety
- * should use loadAuditLog() instead.
- */
-function refreshAuditCache(): void {
-  const auditPath = getAuditPath();
-
-  if (auditPath !== cachedAuditPath) {
-    cachedAuditEntries = [];
-    cachedAuditSize = 0;
-    cachedAuditPath = auditPath;
-  }
-
-  let size: number;
-  try {
-    size = fs.statSync(auditPath).size;
-  } catch {
-    cachedAuditEntries = [];
-    cachedAuditSize = 0;
-    return;
-  }
-
-  if (size < cachedAuditSize) {
-    cachedAuditEntries = [];
-    cachedAuditSize = 0;
-  }
-
-  if (size === cachedAuditSize) {
-    return;
-  }
-
-  const toRead = size - cachedAuditSize;
-  let fd: number;
-  try {
-    fd = fs.openSync(auditPath, 'r');
-  } catch {
-    return;
-  }
-  try {
-    const buffer = Buffer.alloc(toRead);
-    let total = 0;
-    while (total < toRead) {
-      const n = fs.readSync(fd, buffer, total, toRead - total, cachedAuditSize + total);
-      if (n <= 0) break;
-      total += n;
-    }
-    const text = buffer.toString('utf8', 0, total);
-    const lastNewline = text.lastIndexOf('\n');
-    if (lastNewline === -1) {
-      return;
-    }
-    const completeText = text.slice(0, lastNewline + 1);
-    const completeBytes = Buffer.byteLength(completeText, 'utf8');
-    const lines = completeText.split('\n');
-    for (const line of lines) {
-      pushAuditLine(cachedAuditEntries, line);
-    }
-    cachedAuditSize += completeBytes;
-  } finally {
-    fs.closeSync(fd);
-  }
+  auditLog.clearCache();
 }
 
 export function loadAuditLog(): AuditEntry[] {
-  refreshAuditCache();
-  return cachedAuditEntries.slice();
+  return auditLog.load();
 }
 
 /**
@@ -219,14 +116,11 @@ export function loadAuditLog(): AuditEntry[] {
  * Used by follow mode to stream new entries without re-scanning the whole log.
  */
 export function tailAuditLog(): AuditEntry[] {
-  const prevCount = cachedAuditEntries.length;
-  refreshAuditCache();
-  if (cachedAuditEntries.length <= prevCount) return [];
-  return cachedAuditEntries.slice(prevCount);
+  return auditLog.tail();
 }
 
 export function queryAuditLog(options: AuditQueryOptions = {}): AuditEntry[] {
-  refreshAuditCache();
+  const cached = auditLog.view();
 
   const cutoff = options.periodDays && options.periodDays > 0
     ? Date.now() - options.periodDays * 86400000
@@ -234,7 +128,7 @@ export function queryAuditLog(options: AuditQueryOptions = {}): AuditEntry[] {
   const limit = options.limit ?? 50;
   const keyPrefix = options.key ? options.key + '.' : undefined;
 
-  const filtered = cachedAuditEntries.filter(e =>
+  const filtered = cached.filter(e =>
     (cutoff <= 0 || e.ts >= cutoff) &&
     (!options.key || e.key === options.key || !!e.key?.startsWith(keyPrefix!)) &&
     (!options.writesOnly || e.op === 'write') &&
