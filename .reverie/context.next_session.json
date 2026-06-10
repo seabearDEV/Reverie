@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — v1.2.0 SHIPPED and verified (release published, Homebrew updated, rvr -V → 1.2.0); milestone + #117 arc closed; guidance softened. One local store-sync commit on main may be unpushed — check `git status -sb` and push if behind. Pick up first: soak checkpoint 2026-06-15 (reverie_stats period:7d detailed:true) — and decide whether the mid-cycle v1.2.0 ship resets the soak clock (policy gap, see project.inFlight). Theme candidates: search (#13/#43), entry health (#84).",
+  "value": "2026-06-09 — SECURITY: found+fixed a v1.2.0 read=RCE (dollar-paren exec ran on read/dry/preview; hostile cloned .reverie/ store → RCE on mere read). Fix on branch fix/interpolation-exec-rce (2 commits: exec opt-in via interpolateExec + non-TTY confirm fail-closed); full suite green (1468), e2e-verified. See [[context.execOnReadRCE]] + [[arch.interpolation]]. PICK UP: (1) decide release mechanics — CHANGELOG + v1.2.1 patch + published GHSA advisory (disclosure theater skipped per sole-user call, but advisory/SECURITY.md kept as commercial-asset reps); (2) hard-block packs #115 until import integrity designed; (3) baseline security automation still open: #131 (Dependabot/CodeQL/SECURITY.md/bun-audit) + #132 (perf CI). Audit's other 3 surfaces (import/export, store/paths, MCP params) came back CLEAN.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781038005499
+    "updated": 1781056306885
   }
 }

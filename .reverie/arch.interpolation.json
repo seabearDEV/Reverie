@@ -1,7 +1,7 @@
 {
-  "value": "Supports value refs (dollar-brace syntax), exec refs (dollar-paren syntax), fallback defaults (:-), and required checks (:?). Backslash-escape emits literals (backslash consumed on output). Recursive with circular-ref detection. --source flag skips interpolation on get; --plain only strips colors. (--raw was a deprecated alias for --plain since v1.9.1; removed entirely in v1.11.)",
+  "value": "Supports value refs (dollar-brace syntax), exec refs (dollar-paren syntax), fallback defaults (:-), and required checks (:?). Backslash-escape emits literals (backslash consumed on output). Recursive with circular-ref detection. --source flag skips interpolation on get; --plain only strips colors. (--raw was a deprecated alias for --plain since v1.9.1; removed entirely in v1.11.)\n\nSECURITY MODEL (v1.2.1, exec-on-read RCE fix): executing a dollar-paren exec ref is OPT-IN. interpolate() defaults allowExec=false and leaves dollar-paren LITERAL; only interpolateExec() runs the stored command via execSync. Reason: substitution happens on read/list/json/lint/dry/preview paths, not just run — a hostile cloned .reverie/ store could RCE the moment an agent read an entry. INVARIANT: only the actual run-execution moment (CLI runCommand past the dry/confirm gate; MCP reverie_run past dry+confirm) may call interpolateExec on RAW values. Every display/preview/dry/confirm path MUST use the safe interpolate(). dollar-brace value refs always resolve; a value that itself contains dollar-paren stays literal in safe mode (no exec via indirection). DO NOT reintroduce exec on any read path.",
   "meta": {
     "created": 1775530712709,
-    "updated": 1775671777913
+    "updated": 1781056289024
   }
 }
