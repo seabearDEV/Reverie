@@ -201,14 +201,27 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
 
     // Only prompt if any resolved key has confirm metadata set (and --yes not passed)
     const needsConfirm = resolvedKeys.some(k => hasConfirm(k));
-    if (needsConfirm && !options.yes && process.stdin.isTTY) {
-      const answer = await askConfirmation('Run this? [y/N] ', options.source ? process.stderr : undefined);
-      if (answer.toLowerCase() !== 'y') {
-        if (options.source) {
-          process.stderr.write('Aborted.\n');
-        } else {
-          console.log('Aborted.');
+    if (needsConfirm && !options.yes) {
+      if (process.stdin.isTTY) {
+        const answer = await askConfirmation('Run this? [y/N] ', options.source ? process.stderr : undefined);
+        if (answer.toLowerCase() !== 'y') {
+          if (options.source) {
+            process.stderr.write('Aborted.\n');
+          } else {
+            console.log('Aborted.');
+          }
+          return;
         }
+      } else {
+        // Fail closed: with no TTY there is no one to answer the prompt. Earlier
+        // this branch was skipped entirely, so a confirm-gated entry ran
+        // unconfirmed on the non-interactive (agent/CI/piped) surface the
+        // tripwire is meant to protect. Refuse and tell the caller how to opt in.
+        printError(
+          `Entry requires confirmation. Re-run with --yes to execute non-interactively.`,
+          'REQUIRES_CONFIRMATION',
+        );
+        process.exitCode = 1;
         return;
       }
     }

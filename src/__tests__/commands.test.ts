@@ -651,6 +651,23 @@ describe('Commands', () => {
       Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
     });
 
+    it('fails closed (does NOT execute) on a confirm key with no TTY and no --yes', async () => {
+      const originalIsTTY = process.stdin.isTTY;
+      // Non-interactive surface (agent/CI/piped): no one can answer the prompt.
+      Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+
+      storeState.confirm = { 'commands.greet': true };
+
+      await runCommand(['commands.greet'], {});
+
+      // Must refuse, not silently run the confirm-gated command.
+      expect(execSync).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+
+      process.exitCode = 0;
+      Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
+    });
+
     it('chains multiple keys with && into a single command', async () => {
       storeState.entries = {
         commands: { nav: 'cd /Users/me/project', list: 'ls -l' },
