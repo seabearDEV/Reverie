@@ -816,156 +816,20 @@ reverie
       return;
     }
 
-    console.log(color.bold(`\nReverie Usage Stats (${stats.period === 'all' ? 'all time' : `last ${stats.period}`})`));
+    const { formatStatsReport } = await import('./commands/statsReport');
+    const lines = formatStatsReport(stats, {
+      detailed: Boolean(options.detailed),
+      palette: {
+        header: color.bold,
+        value: color.white,
+        dim: color.gray,
+        good: color.green,
+        warn: color.yellow,
+        bad: color.red,
+      },
+    });
     console.log('');
-    console.log(`  MCP sessions:    ${color.white(String(stats.mcpSessions))}`);
-    console.log(`  MCP calls:       ${color.white(String(stats.mcpCalls))}`);
-
-    if (stats.mcpSessions > 0) {
-      const bootstrapPct = (stats.bootstrapRate * 100).toFixed(0);
-      const bootstrapColor = stats.bootstrapRate >= 0.8 ? color.green : stats.bootstrapRate >= 0.5 ? color.yellow : color.red;
-      console.log(`    Bootstrap rate:  ${bootstrapColor(`${bootstrapPct}%`)} of MCP sessions call reverie_context first`);
-
-      const writeBackPct = (stats.writeBackRate * 100).toFixed(0);
-      const writeBackColor = stats.writeBackRate >= 0.5 ? color.green : stats.writeBackRate >= 0.25 ? color.yellow : color.red;
-      console.log(`    Write-back rate: ${writeBackColor(`${writeBackPct}%`)} of MCP sessions store at least 1 entry`);
-    }
-
-    console.log(`  CLI calls:       ${color.white(String(stats.cliCalls))}`);
-    console.log(`  Total calls:     ${color.white(String(stats.totalCalls))}`);
-    console.log(`  Read:write:      ${color.white(stats.readWriteRatio)} (${stats.reads} reads, ${stats.writes} writes, ${stats.removes} removes, ${stats.execs} execs)`);
-
-    const { project, global: glob, unscoped } = stats.scopeBreakdown;
-    if (project > 0 || glob > 0) {
-      const parts = [];
-      if (project > 0) parts.push(`${project} project`);
-      if (glob > 0) parts.push(`${glob} global`);
-      if (unscoped > 0) parts.push(`${unscoped} unscoped`);
-      console.log(`  Scope:           ${color.white(parts.join(', '))}`);
-    }
-
-    // Session metrics
-    if (stats.avgSessionCalls !== undefined || stats.avgSessionDurationMs !== undefined) {
-      console.log(color.bold('\nSession metrics:'));
-      if (stats.avgSessionCalls !== undefined)
-        console.log(`  Avg calls/session: ${color.white(stats.avgSessionCalls.toFixed(1))}`);
-      if (stats.avgSessionDurationMs !== undefined) {
-        const secs = stats.avgSessionDurationMs / 1000;
-        const label = secs < 60 ? `${secs.toFixed(1)}s` : `${(secs / 60).toFixed(1)}m`;
-        console.log(`  Avg session duration: ${color.white(label)}`);
-      }
-    }
-
-    // Token savings
-    const hasEfficiency = stats.hitRate !== undefined || stats.redundantRate !== undefined || stats.totalResponseBytes > 0 || stats.avgDurationMs !== undefined;
-    if (hasEfficiency) {
-      console.log(color.bold('\nToken savings:'));
-      if (stats.hitRate !== undefined) {
-        const hitColor = stats.hitRate >= 0.8 ? color.green : stats.hitRate >= 0.5 ? color.yellow : color.red;
-        console.log(`  Lookup hit rate:   ${hitColor(`${(stats.hitRate * 100).toFixed(0)}%`)} of reads found stored data (${stats.hits} hits, ${stats.misses} misses)`);
-      }
-      if (stats.redundantRate !== undefined && stats.writes > 0) {
-        const redColor = stats.redundantRate <= 0.1 ? color.green : stats.redundantRate <= 0.3 ? color.yellow : color.red;
-        console.log(`  Duplicate writes:  ${redColor(`${(stats.redundantRate * 100).toFixed(0)}%`)} of writes were already up to date (${stats.redundantWrites} of ${stats.writes})`);
-      }
-      if (stats.totalResponseBytes > 0) {
-        const kb = stats.totalResponseBytes / 1024;
-        const bytesStr = kb >= 1 ? `${kb.toFixed(1)}KB` : `${stats.totalResponseBytes}B`;
-        console.log(`  Data served:       ${color.white(bytesStr)} returned from store${stats.avgResponseBytes !== undefined ? `, ${Math.round(stats.avgResponseBytes)}B avg` : ''}`);
-      }
-      if (stats.avgDurationMs !== undefined)
-        console.log(`  Avg latency:       ${color.white(`${Math.round(stats.avgDurationMs)}ms`)} per call`);
-      if (stats.estimatedTotalTokensSaved > 0) {
-        const fmtNum = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
-        console.log(`  Est. tokens saved: ${color.green(`~${fmtNum(stats.estimatedTotalTokensSaved)}`)} (exploration avoided by using stored knowledge)`);
-        console.log(`    Delivery cost:   ${color.white(`~${fmtNum(stats.deliveryCostTokens)}`)} tokens (context delivered to agent)`);
-        const netColor = stats.netTokensSaved >= 0 ? color.green : color.red;
-        console.log(`    Net savings:     ${netColor(`~${fmtNum(stats.netTokensSaved)}`)} tokens`);
-        if (options.detailed) {
-          console.log('    By namespace:');
-          const breakdown = Object.entries(stats.explorationBreakdown)
-            .sort(([,a], [,b]) => b.tokensSaved - a.tokensSaved);
-          for (const [ns, { hits, tokensSaved }] of breakdown) {
-            const perHit = hits > 0 ? Math.round(tokensSaved / hits) : 0;
-            const cal = stats.calibration[ns];
-            const calTag = cal ? (cal.source === 'observed' ? ` [observed, n=${cal.samples}]` : ' [static]') : '';
-            console.log(`      ${color.gray(`${ns.padEnd(15)} ~${fmtNum(tokensSaved)} (${hits} lookup${hits !== 1 ? 's' : ''} × ${fmtNum(perHit)} each)${calTag}`)}`);
-          }
-          if (stats.estimatedRedundantWriteTokensSaved > 0) {
-            console.log(`    ${color.gray(`Duplicate writes avoided: ~${fmtNum(stats.estimatedRedundantWriteTokensSaved)} (${stats.redundantWrites} write${stats.redundantWrites !== 1 ? 's' : ''} already up to date)`)}`);
-          }
-          const calEntries = Object.values(stats.calibration);
-          if (calEntries.length > 0) {
-            const observed = calEntries.filter(c => c.source === 'observed').length;
-            const total = calEntries.length;
-            console.log(`    ${color.gray(`Calibration: ${observed}/${total} namespaces observed, ${total - observed} static`)}`);
-          }
-        }
-      } else if (stats.estimatedTokensSaved > 0) {
-        const fmt = stats.estimatedTokensSaved >= 1000 ? `${(stats.estimatedTokensSaved / 1000).toFixed(1)}K` : String(stats.estimatedTokensSaved);
-        console.log(`  Est. tokens saved: ${color.green(`~${fmt}`)} (cached data served to agents)`);
-      }
-    }
-
-    // Trend comparison
-    if (stats.trend) {
-      const t = stats.trend;
-      const fmtDelta = (v: number | undefined, suffix = '%') => {
-        if (v === undefined) return undefined;
-        const sign = v >= 0 ? '+' : '';
-        return `${sign}${v.toFixed(0)}${suffix}`;
-      };
-      const trendParts: string[] = [];
-      const cd = fmtDelta(t.callsDelta);
-      if (cd) trendParts.push(`calls ${cd}`);
-      const sd = fmtDelta(t.sessionsDelta);
-      if (sd) trendParts.push(`sessions ${sd}`);
-      const hd = fmtDelta(t.hitRateDelta, 'pp');
-      if (hd) trendParts.push(`hit rate ${hd}`);
-      const dd = fmtDelta(t.avgDurationDelta);
-      if (dd) trendParts.push(`latency ${dd}`);
-      if (trendParts.length > 0)
-        console.log(color.gray(`\nTrend (vs prev ${stats.period}): ${trendParts.join(', ')}`));
-    }
-
-    // Detailed sections (--detailed)
-    if (options.detailed) {
-      if (Object.keys(stats.namespaceCoverage).length > 0) {
-        console.log(color.bold('\nNamespace activity:'));
-        const sorted = Object.entries(stats.namespaceCoverage)
-          .sort(([, a], [, b]) => (b.reads + b.writes) - (a.reads + a.writes));
-        for (const [ns, data] of sorted) {
-          const age = data.lastWrite ? `${Math.floor((Date.now() - data.lastWrite) / 86400000)}d ago` : 'never';
-          const ageColor = data.lastWrite && (Date.now() - data.lastWrite) < 7 * 86400000 ? color.green : color.gray;
-          console.log(`  ${color.white(ns.padEnd(20))} ${String(data.reads).padStart(3)} reads  ${String(data.writes).padStart(3)} writes  last write: ${ageColor(age)}`);
-        }
-      }
-
-      const projects = Object.entries(stats.projectBreakdown);
-      if (projects.length > 0) {
-        console.log(color.bold('\nProject activity:'));
-        const sortedProjects = projects.sort(([, a], [, b]) => b - a);
-        for (const [proj, count] of sortedProjects) {
-          const label = proj.split('/').slice(-2).join('/');
-          console.log(`  ${color.white(label.padEnd(30))} ${count} calls`);
-        }
-      }
-
-      const agents = Object.entries(stats.agentBreakdown);
-      if (agents.length > 0) {
-        console.log(color.bold('\nAgent activity:'));
-        for (const [agent, data] of agents.sort(([,a],[,b]) => b.calls - a.calls)) {
-          console.log(`  ${color.white(agent.padEnd(24))} ${data.calls} calls (${data.reads}R ${data.writes}W)`);
-        }
-      }
-
-      if (stats.topTools.length > 0) {
-        console.log(color.bold('\nTop tools:'));
-        for (const { tool, count } of stats.topTools) {
-          console.log(`  ${color.white(tool.padEnd(24))} ${count} calls`);
-        }
-      }
-    }
+    for (const line of lines) console.log(line);
     console.log('');
   });
 
