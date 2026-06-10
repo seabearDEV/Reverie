@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — SECURITY: found+fixed a v1.2.0 read=RCE (dollar-paren exec ran on read/dry/preview; hostile cloned .reverie/ store → RCE on mere read). Fix on branch fix/interpolation-exec-rce (2 commits: exec opt-in via interpolateExec + non-TTY confirm fail-closed); full suite green (1468), e2e-verified. See [[context.execOnReadRCE]] + [[arch.interpolation]]. PICK UP: (1) decide release mechanics — CHANGELOG + v1.2.1 patch + published GHSA advisory (disclosure theater skipped per sole-user call, but advisory/SECURITY.md kept as commercial-asset reps); (2) hard-block packs #115 until import integrity designed; (3) baseline security automation still open: #131 (Dependabot/CodeQL/SECURITY.md/bun-audit) + #132 (perf CI). Audit's other 3 surfaces (import/export, store/paths, MCP params) came back CLEAN.",
+  "value": "2026-06-09 — SECURITY: found+fixed v1.2.0 read=RCE (dollar-paren exec ran on read/dry/preview; hostile cloned .reverie/ → RCE on mere read). See [[context.execOnReadRCE]] + [[arch.interpolation]]. STATE: branch fix/interpolation-exec-rce = 4 commits (exec opt-in; non-TTY confirm fail-closed; store writeback; v1.2.1 release-prep) ahead of main; main==origin. Suite green 1468/0, e2e-verified, binary reports 1.2.1. v1.2.1 release-prep DONE: CHANGELOG, version bump, SECURITY.md (1.1.x→1.2.x), draft GHSA at docs/security/advisory-exec-on-read-rce.md. #115 BLOCKED (label+comment). PICK UP (needs go-ahead, all outward-facing): (1) merge branch → main, (2) push + tag v1.2.1 (release workflow auto-propagates Homebrew/npm), (3) create+publish the GHSA from the draft. Still open: #131 security automation, #132 perf CI. Audit's other 3 surfaces came back clean.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781056306885
+    "updated": 1781056615866
   }
 }
