@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import { getDataDirectory, findProjectFile } from './paths';
-import { classifyOp } from './telemetry';
 import { isEncrypted } from './crypto';
 import { getSessionId } from './session';
 
@@ -52,7 +51,9 @@ export interface AuditQueryOptions {
   limit?: number | undefined;
 }
 
-const pendingWrites: Promise<void>[] = [];
+// Self-evicting on settle — in the long-lived MCP server this set must not
+// grow with call count.
+const pendingWrites = new Set<Promise<void>>();
 
 export function getAuditPath(): string {
   return path.join(getDataDirectory(), 'audit.jsonl');
@@ -100,13 +101,13 @@ export function logAudit(partial: Omit<AuditEntry, 'ts' | 'session' | 'agent' | 
   const p = new Promise<void>((resolve) => {
     fs.appendFile(getAuditPath(), line, { mode: 0o600 }, () => resolve());
   });
-  pendingWrites.push(p);
+  pendingWrites.add(p);
+  void p.finally(() => pendingWrites.delete(p));
   return p;
 }
 
 export async function flushAudit(): Promise<void> {
-  await Promise.all(pendingWrites);
-  pendingWrites.length = 0;
+  await Promise.all([...pendingWrites]);
 }
 
 function pushAuditLine(entries: AuditEntry[], line: string): void {
@@ -249,5 +250,3 @@ export function queryAuditLog(options: AuditQueryOptions = {}): AuditEntry[] {
 
   return filtered.slice(0, limit);
 }
-
-export { classifyOp };

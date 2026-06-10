@@ -46,8 +46,6 @@ export interface TelemetryEntry {
 // now src/utils/session.ts (shared with audit).
 export { getSessionId } from './session';
 
-const pendingWrites: Promise<void>[] = [];
-
 export function getTelemetryPath(): string {
   return path.join(getDataDirectory(), 'telemetry.jsonl');
 }
@@ -70,24 +68,15 @@ export function getMissPathsPath(): string {
   return path.join(getDataDirectory(), 'miss-paths.jsonl');
 }
 
-const pendingMissPathWrites: Promise<void>[] = [];
-
 export function appendMissPath(record: MissPath, sync = false): Promise<void> {
   const line = JSON.stringify(record) + '\n';
   if (sync) {
     try { fs.appendFileSync(getMissPathsPath(), line, { mode: 0o600 }); } catch { /* best-effort */ }
     return Promise.resolve();
   }
-  const p = new Promise<void>((resolve) => {
+  return new Promise<void>((resolve) => {
     fs.appendFile(getMissPathsPath(), line, { mode: 0o600 }, () => resolve());
   });
-  pendingMissPathWrites.push(p);
-  return p;
-}
-
-export async function flushMissPaths(): Promise<void> {
-  await Promise.all(pendingMissPathWrites);
-  pendingMissPathWrites.length = 0;
 }
 
 function pushMissPathLine(entries: MissPath[], line: string): void {
@@ -410,16 +399,9 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     try { fs.appendFileSync(getTelemetryPath(), line, { mode: 0o600 }); } catch { /* best-effort */ }
     return Promise.resolve();
   }
-  const p = new Promise<void>((resolve) => {
+  return new Promise<void>((resolve) => {
     fs.appendFile(getTelemetryPath(), line, { mode: 0o600 }, () => resolve());
   });
-  pendingWrites.push(p);
-  return p;
-}
-
-export async function flushTelemetry(): Promise<void> {
-  await Promise.all(pendingWrites);
-  pendingWrites.length = 0;
 }
 
 function pushTelemetryLine(entries: TelemetryEntry[], line: string): void {
@@ -441,13 +423,6 @@ function pushTelemetryLine(entries: TelemetryEntry[], line: string): void {
 let cachedTelemetryEntries: TelemetryEntry[] = [];
 let cachedTelemetrySize = 0;
 let cachedTelemetryPath = '';
-
-/** Reset the in-memory telemetry cache. Used by tests that swap RVR_DATA_DIR. */
-export function clearTelemetryCache(): void {
-  cachedTelemetryEntries = [];
-  cachedTelemetrySize = 0;
-  cachedTelemetryPath = '';
-}
 
 /**
  * Read and parse the telemetry log. Returns entries in file order
@@ -745,8 +720,9 @@ export function computeStats(periodDays = 0): TelemetryStats {
       estimatedExplorationTokensSaved += rounded;
     } else {
       const ns = e.ns === '*' ? 'other' : e.ns;
-      const costResult = getExplorationCost(ns, missPathCache);
-      if (!calibration[ns]) calibration[ns] = costResult;
+      // Memoized per namespace — getExplorationCost filters + sorts the whole
+      // miss-path array, so calling it per read-hit row is quadratic.
+      const costResult = calibration[ns] ??= getExplorationCost(ns, missPathCache);
       if (!explorationBreakdown[ns]) explorationBreakdown[ns] = { hits: 0, tokensSaved: 0 };
       explorationBreakdown[ns].hits++;
       explorationBreakdown[ns].tokensSaved += costResult.cost;

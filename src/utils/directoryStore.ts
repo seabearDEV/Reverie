@@ -640,6 +640,16 @@ export function createDirectoryStore(
       // 6. End commit: bump epoch to the next even value. Any reader that
       //    snapshots the epoch from here on will see a stable, committed state.
       writeEpoch(dir, inProgressEpoch + 1);
+
+      // 7. Refresh the dir-mtime fast-skip token. Our own writes bumped the
+      //    dir mtime, and without this the next load() always pays a full
+      //    rescan. Safe here: scanAndSync ran under this lock (step 2) and
+      //    every later mutation was ours, so the caches are authoritative.
+      try {
+        dirMtimeMs = fs.statSync(dir).mtimeMs;
+      } catch {
+        dirMtimeMs = -1;
+      }
     });
   }
 
@@ -700,6 +710,15 @@ export function createDirectoryStore(
     ensureReadme(dir);
 
     return withFileLock(getStoreLockKey(dir), () => {
+      // Whether the dir-mtime fast-skip token is current right now. Unlike
+      // save(), this path never scans, so we may only refresh the token after
+      // writing if it was already valid — refreshing a stale token would make
+      // the next load() fast-skip past another process's earlier writes.
+      let cacheWasCurrent = false;
+      try {
+        cacheWasCurrent = dirMtimeMs !== -1 && fs.statSync(dir).mtimeMs === dirMtimeMs;
+      } catch { /* treat as stale */ }
+
       // Single readdir for collision detection. Cheap (one syscall) compared
       // to scanAndSync's per-entry stat + read.
       let dirEntries: string[];
@@ -770,6 +789,14 @@ export function createDirectoryStore(
         // 6. End commit: bump epoch even. In a `finally` so a partially-failed
         //    write still leaves the seqlock in a stable state for readers.
         writeEpoch(dir, inProgressEpoch + 1);
+      }
+
+      if (cacheWasCurrent) {
+        try {
+          dirMtimeMs = fs.statSync(dir).mtimeMs;
+        } catch {
+          dirMtimeMs = -1;
+        }
       }
 
       return true;
@@ -876,7 +903,8 @@ function migrateFileToDirectoryLocked(
   } catch (err) {
     throw new Error(
       `Failed to parse old store file ${oldFilePath}: ${String(err)}. ` +
-      `Fix the JSON manually or delete the file before upgrading.`
+      `Fix the JSON manually or delete the file before upgrading.`,
+      { cause: err }
     );
   }
 

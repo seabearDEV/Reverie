@@ -92,8 +92,15 @@ const pendingConfirmations = new Map<string, { key: string; command: string; exp
 const missTracker = new MissWindowTracker();
 
 function createConfirmToken(key: string, command: string): string {
+  // Sweep expired tokens — abandoned previews (token issued, never passed
+  // back) would otherwise accumulate for the life of the server. The map
+  // stays tiny, so a full sweep per create is fine.
+  const now = Date.now();
+  for (const [t, entry] of pendingConfirmations) {
+    if (now > entry.expires) pendingConfirmations.delete(t);
+  }
   const token = crypto.randomBytes(8).toString('hex');
-  pendingConfirmations.set(token, { key, command, expires: Date.now() + CONFIRM_TOKEN_TTL });
+  pendingConfirmations.set(token, { key, command, expires: now + CONFIRM_TOKEN_TTL });
   return token;
 }
 
@@ -1010,7 +1017,7 @@ server.tool(
     // SECURITY: safe (non-exec) interpolation for the preview/dry/confirm
     // surface — `$(key)` exec refs are NOT run here. They execute only at the
     // execSync below, past the dry and confirm gates, via interpolateExec.
-    let command = value;
+    let command: string;
     try {
       command = interpolate(value);
     } catch (err) {
