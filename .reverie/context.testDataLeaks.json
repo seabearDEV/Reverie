@@ -1,7 +1,7 @@
 {
-  "value": "RVR_DATA_DIR redirects global store + audit/telemetry logs to temp dir during tests. Project store (.reverie/) can still get test entries if it exists in cwd — always clean before committing.",
+  "value": "Two leak paths for test entries escaping into real stores:\n(1) PROJECT store: RVR_DATA_DIR redirects global store + audit/telemetry to a temp dir, but .reverie/ in cwd can still catch test entries — clean before committing.\n(2) GLOBAL store via STALE DIST (bit 2026-05-06, cleaned 2026-06-09: 70 entries): spawn suites (integration*, entries-advanced, concurrency, cli-json-envelope, binaryName) exec `bun dist/index.js` — a build artifact. The CODEX_*→RVR_* env rename (ee11c6c) ran tests against a pre-rename dist that ignored RVR_DATA_DIR and FELL BACK SILENTLY to the real ~/.reverie store; --global-injected writes landed there. The redirect is fail-open: any future env-var rename or env regression in dist re-opens it. Defense ideas: spawn tests assert the override took (rvr info), or fail-closed sentinel (refuse writes when RVR_TEST=1 set but data dir is the home default).",
   "meta": {
     "created": 1775360216518,
-    "updated": 1778164572142
+    "updated": 1781050983197
   }
 }
