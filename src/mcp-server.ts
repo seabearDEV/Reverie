@@ -32,7 +32,7 @@ import {
   setProjectRootOverride,
 } from "./utils/paths";
 import { fileURLToPath } from "url";
-import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll } from "./store";
+import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
 import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS, DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES } from "./config";
 import { deepMerge } from "./utils/deepMerge";
@@ -82,6 +82,13 @@ function projectResolutionErrorResponse(err: ProjectResolutionError) {
 }
 
 ensureDataDirectoryExists();
+
+// Shared Zod param for the 15 tools that take a data scope. The reverie_reset
+// variant (extra "Ignored for audit/telemetry/miss-paths." note) stays inline.
+const SCOPE_PARAM = z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)");
+
+// Human labels for import/reset section types.
+const TYPE_LABELS = { all: "Entries, aliases, and confirm keys", entries: "Entries", aliases: "Aliases", confirm: "Confirm keys" } as const;
 
 // --- Confirmation token store for two-step reverie_run ---
 // Tokens are one-time-use and expire after 5 minutes.
@@ -194,10 +201,7 @@ server.tool = ((...args: any[]) => {
     const key = extractKey(name, params);
 
     const scope = toScope(params.scope as string | undefined);
-    const resolvedScope: 'project' | 'global' | undefined =
-      scope === 'auto'
-        ? (findProjectFile() ? 'project' : 'global')
-        : scope;
+    const resolvedScope: 'project' | 'global' = getEffectiveScope(scope);
 
     // Resolve alias for audit trail. reverie_copy is special-cased: extractKey
     // returns dest for the audit-key field, but the alias that matters is the
@@ -366,7 +370,7 @@ server.tool = ((...args: any[]) => {
 server.tool(
   "reverie_set",
   "Store a project-knowledge entry at a dot-notation key (e.g. arch.api) — persists insights across sessions. For a nickname pointing at an existing key, use reverie_alias_set (aliases store no data).",
-  { key: z.string().describe("Dot-notation key (e.g. server.prod.ip)"), value: z.string().describe("Value to store"), alias: z.string().optional().describe("Create an alias for this key"), encrypt: z.boolean().optional().describe("Encrypt the value with the provided password"), password: z.string().optional().describe("Password for encryption (required when encrypt is true)"), scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)") },
+  { key: z.string().describe("Dot-notation key (e.g. server.prod.ip)"), value: z.string().describe("Value to store"), alias: z.string().optional().describe("Create an alias for this key"), encrypt: z.boolean().optional().describe("Encrypt the value with the provided password"), password: z.string().optional().describe("Password for encryption (required when encrypt is true)"), scope: SCOPE_PARAM },
   async ({ key, value, alias, encrypt, password, scope: scopeParam }) => {
     try {
       const scope = toScope(scopeParam);
@@ -435,7 +439,7 @@ server.tool(
     depth: z.coerce.number().optional().describe("Limit key depth (e.g. 1 for top-level only, 2 for two levels)"),
     decrypt: z.boolean().optional().describe("Decrypt an encrypted value"),
     password: z.string().optional().describe("Password for decryption (required when decrypt is true)"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
     all: z.boolean().optional().describe("Show entries from all scopes (project + global) when listing"),
   },
   async ({ key, format, aliases_only, values, depth, decrypt: decryptOpt, password, scope: scopeParam, all: showAll }) => {
@@ -546,7 +550,6 @@ server.tool(
         } else {
           display = value;
         }
-        const { loadMeta, loadMetaMerged, getStalenessTag } = await import("./store");
         const getMeta = lookupScope === 'auto' ? loadMetaMerged() : loadMeta(lookupScope);
         const staleTag = getStalenessTag(resolvedKey, getMeta);
         return textResponse(`${resolvedKey}: ${display}${staleTag}`);
@@ -580,7 +583,7 @@ server.tool(
   {
     key: z.string().describe("Dot-notation key to remove"),
     is_alias: z.boolean().optional().describe("If true, remove the alias only (keep the entry)"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
   },
   async ({ key, is_alias, scope: scopeParam }) => {
     try {
@@ -619,7 +622,7 @@ server.tool(
     source: z.string().describe("Source dot-notation key to copy from"),
     dest: z.string().describe("Destination dot-notation key to copy to"),
     force: z.boolean().optional().describe("Overwrite destination if it already exists"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
   },
   async ({ source, dest, force, scope: scopeParam }) => {
     try {
@@ -669,7 +672,7 @@ server.tool(
     newKey: z.string().describe("New dot-notation key (or alias name when is_alias is true)"),
     is_alias: z.boolean().optional().describe("If true, rename the alias itself (not the entry key)"),
     alias: z.string().optional().describe("Create a new alias for the renamed entry"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
   },
   async ({ oldKey, newKey, is_alias, alias, scope: scopeParam }) => {
     try {
@@ -771,7 +774,7 @@ server.tool(
     valuesOnly: z.boolean().optional().describe("Match against values only (skip keys)"),
     aliasesOnly: z.boolean().optional().describe("Search only in aliases"),
     entriesOnly: z.boolean().optional().describe("Search only in data entries"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
   },
   async ({ query, regex, keysOnly, valuesOnly, aliasesOnly, entriesOnly, scope: scopeParam }) => {
     try {
@@ -837,7 +840,7 @@ server.tool(
   {
     alias: z.string().describe("Alias name"),
     key: z.string().describe("Dot-notation key the alias points to"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
   },
   async ({ alias, key, scope: scopeParam }) => {
     try {
@@ -855,7 +858,7 @@ server.tool(
 server.tool(
   "reverie_alias_remove",
   "Remove a nickname without touching its target entry. Entries themselves: reverie_remove.",
-  { alias: z.string().describe("Alias name to remove"), scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)") },
+  { alias: z.string().describe("Alias name to remove"), scope: SCOPE_PARAM },
   async ({ alias, scope: scopeParam }) => {
     try {
       const scope = toScope(scopeParam);
@@ -875,7 +878,7 @@ server.tool(
 server.tool(
   "reverie_alias_list",
   "List all nicknames (alias -> key mappings).",
-  { scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)") },
+  { scope: SCOPE_PARAM },
   async ({ scope: scopeParam }) => {
     try {
       const scope = toScope(scopeParam);
@@ -966,7 +969,7 @@ server.tool(
     confirm_token: z.string().optional().describe("One-time token from a previous confirmation prompt — pass this to execute a confirmed command"),
     chain: z.boolean().optional().describe("If true, treat stored value as space-separated key references to resolve and &&-chain"),
     capture: z.boolean().optional().describe("Capture output (MCP always captures; included for API consistency)"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
   },
   async ({ key, dry, force, confirm_token, chain, scope: scopeParam }) => {
     const scope = toScope(scopeParam);
@@ -1074,16 +1077,13 @@ server.tool(
     type: z.enum(["entries", "aliases", "confirm", "all"]).describe("What to export"),
     pretty: z.boolean().optional().describe("Pretty-print the JSON (default false)"),
     includeEncrypted: z.boolean().optional().describe("Emit real ciphertext for encrypted values instead of the [encrypted] placeholder — output contains sensitive material."),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
   },
   async ({ type, pretty, includeEncrypted, scope: scopeParam }) => {
     try {
       const scope = toScope(scopeParam);
       const indent = pretty ? 2 : 0;
-      const envelopeScope: 'project' | 'global' =
-        scope === 'project' ? 'project' :
-        scope === 'global' ? 'global' :
-        (findProjectFile() ? 'project' : 'global');
+      const envelopeScope: 'project' | 'global' = getEffectiveScope(scope);
       const maskEntries = (d: Record<string, unknown>) => includeEncrypted ? d : maskEncryptedValues(d);
 
       const payload: Record<string, unknown> = {};
@@ -1114,7 +1114,7 @@ server.tool(
     type: z.enum(["entries", "aliases", "confirm", "all"]).optional().describe("What to import (default: entries)"),
     merge: z.boolean().optional().describe("Merge with existing data instead of replacing (default true — pass false to wipe and replace)"),
     preview: z.boolean().optional().describe("Preview changes without modifying data (returns diff text)"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
   },
   async ({ data, type: typeParam, merge: mergeParam, preview, scope: scopeParam }) => {
     try {
@@ -1323,9 +1323,8 @@ server.tool(
       );
 
       const warningPrefix = envelopeWarnings.length > 0 ? envelopeWarnings.map(w => `⚠ ${w}\n`).join('') : '';
-      const typeLabel = { all: "Entries, aliases, and confirm keys", entries: "Entries", aliases: "Aliases", confirm: "Confirm keys" }[type];
       return textResponse(
-        `${warningPrefix}${typeLabel} ${merge ? "merged" : "imported"} successfully.`
+        `${warningPrefix}${TYPE_LABELS[type]} ${merge ? "merged" : "imported"} successfully.`
       );
     } catch (err) {
       if (err instanceof ProjectResolutionError) throw err;
@@ -1362,9 +1361,8 @@ server.tool(
       if (type === "confirm" || type === "all") {
         saveConfirmKeys({}, scope);
       }
-      const typeLabel = { all: "Entries, aliases, and confirm keys", entries: "Entries", aliases: "Aliases", confirm: "Confirm keys" }[type];
       return textResponse(
-        `${typeLabel} reset to empty state.`
+        `${TYPE_LABELS[type]} reset to empty state.`
       );
     } catch (err) {
       if (err instanceof ProjectResolutionError) throw err;
@@ -1375,14 +1373,14 @@ server.tool(
 
 // --- reverie_context ---
 
-import { filterEntriesByTier, computeContextSizeReport, formatContextSizeReport } from "./commands/context";
+import { filterEntriesByTier, computeContextSizeReport, formatContextSizeReport, estimateBootstrapOverheadBytes } from "./commands/context";
 import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from "./utils/contextBudget";
 
 server.tool(
   "reverie_context",
   "Compact summary of all stored project knowledge — call FIRST at session start to bootstrap. Tiers: essential (project/commands/conventions only), standard (default, excludes arch.*), full (everything; bypasses the size budget). Tier-vs-task guidance: docs/schema-guide.md.",
   {
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
     tier: z.enum(["essential", "standard", "full"]).optional().describe("Context tier: essential (project/commands/conventions only — for focused work or when standard overflows), standard (default, excludes arch.* — typical session start), full (everything — for refactoring, architectural changes, or onboarding). See docs/schema-guide.md \"Bootstrap tiers\""),
     sizeOnly: z.boolean().optional().describe("Return per-namespace entry/byte counts and the budget instead of content"),
   },
@@ -1407,7 +1405,6 @@ server.tool(
       const aliases = loadAliases(effectiveScope);
 
       // Load meta for age indicators (needed both for banner and entry tags)
-      const { loadMeta, loadMetaMerged, getStalenessTag } = await import("./store");
       const meta = effectiveScope === 'auto' ? loadMetaMerged() : loadMeta(effectiveScope);
 
       // Handoff banner runs against the unfiltered flat map so it appears
@@ -1444,32 +1441,15 @@ server.tool(
           ? Number(envOverride)
           : budget;
 
-        // Estimate non-entry overhead using Buffer.byteLength for accurate UTF-8
-        // byte counts — covers header, handoff banner, aliases section, tier footer,
-        // and a conservative allowance for the shed-notice line itself.
-        let fixedOverheadBytes = 0;
+        // Estimate non-entry overhead (handoff banner, aliases, tier footer,
+        // shed-notice allowance) via the shared estimator, plus the MCP-only
+        // project header line.
         const headerLine = hasProject
           ? `[project: ${projectFile}]`
           : `[project: NONE — auto-scope writes will fall through to global. Pin RVR_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`;
-        fixedOverheadBytes += Buffer.byteLength(`${headerLine}\n\n`, 'utf8');
-        if (handoff) {
-          for (const l of handoff.lines) fixedOverheadBytes += Buffer.byteLength(`${l}\n`, 'utf8');
-          fixedOverheadBytes += 1; // blank line separator
-        }
-        if (Object.keys(aliases).length > 0) {
-          fixedOverheadBytes += Buffer.byteLength('\nAliases:\n', 'utf8');
-          for (const [a, t] of Object.entries(aliases)) {
-            fixedOverheadBytes += Buffer.byteLength(`  ${a} -> ${t}\n`, 'utf8');
-          }
-        }
-        // Tier footer always present in this branch (effectiveTier !== 'full').
-        // Use pre-shed entry count as an upper bound on footer length.
-        const preSheddableCount = Object.keys(displayed).length;
-        fixedOverheadBytes += Buffer.byteLength(`\n[tier: ${effectiveTier} (${preSheddableCount} entries) — pass tier:"full" for complete context]\n`, 'utf8');
-        // Conservative budget for the shed-notice line (emitted only when shedding
-        // occurs, but including it here prevents the notice itself from pushing the
-        // final response over budget).
-        fixedOverheadBytes += 256;
+        const fixedOverheadBytes =
+          Buffer.byteLength(`${headerLine}\n\n`, 'utf8') +
+          estimateBootstrapOverheadBytes(handoff?.lines, aliases, effectiveTier, Object.keys(displayed).length, 'pass tier:"full" for complete context');
 
         const decision = shedToFitBudget(displayed, (k) => getStalenessTag(k, meta), fixedOverheadBytes, effectiveBudget);
         kept = decision.kept;
@@ -1549,13 +1529,12 @@ server.tool(
   "List entries not written in N days (default 30) — knowledge that may have drifted. Write-based; a stale entry may still be read often.",
   {
     days: z.coerce.number().int().min(0).optional().describe("Threshold in days (default: 30). Entries not updated in this many days are returned."),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)"),
+    scope: SCOPE_PARAM,
   },
   async ({ days, scope: scopeParam }) => {
     try {
       const threshold = days ?? 30;
       const scope = toScope(scopeParam);
-      const { loadMeta, loadMetaMerged } = await import("./store");
       const meta = scope === 'auto' ? loadMetaMerged() : loadMeta(scope);
       const flat = getEntriesFlat(scope);
       const cutoff = Date.now() - threshold * 86400000;

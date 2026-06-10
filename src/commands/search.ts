@@ -36,11 +36,15 @@ function searchDataEntries(flattenedData: Record<string, string>, match: MatchFn
   const matches: Record<string, string> = {};
   for (const [key, value] of Object.entries(flattenedData)) {
     const encrypted = isEncrypted(value);
+    const keyMatches = !valuesOnly && match(key);
+
+    // Interpolate lazily: each `${ref}` costs alias + store lookups, so with
+    // --keys only entries whose key already matched (and thus get displayed)
+    // pay for resolution; values that will be matched still resolve up front.
     let resolved = value;
-    if (!encrypted) {
+    if (!encrypted && (!keysOnly || keyMatches)) {
       try { resolved = interpolate(value); } catch { /* use raw */ }
     }
-    const keyMatches = !valuesOnly && match(key);
     const valueMatches = !keysOnly && !encrypted && match(resolved);
 
     if (keyMatches || valueMatches) {

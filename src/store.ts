@@ -185,7 +185,7 @@ function getProjectStore(): ScopedStore | null {
 
 // ── Scope resolution ───────────────────────────────────────────────────
 
-function getEffectiveScope(scope?: Scope  ): 'project' | 'global' {
+export function getEffectiveScope(scope?: Scope): 'project' | 'global' {
   if (scope === 'project') return 'project';
   if (scope === 'global') return 'global';
   // auto: use project if available

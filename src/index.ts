@@ -543,7 +543,6 @@ reverie
       async () => {
         const { loadMeta, loadMetaMerged } = await import('./store');
         const { getEntriesFlat } = await import('./storage');
-        const { color } = await import('./formatting');
         const threshold = parseInt(days ?? '30', 10);
         if (isNaN(threshold) || threshold < 0) {
           if (isJsonMode()) {
@@ -808,8 +807,6 @@ reverie
       setResult(stats);
       return;
     }
-
-    const { color } = await import('./formatting');
 
     if (stats.totalCalls === 0) {
       console.log(color.gray('No telemetry data yet. Usage is tracked automatically via CLI and MCP.'));

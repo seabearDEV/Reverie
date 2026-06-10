@@ -11,7 +11,7 @@ import { flattenObject, expandFlatKeys } from '../utils/objectPath';
 import { maskEncryptedValues } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { createAutoBackup } from '../utils/autoBackup';
-import { findProjectFile, clearProjectFileCache, saveAll } from '../store';
+import { findProjectFile, clearProjectFileCache, saveAll, getEffectiveScope } from '../store';
 import { wrapExport, tryUnwrapImport } from '../utils/envelope';
 import { version as pkgVersion } from '../../package.json';
 import { getConfigSetting } from '../config';
@@ -44,12 +44,7 @@ function resolveScope(options: { global?: boolean | undefined, project?: boolean
 
 // Concrete scope for the envelope meta field. 'auto' (undefined) resolves to
 // project when a project store exists, else global — mirroring the lookup
-// fallthrough that actually produced the exported data.
-function resolveExportScope(scope?: Scope): 'project' | 'global' {
-  if (scope === 'project') return 'project';
-  if (scope === 'global') return 'global';
-  return findProjectFile() ? 'project' : 'global';
-}
+// fallthrough that actually produced the exported data (getEffectiveScope).
 
 export function exportData(type: string, options: ExportOptions): { type: string; files: string[] } | undefined {
   debug('exportData called', { type, options });
@@ -63,7 +58,7 @@ export function exportData(type: string, options: ExportOptions): { type: string
     const defaultDir = process.cwd();
     const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
     const indent = options.pretty ? 2 : 0;
-    const envelopeScope = resolveExportScope(scope);
+    const envelopeScope = getEffectiveScope(scope);
     const includesEncrypted = !!options.includeEncrypted;
     const written: string[] = [];
 

@@ -39,7 +39,10 @@ export function estimateBootstrapOverheadBytes(
   handoffLines: string[] | undefined,
   aliases: Record<string, string>,
   tier: 'essential' | 'standard' | 'full',
-  entryCount: number
+  entryCount: number,
+  // The footer hint differs per surface (CLI flag vs MCP param) — only the
+  // wording, so the byte estimate stays surface-accurate.
+  fullTierHint = 'use --tier full for complete context'
 ): number {
   let bytes = 0;
   if (handoffLines) {
@@ -54,7 +57,7 @@ export function estimateBootstrapOverheadBytes(
   }
   // Tier footer (present whenever tier !== 'full'); entryCount is the
   // pre-shed count, an upper bound on the rendered footer length.
-  bytes += Buffer.byteLength(`\n[tier: ${tier} (${entryCount} entries) — use --tier full for complete context]\n`, 'utf8');
+  bytes += Buffer.byteLength(`\n[tier: ${tier} (${entryCount} entries) — ${fullTierHint}]\n`, 'utf8');
   // Conservative budget for the shed-notice line (emitted only when shedding
   // occurs, but including it here prevents the notice itself from pushing
   // the final output over budget).

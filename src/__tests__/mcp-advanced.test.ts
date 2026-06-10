@@ -186,6 +186,9 @@ vi.mock('../utils/paths', () => ({
 
 vi.mock('../store', () => ({
   findProjectFile: vi.fn(() => null),
+  // Mirrors the real resolution with this mock's findProjectFile (always
+  // null), so auto resolves to global.
+  getEffectiveScope: vi.fn((scope?: string) => (scope === 'project' ? 'project' : 'global')),
   clearProjectFileCache: vi.fn(),
   clearStoreCaches: vi.fn(),
   loadEntries: vi.fn(() => ({ ...mockData })),
