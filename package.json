@@ -1,6 +1,6 @@
 {
 	"name": "@seabear/reverie",
-	"version": "1.2.1",
+	"version": "1.2.2",
 	"private": true,
 	"description": "Bicameral memory for AI-assisted development — CLI + MCP server bootstrapping persistent project context across sessions",
 	"type": "module",

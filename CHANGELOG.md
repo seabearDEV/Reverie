@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.2] - 2026-06-09
+
+**Quality & performance pass — no new features.** A whole-repo review (dead code, complexity, algorithmic patterns, lint) followed by fixes: several real performance defects, ~530 lines of CLI/MCP twin-implementation dedup, and test code brought under lint. The structural theme: every place the CLI and MCP surfaces carried separate copies of the same logic was a drift bug waiting to happen (one was found and filed as [#133](https://github.com/seabearDEV/reverie/issues/133)) — the copies are now shared modules.
+
+### Security
+
+- **Imported confirm maps must carry the literal value `true`** (pre-release audit finding, medium). `validateImportConfirm` checked keys but never values, so a crafted import file/pack with `"commands.deploy": false` in its confirm section passed validation and — in merge mode — overrode the user's existing `true`, silently disarming the run-confirmation tripwire on a command the user had explicitly gated. Both surfaces (`rvr data import`, `reverie_import`) now reject non-`true` confirm values; a regression test encodes the exploit. Found by the Leg B adversarial audit run for this release, which also re-attacked the restructured `reverie_run` gate and confirmed the v1.2.1 exec-on-read invariants hold.
+
+### Performance
+
+- **`reverie_stats`/`rvr stats` no longer quadratic in read-hits × miss-paths.** The exploration-savings loop called `getExplorationCost` — a full filter + sort of the miss-path log — once per read-hit row instead of consulting its own per-namespace memo. On an all-period stats call over a long telemetry log this was tens of millions of predicate evaluations inside the MCP event loop.
+- **Reads after writes stop paying a full store rescan.** `save()`/`setOne()` bump the store directory's mtime but never refreshed the dir-mtime fast-skip token, so every read following a write re-scanned all entry files — defeating the optimization added for exactly that scan. The token is now refreshed post-commit (where it is provably safe).
+- **Long-lived MCP server memory leaks plugged**: async audit/telemetry append promises accumulated in module arrays whose only drains were never called (now self-evicting); abandoned `reverie_run` confirm tokens lived forever (now swept on each token create).
+- **`rvr find --keys` interpolates lazily** — non-matching entries skip `${ref}` resolution entirely (each ref costs alias + store lookups).
+
+### Changed
+
+- **`rvr stats` section ordering now matches `reverie_stats`** (namespaces → projects → session → savings → agents → tools → trend) — both surfaces render through one shared formatter, which also ends the drift where color thresholds and section order existed only on one side. MCP's header block gains the CLI's two-space indent. JSON output is unchanged (raw stats object).
+- **`reverie_run`'s chain and single-key paths now share one dry → confirm → exec gate.** No behavior change; the v1.2.1 exec-on-read fix class was "two parallel run paths, one fixed" — there is now structurally one gate.
+
+### Internal
+
+- Dead code removed: never-called telemetry flush functions, 11 dead barrel re-exports, the `tslib`/`importHelpers` no-op pair, an orphaned 406-line bench script.
+- ESLint hardened: core `@eslint/js` recommended was never included (typescript-eslint presets don't bundle it); now on, plus `eqeqeq` and `switch-exhaustiveness-check`. All 16 surfaced findings fixed, including `{ cause }` on re-thrown errors (deliberately *not* on the exec-interpolation error, which would carry child stdout/stderr the terse message intentionally withholds).
+- `src/__tests__/` (67 files) was outside every safety net — ESLint-ignored, tsconfig-excluded, and `bun test` doesn't type-check. Now linted (non-type-checked, with test-idiom relaxations); the 51 surfaced findings cleared.
+- Shared modules extracted from CLI/MCP twins: `utils/jsonl.ts` (the audit/telemetry tail-cache with the v1.11.1 freeze history — now one implementation), `commands/statsReport.ts`, instrumentation after-value/redundant derivation, `getEffectiveScope`.
+- `topology.ts`'s literal NUL bytes rewritten as `'\0'` escapes — grep classified the source file as binary and silently skipped it.
+
 ## [1.2.1] - 2026-06-09
 
 **Security patch — `$(key)` exec refs no longer run on read.** A baseline security audit found that `$(key)` exec interpolation executed the referenced stored command as a *side effect of value substitution*, and substitution runs on read/list/JSON/lint/dry/preview paths — not just `run`. A hostile `.reverie/` store shipped inside a cloned repo could therefore achieve code execution the moment an agent merely **read** an entry (`rvr get`, `reverie_get`, `--values`) or ran a "safe" `--dry` preview, with no confirmation. Exec resolution is now opt-in and confined to the actual `run`-execution path.
