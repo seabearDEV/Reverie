@@ -42,7 +42,7 @@ import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
 import { interpolate, interpolateExec, interpolateObject, StrictInterpolationError } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace } from "./utils/telemetry";
-import { logAudit, queryAuditLog, sanitizeValue, sanitizeParams, getAuditPath } from "./utils/audit";
+import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
@@ -122,7 +122,7 @@ const server = new McpServer(
 
 // Wrap server.tool to auto-log telemetry and audit for every tool call
 const _origTool = server.tool.bind(server);
-import { SKIP_AUDIT, BULK_OPS, captureValue } from "./utils/instrumentation";
+import { SKIP_AUDIT, BULK_OPS, captureValue, captureCopySource, captureBulkCount, deriveAfterValue, isRedundantWrite } from "./utils/instrumentation";
 
 // ── Per-call guardrail signals ──────────────────────────────────────
 // Handlers stash guardrail outcomes here (size-budget shedding for #100,
@@ -236,21 +236,10 @@ server.tool = ((...args: any[]) => {
     if (isWrite && !BULK_OPS.has(name)) {
       before = captureValue(name, key, scope);
       if (name === 'reverie_copy') {
-        // Pre-capture source value for the after diff (avoids race with concurrent writes)
-        const sourceKey = params.source as string | undefined;
-        if (sourceKey) {
-          try {
-            const resolved = resolveKey(sourceKey, scope);
-            const val = getValue(resolved, scope);
-            copySourceValue = val !== undefined ? sanitizeValue(typeof val === 'object' ? JSON.stringify(val) : String(val)) : undefined;
-          } catch { /* ignore */ }
-        }
+        copySourceValue = captureCopySource(params.source as string | undefined, scope);
       }
     } else if (isWrite && BULK_OPS.has(name)) {
-      try {
-        const count = Object.keys(getEntriesFlat(scope)).length;
-        before = `${count} entries`;
-      } catch { /* ignore */ }
+      before = captureBulkCount(scope);
     }
 
     // Execute handler
@@ -283,31 +272,20 @@ server.tool = ((...args: any[]) => {
     } finally {
       const duration = Date.now() - startTime;
 
-      // Capture after-value for writes.
-      // We derive `after` from params/before rather than re-reading the store,
-      // because concurrent requests can race and corrupt the read.
+      // Capture after-value for writes: shared with the CLI wrapper via
+      // deriveAfterValue (derives from params/before rather than re-reading).
       let after: string | undefined;
       if (isWrite && success && !BULK_OPS.has(name)) {
-        if (name === 'reverie_set' || name === 'reverie_config_set') {
-          after = sanitizeValue(params.value as string | undefined);
-        } else if (name === 'reverie_copy') {
-          after = copySourceValue;
-        } else if (name === 'reverie_rename') {
-          // Rename preserves the value
-          after = before;
-        } else if (name === 'reverie_remove' || name === 'reverie_alias_remove') {
-          after = undefined; // Entry was deleted
-        } else if (name === 'reverie_alias_set') {
-          after = params.path as string | undefined;
-        } else {
-          // Fallback: re-read (only for unexpected tool names)
-          after = captureValue(name, key, scope);
-        }
+        after = deriveAfterValue(name, {
+          writeValue: params.value as string | undefined,
+          before,
+          copySourceValue,
+          aliasPath: params.path as string | undefined,
+          key,
+          scope,
+        });
       } else if (isWrite && BULK_OPS.has(name) && success) {
-        try {
-          const count = Object.keys(getEntriesFlat(scope)).length;
-          after = `${count} entries`;
-        } catch { /* ignore */ }
+        after = captureBulkCount(scope);
       }
 
       // Token-efficiency metrics
@@ -317,16 +295,7 @@ server.tool = ((...args: any[]) => {
       const hit = op === 'read' ? determineHit(result, success) : undefined;
       const tier = name === 'reverie_context' ? (params.tier as string ?? 'standard') : undefined;
       const entryCount = op === 'read' && success ? extractEntryCount(responseText) : undefined;
-      // Redundant = value didn't change on a true mutation. Exclude:
-      //   - rename (key move, not value change)
-      //   - run --dry (read-only) and import --preview (read-only)
-      //   - exec ops (reverie_run): the stored command never changes during a
-      //     run, so before === after is trivially true and would always
-      //     mis-tag runs as "redundant writes" — but they aren't writes at all
-      const isReadOnlyWrite = (name === 'reverie_rename') ||
-        (name === 'reverie_run' && params.dry === true) ||
-        (name === 'reverie_import' && params.preview === true);
-      const redundant = op === 'write' && !isReadOnlyWrite && before !== undefined && after !== undefined && before === after ? true : undefined;
+      const redundant = isRedundantWrite(name, op, params, before, after);
 
       // Consume any guardrail signals stashed by the handler (#100/#101).
       const guardrails = guardrailSignals;
@@ -922,6 +891,69 @@ server.tool(
   }
 );
 
+// Shared dry → confirm → exec gate for both reverie_run paths (single and
+// chain). ONE gate sequence on purpose: the v1.2.1 exec-on-read RCE class was
+// "two parallel run paths, one fixed" — keeping a single gate means a future
+// confirm/interpolation fix cannot miss a branch.
+function runGated(
+  key: string,
+  rawValues: string[],
+  needsConfirm: boolean,
+  opts: { dry?: boolean | undefined; force?: boolean | undefined; confirm_token?: string | undefined },
+) {
+  // Safe (non-exec) display command for dry output and the confirm prompt.
+  // SECURITY: building the preview must not execute `$(key)` exec refs, so
+  // the safe pass (display) and exec pass (interpolateExec) run separately.
+  let command: string;
+  try {
+    command = rawValues.map((cv) => interpolate(cv)).join(' && ');
+  } catch (err) {
+    return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (opts.dry) return textResponse(`$ ${command}`);
+
+  if (needsConfirm && !opts.force) {
+    if (opts.confirm_token) {
+      const validated = consumeConfirmToken(opts.confirm_token, key);
+      if (!validated) {
+        return errorResponse(`Invalid or expired confirm_token for '${key}'.`);
+      }
+      // Token valid — fall through to execution
+    } else {
+      const token = createConfirmToken(key, command);
+      return textResponse(
+        `⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call reverie_run again with confirm_token: "${token}"`
+      );
+    }
+  }
+
+  // Past the gates — resolve exec refs for real.
+  let execCommand: string;
+  try {
+    execCommand = rawValues.map((cv) => interpolateExec(cv)).join(' && ');
+  } catch (err) {
+    return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  try {
+    const stdout = execSync(execCommand, {
+      encoding: "utf-8",
+      shell: process.env.SHELL ?? "/bin/sh",
+      timeout: 30000,
+    });
+    return textResponse(`$ ${command}\n${stdout}`);
+  } catch (err: unknown) {
+    if (err && typeof err === "object" && "status" in err) {
+      const execErr = err as { status: number; stderr?: string };
+      return errorResponse(
+        `$ ${command}\nCommand failed (exit ${execErr.status}): ${execErr.stderr ?? ""}`
+      );
+    }
+    return errorResponse(`Error running command: ${String(err)}`);
+  }
+}
+
 // --- reverie_run ---
 server.tool(
   "reverie_run",
@@ -970,104 +1002,15 @@ server.tool(
         rawValues.push(cv);
       }
 
-      // Safe (non-exec) display command for dry output and the confirm prompt.
-      let command: string;
-      try {
-        command = rawValues.map((cv) => interpolate(cv)).join(' && ');
-      } catch (err) {
-        return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      if (dry) return textResponse(`$ ${command}`);
-
       // Confirm if ANY key on the chain is confirm-flagged.
-      if (anyNeedsConfirm && !force) {
-        if (confirm_token) {
-          const validated = consumeConfirmToken(confirm_token, key);
-          if (!validated) return errorResponse(`Invalid or expired confirm_token for '${key}'.`);
-        } else {
-          const token = createConfirmToken(key, command);
-          return textResponse(`⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call reverie_run again with confirm_token: "${token}"`);
-        }
-      }
-
-      // Past the gates — resolve exec refs for real.
-      let execCommand: string;
-      try {
-        execCommand = rawValues.map((cv) => interpolateExec(cv)).join(' && ');
-      } catch (err) {
-        return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      try {
-        const stdout = execSync(execCommand, { encoding: "utf-8", shell: process.env.SHELL ?? "/bin/sh", timeout: 30000 });
-        return textResponse(`$ ${command}\n${stdout}`);
-      } catch (err: unknown) {
-        if (err && typeof err === "object" && "status" in err) {
-          const execErr = err as { status: number; stderr?: string };
-          return errorResponse(`$ ${command}\nCommand failed (exit ${execErr.status}): ${execErr.stderr ?? ""}`);
-        }
-        return errorResponse(`Error running command: ${String(err)}`);
-      }
+      return runGated(key, rawValues, anyNeedsConfirm, { dry, force, confirm_token });
     }
 
     if (isEncrypted(value)) {
       return errorResponse(`Value at '${key}' is encrypted. Decryption is not supported via MCP.`);
     }
 
-    // SECURITY: safe (non-exec) interpolation for the preview/dry/confirm
-    // surface — `$(key)` exec refs are NOT run here. They execute only at the
-    // execSync below, past the dry and confirm gates, via interpolateExec.
-    let command: string;
-    try {
-      command = interpolate(value);
-    } catch (err) {
-      return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    if (dry) {
-      return textResponse(`$ ${command}`);
-    }
-
-    // Respect confirm metadata: two-step confirmation for MCP callers
-    if (hasConfirm(resolvedKey) && !force) {
-      if (confirm_token) {
-        const validated = consumeConfirmToken(confirm_token, key);
-        if (!validated) {
-          return errorResponse(`Invalid or expired confirm_token for '${key}'.`);
-        }
-        // Token valid — fall through to execution
-      } else {
-        const token = createConfirmToken(key, command);
-        return textResponse(
-          `⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call reverie_run again with confirm_token: "${token}"`
-        );
-      }
-    }
-
-    // Past the gates — resolve exec refs for real.
-    let execCommand: string;
-    try {
-      execCommand = interpolateExec(value);
-    } catch (err) {
-      return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    try {
-      const stdout = execSync(execCommand, {
-        encoding: "utf-8",
-        shell: process.env.SHELL ?? "/bin/sh",
-        timeout: 30000,
-      });
-      return textResponse(`$ ${command}\n${stdout}`);
-    } catch (err: unknown) {
-      if (err && typeof err === "object" && "status" in err) {
-        const execErr = err as { status: number; stderr?: string };
-        return errorResponse(
-          `$ ${command}\nCommand failed (exit ${execErr.status}): ${execErr.stderr ?? ""}`
-        );
-      }
-      return errorResponse(`Error running command: ${String(err)}`);
-    }
+    return runGated(key, [value], hasConfirm(resolvedKey), { dry, force, confirm_token });
   }
 );
 
