@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-06-09
+
+**Security patch — `$(key)` exec refs no longer run on read.** A baseline security audit found that `$(key)` exec interpolation executed the referenced stored command as a *side effect of value substitution*, and substitution runs on read/list/JSON/lint/dry/preview paths — not just `run`. A hostile `.reverie/` store shipped inside a cloned repo could therefore achieve code execution the moment an agent merely **read** an entry (`rvr get`, `reverie_get`, `--values`) or ran a "safe" `--dry` preview, with no confirmation. Exec resolution is now opt-in and confined to the actual `run`-execution path.
+
+### Security
+
+- **`$(key)` exec refs are no longer executed on any read/display/dry/preview path** (GHSA pending). `interpolate()` now defaults to **not** executing exec refs (leaves `$(key)` literal); only the real `run` execution moment — past the dry and confirm gates — resolves them via the new `interpolateExec()`. Affected surfaces, all now safe: CLI `rvr get`/`get --values`/`get --json`, `rvr lint`, `rvr run --dry`; MCP `reverie_get` (leaf and `values:true` subtree) and `reverie_run` with `dry:true` or pending confirmation. The `--confirm` tripwire previously checked only the top-level key and never the keys reached through interpolation; preview/dry now build from a non-executing pass. Regression tests encode the exploit on both CLI and MCP surfaces.
+
+### Changed
+
+- **`rvr get` on a value containing `$(cmd)` now displays it literally** instead of executing the command and substituting its output. This is the security fix's intended, user-visible consequence: reads do not execute. To run a stored command, use `rvr run`; to emit a resolved command for shell evaluation, `rvr run --source` still resolves exec refs.
+
+### Fixed
+
+- **Plain (non-JSON) `rvr run` now fails closed on a confirm-gated entry when stdin is not a TTY.** Previously the confirmation prompt was gated on `process.stdin.isTTY`, so on a non-interactive surface (agent, CI, piped) the gate was skipped entirely and a `--confirm` entry executed unconfirmed. It now refuses with exit code 1 and `REQUIRES_CONFIRMATION`, matching the JSON-mode behavior; pass `--yes` to execute non-interactively.
+
 ## [1.2.0] - 2026-06-09
 
 **Token parity for MCP, statefulness parity for the CLI** — closes the [#117](https://github.com/seabearDEV/reverie/issues/117) dual-surface arc. With parity landed, the generated agent guidance (CLAUDE.md / AGENTS.md from `rvr init`) softens from "prefer MCP, fall back to the CLI" to **"same store, same functionality, either surface"** — MCP earns writes via schema-validated params, the CLI earns filterable reads via pipes.

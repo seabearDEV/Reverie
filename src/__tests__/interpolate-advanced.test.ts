@@ -1,5 +1,5 @@
 import type { Mock } from 'bun:test';
-import { interpolate, interpolateObject } from '../utils/interpolate';
+import { interpolate, interpolateExec, interpolateObject } from '../utils/interpolate';
 import { getValue } from '../storage';
 import { resolveKey } from '../alias';
 import { execSync } from 'child_process';
@@ -122,31 +122,31 @@ describe('interpolation — advanced edge cases', () => {
     it('handles command with arguments', () => {
       mockGetValue.mockReturnValueOnce('echo "hello world"');
       mockExecSync.mockReturnValueOnce('hello world\n');
-      expect(interpolate('$(cmd)')).toBe('hello world');
+      expect(interpolateExec('$(cmd)')).toBe('hello world');
     });
 
     it('strips only trailing newline from output', () => {
       mockGetValue.mockReturnValueOnce('cat file');
       mockExecSync.mockReturnValueOnce('line1\nline2\n');
-      expect(interpolate('$(cmd)')).toBe('line1\nline2');
+      expect(interpolateExec('$(cmd)')).toBe('line1\nline2');
     });
 
     it('handles empty command output', () => {
       mockGetValue.mockReturnValueOnce('true');
       mockExecSync.mockReturnValueOnce('\n');
-      expect(interpolate('$(cmd)')).toBe('');
+      expect(interpolateExec('$(cmd)')).toBe('');
     });
 
     it('handles command output without trailing newline', () => {
       mockGetValue.mockReturnValueOnce('printf hello');
       mockExecSync.mockReturnValueOnce('hello');
-      expect(interpolate('$(cmd)')).toBe('hello');
+      expect(interpolateExec('$(cmd)')).toBe('hello');
     });
 
     it('uses SHELL env var for execution', () => {
       mockGetValue.mockReturnValueOnce('echo test');
       mockExecSync.mockReturnValueOnce('test\n');
-      interpolate('$(cmd)');
+      interpolateExec('$(cmd)');
       expect(mockExecSync).toHaveBeenCalledWith('echo test', expect.objectContaining({
         encoding: 'utf-8',
         timeout: 10000,
@@ -156,7 +156,7 @@ describe('interpolation — advanced edge cases', () => {
     it('10 second timeout on exec', () => {
       mockGetValue.mockReturnValueOnce('sleep 100');
       mockExecSync.mockReturnValueOnce('ok\n');
-      interpolate('$(cmd)');
+      interpolateExec('$(cmd)');
       expect(mockExecSync).toHaveBeenCalledWith('sleep 100', expect.objectContaining({
         timeout: 10000,
       }));
@@ -262,7 +262,7 @@ describe('interpolation — advanced edge cases', () => {
         return undefined;
       });
       mockExecSync.mockReturnValueOnce('ok\n');
-      expect(interpolate('$(build)')).toBe('ok');
+      expect(interpolateExec('$(build)')).toBe('ok');
     });
   });
 

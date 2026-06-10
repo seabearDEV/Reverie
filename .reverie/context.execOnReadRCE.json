@@ -1,0 +1,7 @@
+{
+  "value": "v1.2.0 read=RCE (fixed v1.2.1, branch fix/interpolation-exec-rce). Found by the multi-agent security workflow 2026-06-09. ROOT CAUSE: interpolate() ran dollar-paren exec refs via execSync as a side effect of value substitution, and substitution runs on get/list/json/lint/dry/preview — not just run. So a hostile cloned .reverie/ store achieved code execution the instant an agent READ an entry (rvr get / reverie_get / --values) or did a --dry preview; --confirm only checked the top-level key, never keys reached through interpolation, and dry/preview interpolated BEFORE the gate. FIX: exec is opt-in via interpolateExec(); interpolate() is safe-by-default (leaves dollar-paren literal). See [[arch.interpolation]] for the invariant. Regression tests: 'safe interpolate() never executes' (interpolate.test), 'exec-ref safety' (mcp-advanced), inverted 'get does NOT execute' (commands.test). SECONDARY (same branch): non-TTY confirm fail-open in plain CLI run — now fails closed with exit 1 + REQUIRES_CONFIRMATION, matching JSON mode. LESSON: this is the [[project.surfaceStrategy]] 'imported entries are prompt injection with a persistence layer' risk, but worse — direct RCE. HARD-BLOCK packs (#115) until import provenance/integrity is designed; #115 already gated.",
+  "meta": {
+    "created": 1781056306847,
+    "updated": 1781056306847
+  }
+}

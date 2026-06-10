@@ -651,6 +651,23 @@ describe('Commands', () => {
       Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
     });
 
+    it('fails closed (does NOT execute) on a confirm key with no TTY and no --yes', async () => {
+      const originalIsTTY = process.stdin.isTTY;
+      // Non-interactive surface (agent/CI/piped): no one can answer the prompt.
+      Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+
+      storeState.confirm = { 'commands.greet': true };
+
+      await runCommand(['commands.greet'], {});
+
+      // Must refuse, not silently run the confirm-gated command.
+      expect(execSync).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+
+      process.exitCode = 0;
+      Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
+    });
+
     it('chains multiple keys with && into a single command', async () => {
       storeState.entries = {
         commands: { nav: 'cd /Users/me/project', list: 'ls -l' },
@@ -1719,20 +1736,24 @@ describe('Commands', () => {
   });
 
   describe('exec interpolation $(key) integration', () => {
-    it('get with $(key) executes and substitutes', async () => {
+    // SECURITY REGRESSION (read = RCE, fixed): `get` must NOT execute $(key)
+    // exec refs. A hostile .reverie/ store in a cloned repo could otherwise
+    // run arbitrary commands the instant an agent read an entry. Reading now
+    // leaves $(key) literal; only `run` (below) executes.
+    it('get with $(key) does NOT execute — leaves it literal', async () => {
       storeState.entries = {
         system: { user: 'whoami' },
         paths: { home: '/Users/$(system.user)' },
       };
-      (execSync as Mock).mockReturnValueOnce('kh\n');
 
       await getEntry('paths.home', {});
 
+      expect(execSync).not.toHaveBeenCalled();
       const logCalls = (console.log as Mock).mock.calls;
-      const showedResolved = logCalls.some(call =>
-        call.some((arg: unknown) => typeof arg === 'string' && arg.includes('/Users/kh'))
+      const showedLiteral = logCalls.some(call =>
+        call.some((arg: unknown) => typeof arg === 'string' && arg.includes('/Users/$(system.user)'))
       );
-      expect(showedResolved).toBe(true);
+      expect(showedLiteral).toBe(true);
     });
 
     it('run with $(key) interpolates exec before running', async () => {
