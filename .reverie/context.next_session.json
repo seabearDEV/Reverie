@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — Quality pass shipped: 9 code commits d49fe9a..c4fb0af, gates green (1468 tests). Perf (stats quadratic, mtime fast-skip, MCP leaks, lazy find interpolation), dead code, lint hardening (@eslint/js base + src/__tests__ now linted), refactors: runGated() single exec gate, shared after-value derivation, jsonl.ts factory, statsReport.ts (CLI section order changed, accepted), getEffectiveScope/SCOPE_PARAM dedup. FILED #133 import replace-all CLI/MCP divergence (data-loss). TIER-3 backlog (file issues first): import pipeline + #133 fix, rename/copy core, paths.ts dedup, registerTool migration, load() snapshot memo. STILL PENDING: GHSA advisory publish, #131, #132. NOT pushed — push when ready.",
+  "value": "2026-06-09 — v1.2.2 SHIPPED + Leg-C-verified (quality/perf pass, 10 commits incl. 1 security fix). Pre-release Leg B audit found+fixed ONE medium: import confirm-value tripwire disarm (validateImportConfirm now rejects non-true). runGated restructure re-attacked, v1.2.1 exec invariants hold. NOW SOAKING: clock pegged to v1.2.0 (patches don't reset, see project.soakPolicy CLOCK PEG); day-7 checkpoint 2026-06-16, hard cap 2026-06-23 — eval reverie_stats period:7d detailed:true vs EXIT GATE. PICK UP at checkpoint: gate met → theme-pick for v1.3.0 Trust. Backlog (file issues): tier-3 refactors (import pipeline+#133, rename/copy core, paths dedup, registerTool, load() memo); GHSA advisory publish; #131 #132. All pushed.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781063220475
+    "updated": 1781064204793
   }
 }
