@@ -26,23 +26,6 @@ const run = (args: string, cwd?: string) => {
   }).toString();
 };
 
-const runWithStderr = (args: string): { stdout: string; stderr: string } => {
-  try {
-    const stdout = execFileSync('bun', [cliPath, ...tokenizeCliArgs(args)], {
-      cwd: tmpDir,
-      timeout: 10000,
-      env: { ...process.env },
-    }).toString();
-    return { stdout, stderr: '' };
-  } catch (err: unknown) {
-    const e = err as { stdout?: Buffer; stderr?: Buffer };
-    return {
-      stdout: e.stdout?.toString() ?? '',
-      stderr: e.stderr?.toString() ?? '',
-    };
-  }
-};
-
 let dataDir: string;
 const originalDataDir = process.env.RVR_DATA_DIR;
 

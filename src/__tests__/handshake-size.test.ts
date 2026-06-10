@@ -1,11 +1,11 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 // #126: the MCP handshake is per-session fixed cost every client pays
 // before the first tool call. MCP clients truncate server instructions
 // around 2KB, and tools/list rides along in full. These caps make the
 // diet a regression test — if you grow a blob past its cap, cut
 // somewhere else or justify raising the cap in review.
 
-type RegisteredTool = { name: string; description: string; schema: Record<string, any> };
+interface RegisteredTool { name: string; description: string; schema: Record<string, any> }
 const registeredTools: RegisteredTool[] = [];
 
 vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => {

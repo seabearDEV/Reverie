@@ -17,7 +17,6 @@ import {
   MissPath,
   appendMissPath,
   loadMissPaths,
-  getMissPathsPath,
   getExplorationCost,
   EXPLORATION_COST,
 } from '../utils/telemetry';
@@ -29,13 +28,6 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
-
-function writeMissPaths(records: MissPath[]) {
-  fs.writeFileSync(
-    path.join(tmpDir, 'miss-paths.jsonl'),
-    records.map(r => JSON.stringify(r)).join('\n') + '\n',
-  );
-}
 
 // ── MissWindowTracker ────────────────────────────────────────────────
 

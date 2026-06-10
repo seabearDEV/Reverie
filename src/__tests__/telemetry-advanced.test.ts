@@ -108,7 +108,6 @@ describe('computeStats — boundary cases', () => {
 
   it('trend callsDelta handles zero previous calls', () => {
     const now = Date.now();
-    const DAY = 86400000;
     writeEntries([
       // Only current period (within 7 days), nothing in previous period
       { ts: now - 1000, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a' },

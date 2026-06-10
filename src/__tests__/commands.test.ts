@@ -2023,7 +2023,7 @@ describe('Commands', () => {
   });
 
   describe('printSuccess / printError / printWarning', () => {
-    let printSuccess: Function, printError: Function, printWarning: Function;
+    let printSuccess: (msg: string) => void, printError: (msg: string) => void, printWarning: (msg: string) => void;
     beforeAll(() => {
       printSuccess = _realHelpers.printSuccess;
       printError = _realHelpers.printError;

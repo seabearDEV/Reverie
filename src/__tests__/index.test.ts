@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 // Mock functions — defined at top level, cleared between tests
 const mockSetEntry = vi.fn().mockResolvedValue(undefined);

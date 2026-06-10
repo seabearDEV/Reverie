@@ -91,7 +91,7 @@ describe('lintEntries', () => {
     configureOutput({ json: true, command: 'lint' });
     lintEntries({});
 
-    const parsed = buildEnvelope().result as { issues: Array<{ key: string; namespace: string }>; allowed: string[] };
+    const parsed = buildEnvelope().result as { issues: { key: string; namespace: string }[]; allowed: string[] };
     expect(parsed.issues).toHaveLength(1);
     expect(parsed.issues[0].namespace).toBe('custom');
     expect(parsed.allowed).toContain('project');

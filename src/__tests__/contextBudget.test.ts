@@ -1,6 +1,6 @@
 import { shedToFitBudget, formatShedNotice, entryRenderBytes, PATHOLOGICAL_OVERFLOW_NOTICE } from '../utils/contextBudget';
 
-const noTag = (_: string) => '';
+const noTag = () => '';
 
 describe('shedToFitBudget', () => {
   it('returns kept = entries with empty segments when under budget', () => {

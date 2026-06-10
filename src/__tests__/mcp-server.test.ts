@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 type ToolHandler = (params: any) => Promise<any>;
 // Was vi.hoisted (#112) — bun:test has no equivalent, but doesn't need
@@ -282,7 +282,7 @@ vi.mock('../utils/telemetry', () => ({
   }),
   getTelemetryPath: vi.fn(() => '/mock/telemetry.jsonl'),
   getMissPathsPath: vi.fn(() => '/mock/miss-paths.jsonl'),
-  MissWindowTracker: class { onToolCall() { return []; } flushAll() { return []; } get openCount() { return 0; } },
+  MissWindowTracker: class { onToolCall() { return []; } flushAll() { return []; } readonly openCount = 0; },
   appendMissPath: vi.fn(() => Promise.resolve()),
   getSessionId: vi.fn(() => 'mock-session'),
   extractNamespace: vi.fn((key?: string) => key ? key.split('.')[0] : '*'),

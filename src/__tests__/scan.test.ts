@@ -367,7 +367,7 @@ describe('KNOWN_DEPS', () => {
   });
 
   it('has no empty descriptions', () => {
-    for (const [pkg, desc] of Object.entries(KNOWN_DEPS)) {
+    for (const [, desc] of Object.entries(KNOWN_DEPS)) {
       expect(desc.length).toBeGreaterThan(0);
     }
   });

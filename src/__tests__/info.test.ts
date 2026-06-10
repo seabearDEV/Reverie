@@ -1,6 +1,5 @@
 import * as fs from 'fs';
 import { showInfo } from '../commands/info';
-import { loadConfig } from '../config';
 import { getEntriesFlat } from '../storage';
 import { loadAliases } from '../alias';
 

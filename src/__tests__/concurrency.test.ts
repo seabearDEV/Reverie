@@ -7,7 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execSync, fork } from 'child_process';
+import { execSync } from 'child_process';
 import { readStoreState } from './helpers/readStoreState';
 import { assertDistHonorsDataDir } from './helpers/spawnGuard';
 

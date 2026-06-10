@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 /**
  * Advanced MCP server tests covering:
@@ -280,7 +280,7 @@ vi.mock('../utils/telemetry', () => ({
   classifyOp: vi.fn(() => 'meta'),
   getTelemetryPath: vi.fn(() => '/mock/telemetry.jsonl'),
   getMissPathsPath: vi.fn(() => '/mock/miss-paths.jsonl'),
-  MissWindowTracker: class { onToolCall() { return []; } flushAll() { return []; } get openCount() { return 0; } },
+  MissWindowTracker: class { onToolCall() { return []; } flushAll() { return []; } readonly openCount = 0; },
   appendMissPath: vi.fn(() => Promise.resolve()),
   getSessionId: vi.fn(() => 'mock-session'),
   extractNamespace: vi.fn((key?: string) => key ? key.split('.')[0] : '*'),
@@ -324,12 +324,12 @@ describe('MCP Server - Advanced Tests', () => {
 
   describe('prototype pollution prevention', () => {
     it('reverie_set blocks __proto__ key', async () => {
-      const result = await toolHandlers['reverie_set']({ key: '__proto__.polluted', value: 'yes' });
+      await toolHandlers['reverie_set']({ key: '__proto__.polluted', value: 'yes' });
       expect(({} as any).polluted).toBeUndefined();
     });
 
     it('reverie_set blocks constructor key', async () => {
-      const result = await toolHandlers['reverie_set']({ key: 'constructor.prototype', value: 'bad' });
+      await toolHandlers['reverie_set']({ key: 'constructor.prototype', value: 'bad' });
       expect(Object.constructor.prototype).not.toBe('bad');
     });
   });

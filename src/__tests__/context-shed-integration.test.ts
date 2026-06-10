@@ -48,7 +48,7 @@ const mockLoadConfig = loadConfig as Mock<typeof loadConfig>;
 // #117: JSON output now goes inside the envelope's `result` (emitted by the
 // instrumentation wrapper at runtime). In a direct unit call we enable JSON
 // mode, invoke showContext, and read the recorded result.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function contextJson(opts: Parameters<typeof showContext>[0] = {}): any {
   configureOutput({ json: true, command: 'context' });
   showContext(opts);

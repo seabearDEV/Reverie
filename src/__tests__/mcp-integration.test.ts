@@ -103,7 +103,7 @@ function callMcpTool(tool: string, params: Record<string, unknown> = {}, opts: {
         }
       } catch { /* skip */ }
     }
-    throw new Error(`MCP call failed: ${e.message}\nstdout: ${stdout}\nstderr: ${e.stderr?.toString() ?? ''}`);
+    throw new Error(`MCP call failed: ${e.message}\nstdout: ${stdout}\nstderr: ${e.stderr?.toString() ?? ''}`, { cause: err });
   }
 }
 

@@ -203,7 +203,7 @@ describe('storage layer — removeValue', () => {
 
 describe('storage layer — getEntriesFlat', () => {
   it('getEntriesFlat with auto scope merges project over global', () => {
-    const result = getEntriesFlat();
+    getEntriesFlat();
     // Uses loadEntriesMerged under the hood
     expect((loadEntriesMerged as Mock<typeof loadEntriesMerged>)).toHaveBeenCalled();
   });

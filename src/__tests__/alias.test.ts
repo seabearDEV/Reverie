@@ -3,7 +3,6 @@ import {
   removeAlias,
   renameAlias,
   loadAliases,
-  saveAliases,
   buildKeyToAliasMap,
   resolveKey,
 } from '../alias';
@@ -21,7 +20,7 @@ vi.mock('../store', () => {
   };
 });
 
-import { loadAliasMap, saveAliasMap, loadAliasMapMerged, clearStoreCaches } from '../store';
+import { loadAliasMap, saveAliasMap, loadAliasMapMerged } from '../store';
 
 describe('Alias Management', () => {
   const originalConsoleLog = console.log;

@@ -25,7 +25,7 @@ import {
   loadEntries, saveEntries, loadAliasMap, saveAliasMap,
   loadConfirmMap, saveConfirmMap, loadEntriesMerged,
   loadAliasMapMerged, loadConfirmMapMerged,
-  clearStoreCaches, loadMeta, touchMeta, removeMeta,
+  clearStoreCaches, loadMeta, touchMeta,
   saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta,
   loadMetaMerged, getStalenessTag, STALE_DAYS, STALE_MS,
   saveAll,

@@ -19,7 +19,7 @@ vi.mock('../store', () => {
   };
 });
 
-import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged, clearStoreCaches } from '../store';
+import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged } from '../store';
 
 describe('Confirm Metadata', () => {
   const originalConsoleLog = console.log;

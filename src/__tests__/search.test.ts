@@ -61,7 +61,7 @@ describe('searchEntries', () => {
   });
 
   it('finds entries matching a key pattern', () => {
-    const { dataCount, aliasCount } = searchEntries('server');
+    const { dataCount } = searchEntries('server');
     expect(dataCount).toBe(4); // all server.* entries
   });
 

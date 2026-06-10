@@ -1,4 +1,4 @@
-import { handleError, loadData, saveData, getErrorMessage, getValue, setValue, removeValue, getEntriesFlat, validateImportEntries, validateImportAliases, validateImportConfirm } from '../storage';
+import { handleError, loadData, saveData, getErrorMessage, getValue, setValue, removeValue, validateImportEntries, validateImportAliases, validateImportConfirm } from '../storage';
 
 vi.mock('../store', () => ({
   loadEntries: vi.fn(() => ({})),
@@ -25,7 +25,7 @@ vi.mock('../formatting', () => ({
   }
 }));
 
-import { loadEntries, saveEntries, loadEntriesMerged, clearStoreCaches, findProjectFile } from '../store';
+import { loadEntries, saveEntries, loadEntriesMerged, findProjectFile } from '../store';
 import { resolveScopeForWrite } from '../projectResolution';
 
 describe('Storage', () => {
