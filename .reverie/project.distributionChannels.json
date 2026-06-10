@@ -1,0 +1,7 @@
+{
+  "value": "DECIDED 2026-06-09: Reverie ships ONLY as (1) GitHub release binaries and (2) Homebrew (seabearDEV/homebrew-reverie). NEVER npm — do not publish @seabear/reverie to the registry, ever. release.yml already does NOT npm-publish (confirmed during v1.2.1); the scoped package name exists only to reserve bin 'rvr' / prevent squatting, not as an install path. CONSEQUENCES: (a) #50 'npx reverie: zero-install' is IMPOSSIBLE without npm — close as wontfix; (b) the npm-tertiary-channel framing in [[context.binaryName]] and elsewhere is obsolete — npm is a reservation, not a channel; (c) guard against accidental publish (package.json private:true or a prepublishOnly that exits 1). Rationale: binaries + Homebrew are the real human paths; npm adds a supply-chain surface (the fast-uri advisory arrived via an npm dep tree) for zero adoption benefit.",
+  "meta": {
+    "created": 1781057330176,
+    "updated": 1781057330176
+  }
+}

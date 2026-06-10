@@ -1,7 +1,7 @@
 {
-  "value": "Binary name `rvr` locked 2026-05-06; rejected alternatives recorded so future audits don't redo the work. REJECTED: `rev` (util-linux collision — blocks every Linux install), `re` (overloaded), `rv` (npm taken + active Homebrew Ruby version manager). `rvr` is Homebrew-clean; bare npm name taken by an abandoned FAA aviation tool, sidestepped via scoped @seabear/reverie with bin \"rvr\" (standard gh/pnpm pattern). Accepted tradeoff: `npx rvr` won't work, `npx @seabear/reverie` does — npm is the tertiary install path behind GitHub binaries + Homebrew. FALLBACK if rvr becomes contested: `revr`.",
+  "value": "Binary name `rvr` locked 2026-05-06; rejected alternatives recorded so future audits don't redo the work. REJECTED: `rev` (util-linux collision — blocks every Linux install), `re` (overloaded), `rv` (npm taken + active Homebrew Ruby version manager). `rvr` is Homebrew-clean; bare npm name taken by an abandoned FAA aviation tool, sidestepped via scoped @seabear/reverie with bin \"rvr\" (standard gh/pnpm pattern). FALLBACK if rvr becomes contested: `revr`.\n\nNPM IS NOT AN INSTALL CHANNEL (decided 2026-06-09, see [[project.distributionChannels]]): the scoped @seabear/reverie name is a SQUATTING RESERVATION only — never published. package.json has private:true to block accidental publish. Install paths are GitHub binaries + Homebrew, period. The earlier 'npm is the tertiary install path' / 'npx @seabear/reverie works' framing is OBSOLETE — npx is impossible without publishing (#50 closed wontfix).",
   "meta": {
     "created": 1778102202335,
-    "updated": 1781027857177
+    "updated": 1781057654350
   }
 }
