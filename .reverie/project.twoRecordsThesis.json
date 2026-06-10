@@ -1,0 +1,7 @@
+{
+  "value": "Reverie maintains TWO records: the store (what agents claim — curated, mutable) and the audit log (what agents did — append-only evidence). The generative move is RECONCILING them: every divergence is a bug, doc gap, or false belief — all valuable. Trust in agent memory can't come from the memory itself (self-asserted freshness is circular); only from checking claims against behavior, and Reverie owns both sides of that check — arguably the moat. Reframes #42/#45/#84/#130 + seedRoadmap L2-L3 (topology, tier promotion, meta.testedWith) as ONE program: reconciliation loops between store and log, not separate features. Born from the 2026-06-10 watcher experiment (LLM tailing audit.jsonl live; 2 concrete findings in 40min — see docs/investigation-watcher-experiment-2026-06-10.md and [[context.auditRecordProperties]]). Watcher pattern = analyst with a live feed, not alarm: it catches ABSENCES vs stated intent, which threshold scripts can't. Missing primitive for first-class watchers: a follow/watch mode that stays out of the record.",
+  "meta": {
+    "created": 1781109834279,
+    "updated": 1781109834279
+  }
+}

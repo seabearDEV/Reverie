@@ -1,0 +1,7 @@
+{
+  "value": "Three non-obvious properties of the audit/telemetry record (verified 2026-06-10, watcher experiment — docs/investigation-watcher-experiment-2026-06-10.md):\n(1) SKIP_AUDIT (instrumentation.ts:18) deliberately excludes reverie_stats/reverie_audit from BOTH surfaces' logging — undocumented; consequence: op:\"meta\" has NEVER fired (classifyOp's default is a dead fallback, only reachable by tools missing from its switch), and stats/audit usage is unverifiable from the record by design. Issue drafted, not yet filed.\n(2) remove ≠ erase: append-only log keeps full values twice (write.after + remove.before) — anything ever written to the store is immortal in audit.jsonl, including \"cleaned up\" secrets/payloads.\n(3) values are NOT sanitized in before/after/params — the log is a second, unguarded copy of every value ever stored (files.audit's sanitizeValue does not cover value capture).\nTo observe the log without polluting it: tail the raw JSONL by byte offset, never via rvr audit/reverie_audit.",
+  "meta": {
+    "created": 1781109823825,
+    "updated": 1781109823825
+  }
+}
