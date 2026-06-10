@@ -361,6 +361,22 @@ describe('Storage', () => {
         expect(() => validateImportConfirm(obj))
           .toThrow(/invalid confirm keys.*__proto__/);
       });
+
+      // Security regression (2026-06-09 audit): the confirm sidecar is the
+      // run-confirmation tripwire and hasConfirm() checks `=== true`. A
+      // crafted import with a falsy value for a gated key would merge over
+      // the user's `true` and silently disarm the gate — values must be the
+      // literal boolean true.
+      it('rejects non-true confirm values (tripwire-disarm via crafted import)', () => {
+        expect(() => validateImportConfirm({ 'commands.deploy': false }))
+          .toThrow(/literal true.*commands\.deploy/);
+        expect(() => validateImportConfirm({ 'commands.deploy': 'true' }))
+          .toThrow(/literal true/);
+        expect(() => validateImportConfirm({ 'commands.deploy': 0 }))
+          .toThrow(/literal true/);
+        expect(() => validateImportConfirm({ 'commands.deploy': true, 'commands.release': null }))
+          .toThrow(/literal true.*commands\.release/);
+      });
     });
   });
 

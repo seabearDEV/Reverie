@@ -290,7 +290,12 @@ export function validateImportAliases(obj: Record<string, unknown>): void {
 }
 
 /**
- * Validate a confirm-map import. Each key must be a valid entry key.
+ * Validate a confirm-map import. Each key must be a valid entry key, and each
+ * value must be the literal boolean `true` — the confirm sidecar is the
+ * run-confirmation tripwire, and hasConfirm() checks `=== true`, so a crafted
+ * import carrying a falsy value (false, 0, "true") for an existing gated key
+ * would merge over the user's `true` and silently disarm the gate. Legitimate
+ * exports only ever emit `true`.
  * Uses getOwnPropertyNames so __proto__ as an own property is enumerated.
  */
 export function validateImportConfirm(obj: Record<string, unknown>): void {
@@ -298,5 +303,10 @@ export function validateImportConfirm(obj: Record<string, unknown>): void {
   if (invalid.length > 0) {
     const list = invalid.map(k => JSON.stringify(k)).join(', ');
     throw new Error(`Import contains invalid confirm keys: ${list}`);
+  }
+  const invalidValues = Object.getOwnPropertyNames(obj).filter(k => obj[k] !== true);
+  if (invalidValues.length > 0) {
+    const list = invalidValues.map(k => JSON.stringify(k)).join(', ');
+    throw new Error(`Import confirm values must be the literal true; offending keys: ${list}`);
   }
 }
