@@ -6,8 +6,14 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { readDirectoryStore } from './helpers/readStoreState';
+import { assertDistHonorsDataDir } from './helpers/spawnGuard';
 
 let tmpDir: string;
+let dataDir: string;
+
+beforeAll(() => {
+  assertDistHonorsDataDir();
+});
 
 // v1.10.0: `rvr init` creates a `.reverie/` directory, not a `.codexcli.json`
 // file. These helpers read the new layout and reconstitute the legacy shape.
@@ -24,12 +30,17 @@ const tokenizeCliArgs = (args: string): string[] =>
 const run = (args: string, cwd?: string) => {
   return execFileSync('bun', [cliPath, ...tokenizeCliArgs(args)], {
     cwd: cwd ?? tmpDir,
+    // Bun's execFileSync does not pass runtime process.env mutations (like
+    // _setup.ts's RVR_DATA_DIR) to the child when `env` is omitted — without
+    // an explicit env, telemetry/audit rows land in the real ~/.reverie (#130).
+    env: { ...process.env, RVR_DATA_DIR: dataDir },
     timeout: 10000,
   }).toString();
 };
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-init-'));
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-init-data-'));
   // Seed a minimal package.json so scaffold has something to detect
   fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
     name: 'init-test',
@@ -47,6 +58,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
 describe('rvr init — full flow', () => {
