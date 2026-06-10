@@ -1719,20 +1719,24 @@ describe('Commands', () => {
   });
 
   describe('exec interpolation $(key) integration', () => {
-    it('get with $(key) executes and substitutes', async () => {
+    // SECURITY REGRESSION (read = RCE, fixed): `get` must NOT execute $(key)
+    // exec refs. A hostile .reverie/ store in a cloned repo could otherwise
+    // run arbitrary commands the instant an agent read an entry. Reading now
+    // leaves $(key) literal; only `run` (below) executes.
+    it('get with $(key) does NOT execute — leaves it literal', async () => {
       storeState.entries = {
         system: { user: 'whoami' },
         paths: { home: '/Users/$(system.user)' },
       };
-      (execSync as Mock).mockReturnValueOnce('kh\n');
 
       await getEntry('paths.home', {});
 
+      expect(execSync).not.toHaveBeenCalled();
       const logCalls = (console.log as Mock).mock.calls;
-      const showedResolved = logCalls.some(call =>
-        call.some((arg: unknown) => typeof arg === 'string' && arg.includes('/Users/kh'))
+      const showedLiteral = logCalls.some(call =>
+        call.some((arg: unknown) => typeof arg === 'string' && arg.includes('/Users/$(system.user)'))
       );
-      expect(showedResolved).toBe(true);
+      expect(showedLiteral).toBe(true);
     });
 
     it('run with $(key) interpolates exec before running', async () => {

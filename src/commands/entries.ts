@@ -18,7 +18,7 @@ import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
-import { interpolate, interpolateObject } from '../utils/interpolate';
+import { interpolate, interpolateExec, interpolateObject } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
 import { isJsonMode, setResult, failJson } from '../utils/output';
 
@@ -63,12 +63,19 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     }
 
     const commands: string[] = [];
+    // SECURITY: raw (pre-interpolation) segments are retained so the actual
+    // execution can resolve `$(key)` exec refs separately from the safe display
+    // value. `commands` (below) is built with the non-exec interpolation pass
+    // and drives all preview/dry/confirm output; exec refs only run at the
+    // execution moment via interpolateExec(rawValue).
+    const rawCommands: string[] = [];
     const resolvedKeys: string[] = [];
 
     for (const keyGroup of keys) {
       // Split on : for composition (e.g. "cd:reverie" → "cd /path")
       const segments = keyGroup.replace(/:$/, '').split(':');
       const resolvedSegments: string[] = [];
+      const rawSegments: string[] = [];
 
       for (const segment of segments) {
         const resolvedKey = resolveKey(segment, scope);
@@ -109,6 +116,9 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
           }
         }
 
+        // Retain the raw value for exec-time resolution; the displayed/preview
+        // value uses the SAFE (non-exec) interpolation pass.
+        rawSegments.push(value);
         try {
           value = interpolate(value);
         } catch (err) {
@@ -121,9 +131,25 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       }
 
       commands.push(resolvedSegments.join(' '));
+      rawCommands.push(rawSegments.join(' '));
     }
 
     const value = commands.join(' && ');
+    const rawValue = rawCommands.join(' && ');
+
+    // SECURITY: produce the real shell command ONLY when actually executing —
+    // this is the single place `$(key)` exec refs run. Callers invoke it past
+    // the dry/confirm gate; on interpolation error it reports and returns
+    // undefined so the caller aborts without executing.
+    const buildExecCommand = (): string | undefined => {
+      try {
+        return interpolateExec(rawValue);
+      } catch (err) {
+        printError(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+        return undefined;
+      }
+    };
 
     // JSON mode (#117 WS1): produce a structured result instead of streaming
     // the child's stdio. --source (the shell-eval wrapper path) is exempt — it
@@ -142,7 +168,9 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
         failJson('REQUIRES_CONFIRMATION', `Entry requires confirmation. Re-run with --yes to execute.`, value);
         return;
       }
-      const proc = spawnSync(value, { encoding: 'utf-8', shell: process.env.SHELL ?? '/bin/sh' });
+      const execValue = buildExecCommand();
+      if (execValue === undefined) return;
+      const proc = spawnSync(execValue, { encoding: 'utf-8', shell: process.env.SHELL ?? '/bin/sh' });
       // A spawn failure (bad $SHELL, ENOENT, EACCES) leaves status AND signal
       // null. Without this guard exitCode would resolve to 0 and the command
       // would report ok:true having run nothing.
@@ -185,11 +213,18 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       }
     }
 
+    // Past the dry/confirm gate — now resolve `$(key)` exec refs for real.
+    // --source emits the resolved command for the parent shell to eval, so it
+    // too must use Reverie-resolved exec refs (not leave `$(key)` for the shell
+    // to reinterpret as its own command substitution).
+    const execValue = buildExecCommand();
+    if (execValue === undefined) return;
+
     if (options.source) {
-      process.stdout.write(value + '\n');
+      process.stdout.write(execValue + '\n');
     } else if (options.capture) {
       try {
-        const stdout = execSync(value, { encoding: 'utf-8', shell: process.env.SHELL ?? '/bin/sh' });
+        const stdout = execSync(execValue, { encoding: 'utf-8', shell: process.env.SHELL ?? '/bin/sh' });
         process.stdout.write(stdout);
       } catch (err: unknown) {
         process.exitCode = (err && typeof err === 'object' && 'status' in err ? Number(err.status) : 1) || 1;
@@ -199,7 +234,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       }
     } else {
       try {
-        execSync(value, { stdio: 'inherit', shell: process.env.SHELL ?? '/bin/sh' });
+        execSync(execValue, { stdio: 'inherit', shell: process.env.SHELL ?? '/bin/sh' });
       } catch (err: unknown) {
         process.exitCode = (err && typeof err === 'object' && 'status' in err ? Number(err.status) : 1) || 1;
       }

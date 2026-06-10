@@ -40,7 +40,7 @@ import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
-import { interpolate, interpolateObject, StrictInterpolationError } from "./utils/interpolate";
+import { interpolate, interpolateExec, interpolateObject, StrictInterpolationError } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace } from "./utils/telemetry";
 import { logAudit, queryAuditLog, sanitizeValue, sanitizeParams, getAuditPath } from "./utils/audit";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
@@ -947,40 +947,52 @@ server.tool(
         return errorResponse(`Value at '${key}' is empty and cannot be used with chain mode.`);
       }
       const chainKeys = trimmedValue.split(/\s+/).filter(Boolean);
-      const commands: string[] = [];
+      // First pass: validate every chain key and collect raw values. No
+      // interpolation yet — SECURITY: building the preview must not execute
+      // `$(key)` exec refs, so we keep the raw values and run the safe pass
+      // (display) and exec pass (interpolateExec) separately below.
+      const rawValues: string[] = [];
+      let anyNeedsConfirm = false;
       for (const ck of chainKeys) {
         const rk = resolveKey(ck, scope);
         const cv = getValue(rk, scope);
         if (cv === undefined) return errorResponse(`Chain key '${ck}' not found.`);
         if (typeof cv !== 'string') return errorResponse(`Chain key '${ck}' is not a string command.`);
         if (isEncrypted(cv)) return errorResponse(`Chain key '${ck}' is encrypted.`);
-        if (hasConfirm(rk) && !force && !dry) {
-          // Two-step confirmation: if token provided, validate; otherwise issue one
-          if (confirm_token) {
-            const validated = consumeConfirmToken(confirm_token, key);
-            if (!validated) return errorResponse(`Invalid or expired confirm_token for '${key}'.`);
-          } else {
-            // Build the full chain command for the confirmation prompt
-            const previewCmds = [...commands];
-            try { previewCmds.push(interpolate(cv)); } catch { previewCmds.push(cv); }
-            for (let j = chainKeys.indexOf(ck) + 1; j < chainKeys.length; j++) {
-              const pk = resolveKey(chainKeys[j], scope);
-              const pv = getValue(pk, scope);
-              if (pv && typeof pv === 'string') try { previewCmds.push(interpolate(pv)); } catch { previewCmds.push(pv); }
-            }
-            const fullCmd = previewCmds.join(' && ');
-            const token = createConfirmToken(key, fullCmd);
-            return textResponse(`⚠ This command requires confirmation before execution:\n$ ${fullCmd}\n\nTo execute, call reverie_run again with confirm_token: "${token}"`);
-          }
-        }
-        try { commands.push(interpolate(cv)); } catch (err) {
-          return errorResponse(`Interpolation error in '${ck}': ${err instanceof Error ? err.message : String(err)}`);
+        if (hasConfirm(rk)) anyNeedsConfirm = true;
+        rawValues.push(cv);
+      }
+
+      // Safe (non-exec) display command for dry output and the confirm prompt.
+      let command: string;
+      try {
+        command = rawValues.map((cv) => interpolate(cv)).join(' && ');
+      } catch (err) {
+        return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      if (dry) return textResponse(`$ ${command}`);
+
+      // Confirm if ANY key on the chain is confirm-flagged.
+      if (anyNeedsConfirm && !force) {
+        if (confirm_token) {
+          const validated = consumeConfirmToken(confirm_token, key);
+          if (!validated) return errorResponse(`Invalid or expired confirm_token for '${key}'.`);
+        } else {
+          const token = createConfirmToken(key, command);
+          return textResponse(`⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call reverie_run again with confirm_token: "${token}"`);
         }
       }
-      const command = commands.join(' && ');
-      if (dry) return textResponse(`$ ${command}`);
+
+      // Past the gates — resolve exec refs for real.
+      let execCommand: string;
       try {
-        const stdout = execSync(command, { encoding: "utf-8", shell: process.env.SHELL ?? "/bin/sh", timeout: 30000 });
+        execCommand = rawValues.map((cv) => interpolateExec(cv)).join(' && ');
+      } catch (err) {
+        return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      try {
+        const stdout = execSync(execCommand, { encoding: "utf-8", shell: process.env.SHELL ?? "/bin/sh", timeout: 30000 });
         return textResponse(`$ ${command}\n${stdout}`);
       } catch (err: unknown) {
         if (err && typeof err === "object" && "status" in err) {
@@ -995,6 +1007,9 @@ server.tool(
       return errorResponse(`Value at '${key}' is encrypted. Decryption is not supported via MCP.`);
     }
 
+    // SECURITY: safe (non-exec) interpolation for the preview/dry/confirm
+    // surface — `$(key)` exec refs are NOT run here. They execute only at the
+    // execSync below, past the dry and confirm gates, via interpolateExec.
     let command = value;
     try {
       command = interpolate(value);
@@ -1022,8 +1037,16 @@ server.tool(
       }
     }
 
+    // Past the gates — resolve exec refs for real.
+    let execCommand: string;
     try {
-      const stdout = execSync(command, {
+      execCommand = interpolateExec(value);
+    } catch (err) {
+      return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    try {
+      const stdout = execSync(execCommand, {
         encoding: "utf-8",
         shell: process.env.SHELL ?? "/bin/sh",
         timeout: 30000,

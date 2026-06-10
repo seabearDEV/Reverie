@@ -70,7 +70,7 @@ function parseRef(ref: string): { key: string; modifier?: ':-' | ':?'; modValue?
  *   `${key:-default}` — use default if key is not found
  *   `${key:?error}`   — throw custom error if key is not found
  */
-function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>): string {
+function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>, allowExec: boolean): string {
   const { key: rawKey, modifier, modValue } = parseRef(ref);
   const resolvedKey = resolveKey(rawKey.trim());
 
@@ -86,7 +86,7 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
   if (resolved === undefined) {
     if (modifier === ':-') {
       // Default value — interpolate it in case it contains ${} references
-      return interpolate(modValue ?? '', maxDepth, seen, execCache);
+      return interpolate(modValue ?? '', maxDepth, seen, execCache, allowExec);
     }
     if (modifier === ':?') {
       // Strict: the user opted in to fail-loud by writing `:?`. If we
@@ -111,12 +111,16 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
 
   const nextSeen = new Set(seen);
   nextSeen.add(resolvedKey);
-  return interpolate(resolved, maxDepth - 1, nextSeen, execCache);
+  return interpolate(resolved, maxDepth - 1, nextSeen, execCache, allowExec);
 }
 
 /**
  * Resolve a `$(key)` exec reference: look up stored command, interpolate it,
  * execute via shell, and return trimmed stdout. Results are cached per pass.
+ *
+ * Only ever called when `allowExec` is true (the explicit `run`-execution
+ * path). Read/display/dry/preview passes leave `$(key)` literal instead — see
+ * the SECURITY note on `interpolate()`.
  */
 function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>): string {
   const resolvedKey = resolveKey(ref.trim());
@@ -149,10 +153,11 @@ function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCa
     throw new Error(`Interpolation depth limit exceeded`);
   }
 
-  // Interpolate the command itself first (so stored commands can use ${} or $())
+  // Interpolate the command itself first (so stored commands can use ${} or $()).
+  // We are already on the exec path, so nested refs resolve in exec mode too.
   const nextSeen = new Set(seen);
   nextSeen.add(resolvedKey);
-  const command = interpolate(resolved, maxDepth - 1, nextSeen, execCache);
+  const command = interpolate(resolved, maxDepth - 1, nextSeen, execCache, true);
 
   // Execute
   const shell = process.env.SHELL ?? '/bin/sh';
@@ -172,7 +177,18 @@ function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCa
  * Interpolate `${key_or_alias}` and `$(key_or_alias)` references within a string value.
  *
  * - `${key}` resolves to the stored value of a key (recursive).
- * - `$(key)` executes the stored command and substitutes its stdout.
+ * - `$(key)` executes the stored command and substitutes its stdout — ONLY when
+ *   `allowExec` is true.
+ *
+ * SECURITY (read = RCE, fixed): executing `$(key)` is a side effect of
+ * substitution, and substitution happens on read/list/json/lint/dry/preview
+ * paths — not just `run`. A hostile `.reverie/` store shipped in a cloned repo
+ * could therefore achieve code execution the moment an agent merely *read* an
+ * entry (`rvr get`, `reverie_get`, `--values`), or during a "safe" `--dry`
+ * preview. To close this, exec resolution is OPT-IN: `allowExec` defaults to
+ * false (the safe path leaves `$(key)` literal), and only the actual
+ * `run`-execution moment — past the confirm gate, with `dry` false — passes
+ * true. Any new call site that forgets the flag is safe by default.
  *
  * References are resolved at read time via the data store and alias map.
  * Supports recursive resolution with circular reference detection.
@@ -182,6 +198,7 @@ export function interpolate(
   maxDepth: number = MAX_DEPTH,
   seen = new Set<string>(),
   execCache = new Map<string, string>(),
+  allowExec = false,
 ): string {
   // Early return if no interpolation markers present
   if (!value.includes('${') && !value.includes('$(')) return value;
@@ -222,7 +239,7 @@ export function interpolate(
         }
         if (depth === 0) {
           const ref = result.slice(i + 2, j);
-          out += ref === '' ? '${}' : resolveRef(ref, maxDepth, seen, execCache);
+          out += ref === '' ? '${}' : resolveRef(ref, maxDepth, seen, execCache, allowExec);
           i = j + 1;
         } else {
           // Unclosed brace — leave as-is
@@ -257,8 +274,15 @@ export function interpolate(
       if (result[i] === '$' && result[i + 1] === '(') {
         const close = result.indexOf(')', i + 2);
         if (close !== -1) {
-          const ref = result.slice(i + 2, close);
-          out += resolveExecRef(ref, maxDepth, seen, execCache);
+          if (allowExec) {
+            const ref = result.slice(i + 2, close);
+            out += resolveExecRef(ref, maxDepth, seen, execCache);
+          } else {
+            // SECURITY: safe (non-exec) pass — leave `$(key)` literal rather
+            // than executing the referenced stored command. Reads, --dry, and
+            // confirm previews take this branch.
+            out += result.slice(i, close + 1);
+          }
           i = close + 1;
         } else {
           out += result[i];
@@ -276,9 +300,22 @@ export function interpolate(
 }
 
 /**
+ * Exec-enabled interpolation: resolve `${key}` value refs AND execute `$(key)`
+ * exec refs. This is the ONLY entry point that runs stored commands — reserve
+ * it for the explicit `run`-execution moment, past the confirm gate and with
+ * `dry` false. Everything else must use `interpolate()` (safe default).
+ */
+export function interpolateExec(value: string): string {
+  return interpolate(value, MAX_DEPTH, new Set<string>(), new Map<string, string>(), true);
+}
+
+/**
  * Interpolate all leaf string values in a nested object (subtree).
  * Returns a new object with interpolated values.
  * Shares a single execCache across all leaves so exec results are cached.
+ *
+ * SECURITY: safe by default — leaves `$(key)` literal (no execution). Used by
+ * read/display paths (`get --values`, MCP subtree); they must never execute.
  */
 export function interpolateObject(obj: Record<string, CodexValue>): Record<string, CodexValue> {
   const flat = flattenObject(obj);
