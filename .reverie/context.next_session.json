@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — SECURITY: found+fixed v1.2.0 read=RCE (dollar-paren exec ran on read/dry/preview; hostile cloned .reverie/ → RCE on mere read). See [[context.execOnReadRCE]] + [[arch.interpolation]]. STATE: branch fix/interpolation-exec-rce = 4 commits (exec opt-in; non-TTY confirm fail-closed; store writeback; v1.2.1 release-prep) ahead of main; main==origin. Suite green 1468/0, e2e-verified, binary reports 1.2.1. v1.2.1 release-prep DONE: CHANGELOG, version bump, SECURITY.md (1.1.x→1.2.x), draft GHSA at docs/security/advisory-exec-on-read-rce.md. #115 BLOCKED (label+comment). PICK UP (needs go-ahead, all outward-facing): (1) merge branch → main, (2) push + tag v1.2.1 (release workflow auto-propagates Homebrew/npm), (3) create+publish the GHSA from the draft. Still open: #131 security automation, #132 perf CI. Audit's other 3 surfaces came back clean.",
+  "value": "2026-06-09 — v1.2.1 SHIPPED + VERIFIED: exec-on-read RCE fixed (read/dry/preview no longer execute $(key); see [[context.execOnReadRCE]] + [[arch.interpolation]]). Release published not draft, 4 binaries, Homebrew at 1.2.1; SHIPPED macos-universal binary passed the exploit smoke test (get/dry safe, run executes). Tag incident during release: a stale local v1.2.1 tag pushed the wrong commit, fired CI on it, caught+recovered before any publish — see [[context.releaseTagStaleLocal]]. ONLY REMAINING for this arc: publish the GHSA advisory (draft text at docs/security/advisory-exec-on-read-rce.md) via github.com/seabearDEV/reverie/security/advisories/new — no gh subcommand, manual click-through; CVSS 7.8 estimate, adjust on form. #115 BLOCKED on import-integrity design. Still open: #131 security automation, #132 perf CI. Audit's other 3 surfaces clean. npm not auto-published by release.yml (tertiary channel, manual).",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781056615866
+    "updated": 1781057145347
   }
 }

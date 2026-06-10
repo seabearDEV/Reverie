@@ -1,0 +1,7 @@
+{
+  "value": "Release-tag hazard hit 2026-06-09 during v1.2.1: a STALE LOCAL tag v1.2.1 already existed (pointing at 097fa2d 'Lint cleanup, security hardening' from an earlier release attempt on feat/cli-agent-parity-117). `git tag v1.2.1` errored 'already exists' but the separately-run `git push origin v1.2.1` happily pushed the STALE commit — firing release.yml on a build WITHOUT the security fix. Caught by verifying the pushed tag's SHA against main HEAD (they mismatched) and grepping the tagged interpolate.ts for the fix marker (allowExec=0). RECOVERY: `gh run cancel <id>` (caught before Create Release/Update Homebrew/npm — all jobs cancelled, zero published artifacts), then `git push origin :refs/tags/v1.2.1`, `git tag -d v1.2.1`, `git tag v1.2.1 main`, re-push. LESSON: 'tag already exists' is a STOP signal, not a warning — never push a release tag without confirming `git rev-parse v$VERSION` == intended commit AND the artifact contains the fix. The release commands.release helper assumes a fresh tag; pre-existing tags from abandoned branches can linger locally. After any release tag push, verify gh run headSha matches before letting it publish.",
+  "meta": {
+    "created": 1781057145309,
+    "updated": 1781057145309
+  }
+}
