@@ -1,0 +1,7 @@
+{
+  "value": "The v1.2.1 exec-on-read RCE was published 2026-06-10 as GHSA-hf25-j9h5-5vq5 (CVSS 7.8 High, CWE-78/94). Source record: docs/security/advisory-exec-on-read-rce.md.\n\nSCOPING DECISION (reusable for future Reverie advisories): published as a GENERAL advisory — ecosystem \"other\", name \"reverie\", NOT an npm package advisory. Reason: @seabear/reverie is never published to npm (squatting reservation only, see project.distributionChannels), so an npm-ecosystem GHSA would point Dependabot at a package nobody can depend on and falsely imply it shipped/was-patched on npm. Real channels are GitHub binaries + Homebrew, which GHSA ecosystems don't cover — \"other\" is the honest representation.\n\nAPI GOTCHAS creating via `gh api --method POST repos/OWNER/REPO/security-advisories`: (1) `vulnerabilities` array is REQUIRED — each needs package.{ecosystem,name}; use ecosystem \"other\" for a general advisory. (2) Cannot pass both `severity` and `cvss_vector_string` — pass only the vector, GitHub derives severity+score. (3) Created in `state:\"draft\"`; publish with a second PATCH `-f state=published`.",
+  "meta": {
+    "created": 1781064447591,
+    "updated": 1781064447591
+  }
+}

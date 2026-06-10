@@ -1,7 +1,7 @@
 {
-  "value": "2026-06-09 — v1.2.2 SHIPPED + Leg-C-verified (quality/perf pass, 10 commits incl. 1 security fix). Pre-release Leg B audit found+fixed ONE medium: import confirm-value tripwire disarm (validateImportConfirm now rejects non-true). runGated restructure re-attacked, v1.2.1 exec invariants hold. NOW SOAKING: clock pegged to v1.2.0 (patches don't reset, see project.soakPolicy CLOCK PEG); day-7 checkpoint 2026-06-16, hard cap 2026-06-23 — eval reverie_stats period:7d detailed:true vs EXIT GATE. PICK UP at checkpoint: gate met → theme-pick for v1.3.0 Trust. Backlog (file issues): tier-3 refactors (import pipeline+#133, rename/copy core, paths dedup, registerTool, load() memo); GHSA advisory publish; #131 #132. All pushed.",
+  "value": "2026-06-09 — v1.2.2 SHIPPED + Leg-C-verified (quality/perf pass, 10 commits incl. 1 security fix). Pre-release Leg B audit found+fixed ONE medium (import confirm-value tripwire disarm). GHSA-hf25-j9h5-5vq5 PUBLISHED for the v1.2.1 RCE (general advisory, see [[context.ghsaExecOnRead]]). NOW SOAKING: clock pegged to v1.2.0 (patches don't reset, see project.soakPolicy CLOCK PEG); day-7 checkpoint 2026-06-16, hard cap 2026-06-23 — eval reverie_stats period:7d detailed:true vs EXIT GATE. PICK UP at checkpoint: gate met → theme-pick for v1.3.0 Trust. Backlog (file issues): tier-3 refactors (import pipeline+#133, rename/copy core, paths dedup, registerTool, load() memo); #131 #132 (only security items left). All pushed.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1781064204793
+    "updated": 1781064467768
   }
 }

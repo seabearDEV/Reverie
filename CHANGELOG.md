@@ -38,7 +38,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
-- **`$(key)` exec refs are no longer executed on any read/display/dry/preview path** (GHSA pending). `interpolate()` now defaults to **not** executing exec refs (leaves `$(key)` literal); only the real `run` execution moment — past the dry and confirm gates — resolves them via the new `interpolateExec()`. Affected surfaces, all now safe: CLI `rvr get`/`get --values`/`get --json`, `rvr lint`, `rvr run --dry`; MCP `reverie_get` (leaf and `values:true` subtree) and `reverie_run` with `dry:true` or pending confirmation. The `--confirm` tripwire previously checked only the top-level key and never the keys reached through interpolation; preview/dry now build from a non-executing pass. Regression tests encode the exploit on both CLI and MCP surfaces.
+- **`$(key)` exec refs are no longer executed on any read/display/dry/preview path** ([GHSA-hf25-j9h5-5vq5](https://github.com/seabearDEV/reverie/security/advisories/GHSA-hf25-j9h5-5vq5)). `interpolate()` now defaults to **not** executing exec refs (leaves `$(key)` literal); only the real `run` execution moment — past the dry and confirm gates — resolves them via the new `interpolateExec()`. Affected surfaces, all now safe: CLI `rvr get`/`get --values`/`get --json`, `rvr lint`, `rvr run --dry`; MCP `reverie_get` (leaf and `values:true` subtree) and `reverie_run` with `dry:true` or pending confirmation. The `--confirm` tripwire previously checked only the top-level key and never the keys reached through interpolation; preview/dry now build from a non-executing pass. Regression tests encode the exploit on both CLI and MCP surfaces.
 
 ### Changed
 

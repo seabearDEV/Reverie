@@ -1,18 +1,19 @@
-# Draft GitHub Security Advisory — paste into the GHSA "New draft advisory" form
+# GitHub Security Advisory — source record (PUBLISHED)
 
-> This file is the source text for a GitHub Security Advisory. It is NOT the
-> published advisory. Create the advisory at:
-> https://github.com/seabearDEV/reverie/security/advisories/new
-> then delete or keep this file as the internal record. Disclosure decision
-> (publish vs. embargo) per `project.patchPolicy`; for a sole-user project we
-> publish alongside the v1.2.1 release with no embargo.
+> PUBLISHED 2026-06-10 as **GHSA-hf25-j9h5-5vq5**:
+> https://github.com/seabearDEV/reverie/security/advisories/GHSA-hf25-j9h5-5vq5
+> This file is the internal source record; the advisory above is canonical.
+> Scoped as a GENERAL advisory (ecosystem `other`, name `reverie`) — NOT an npm
+> package advisory, because `@seabear/reverie` is never published to the
+> registry (`project.distributionChannels`); the real channels are GitHub
+> binaries + Homebrew. Disclosure per `project.patchPolicy`: sole-user project,
+> published with no embargo.
 
 ---
 
 **Title:** `$(key)` exec interpolation executes stored commands on read — arbitrary command execution from a hostile `.reverie/` store
 
-**Ecosystem:** npm
-**Package:** `@seabear/reverie`
+**Ecosystem:** other (general advisory — not npm; package never published)
 **Affected versions:** `<= 1.2.0`
 **Patched versions:** `1.2.1`
 
