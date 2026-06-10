@@ -1,0 +1,7 @@
+{
+  "value": "Patch/security release policy, set 2026-06-09 (with #131/#132). SCANNING IS SCHEDULED, PATCHING IS EVENT-DRIVEN — no calendar patch releases; empty cadence ships nothing or batches what shouldn't wait.\n\nDETECTION LAYER (all automated, v1.3.0): Dependabot alerts + weekly bun-audit cron (deps), CodeQL weekly (own code), thin perf regression cron (#132). Baseline security review: #131; prior incidents: fast-uri transitive (#113, see [[context.bunTransitiveDedup]]), prototype-pollution freeze (d773c4d, see [[context.mcpServerFreezeDiagnosis]]).\n\nRESPONSE: critical/high security → out-of-band x.y.Z patch immediately (release workflow auto-propagates to Homebrew/npm, so patches are cheap); moderate/low + perf findings → fold into next themed minor. Patch releases do NOT reset the soak clock (no agent-facing behavior change) — only feature ships do.\n\nSTANDING GATE: any feature that imports third-party content into the store (packs #115, future import surfaces) gets a dedicated security review before ship — entries are agent-trusted instructions; imported entries are prompt injection with a persistence layer.",
+  "meta": {
+    "created": 1781054050871,
+    "updated": 1781054050871
+  }
+}
