@@ -6,6 +6,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { assertDistHonorsDataDir } from './helpers/spawnGuard';
 
 describe('CLI JSON envelope (#117)', () => {
   const testDir = path.join(os.tmpdir(), 'reverie-json-' + Math.random().toString(36).slice(2));
@@ -35,7 +36,10 @@ describe('CLI JSON envelope (#117)', () => {
 
   const parse = (s: string) => JSON.parse(s);
 
-  beforeAll(() => { fs.mkdirSync(testDir, { recursive: true }); });
+  beforeAll(() => {
+    assertDistHonorsDataDir();
+    fs.mkdirSync(testDir, { recursive: true });
+  });
   afterAll(() => { fs.rmSync(testDir, { recursive: true, force: true }); });
 
   it('wraps a successful read in the versioned envelope', () => {

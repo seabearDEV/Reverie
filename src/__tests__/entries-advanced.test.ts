@@ -9,8 +9,13 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { readStoreState } from './helpers/readStoreState';
+import { assertDistHonorsDataDir } from './helpers/spawnGuard';
 
 let tmpDir: string;
+
+beforeAll(() => {
+  assertDistHonorsDataDir();
+});
 
 const run = (args: string) => {
   // After #99, auto-mode writes refuse when project resolution fails. These

@@ -2,6 +2,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { assertDistHonorsDataDir } from './helpers/spawnGuard';
 
 describe('CLI Integration Tests — Advanced', () => {
   const testDir = path.join(os.tmpdir(), 'reverie-integ-' + Math.random().toString(36).substring(2));
@@ -20,6 +21,7 @@ describe('CLI Integration Tests — Advanced', () => {
   };
 
   beforeAll(() => {
+    assertDistHonorsDataDir();
     fs.mkdirSync(testDir, { recursive: true });
   });
 
