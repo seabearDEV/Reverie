@@ -8,6 +8,11 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # typescript-eslint's peer range caps at TS <6.1 — no released version
+      # supports TS 7. Revisit when typescript-eslint ships TS-7 support.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
