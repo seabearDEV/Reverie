@@ -21,6 +21,7 @@ Never hand-edit `.reverie/*.json` directly — that bypasses audit logging, alia
 ## Before exploring code
 
 Check the store before globbing/grepping or reading code — `rvr get <key>`:
+
 - `files.<name>` before searching for a source file.
 - `arch.<area>` before reading code to understand a subsystem.
 - `conventions.<topic>` before making style/pattern decisions.
