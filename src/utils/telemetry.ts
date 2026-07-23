@@ -4,6 +4,7 @@ import { getSessionId } from './session';
 import { createJsonlLog } from './jsonl';
 import { isTestRun } from './testTraffic';
 import { getProjectId } from './projectId';
+import { resolveAgentIdentity } from './agentIdentity';
 
 export interface TelemetryEntry {
   ts: number;
@@ -23,6 +24,9 @@ export interface TelemetryEntry {
   redundant?: boolean | undefined;
   responseSize?: number | undefined;
   agent?: string | undefined;
+  /** True when agent came from env fingerprinting rather than an explicit
+   *  RVR_AGENT_NAME (#138) — a confidence signal, not an identity change. */
+  agentDetected?: boolean | undefined;
   /** Whether the operation succeeded. Optional for backward compat with
    *  pre-v1.11.x telemetry that didn't carry this field. */
   success?: boolean | undefined;
@@ -75,6 +79,8 @@ export interface MissPath {
   resolution: 'writeback' | 'moved_on' | 'timeout';
   resolvedAt: number;
   agent?: string | undefined;
+  /** Agent came from env fingerprinting, not explicit RVR_AGENT_NAME (#138). */
+  agentDetected?: boolean | undefined;
 }
 
 export function getMissPathsPath(): string {
@@ -103,6 +109,7 @@ export interface OpenMissWindow {
   toolCalls: number;
   explorationBytes: number;
   agent?: string | undefined;
+  agentDetected?: boolean | undefined;
 }
 
 const MISS_WINDOW_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -125,6 +132,7 @@ export class MissWindowTracker {
     hit: boolean | undefined;
     responseSize: number;
     agent?: string | undefined;
+    agentDetected?: boolean | undefined;
   }): MissPath[] {
     const now = Date.now();
     const closed: MissPath[] = [];
@@ -173,6 +181,7 @@ export class MissWindowTracker {
           toolCalls: 0,
           explorationBytes: 0,
           agent: params.agent,
+          agentDetected: params.agentDetected,
         });
       }
     }
@@ -223,6 +232,7 @@ export class MissWindowTracker {
       resolution,
       resolvedAt: now,
       agent: w.agent,
+      ...(w.agentDetected && { agentDetected: true }),
     };
   }
 }
@@ -351,6 +361,7 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
       project = pf ? path.dirname(pf) : undefined;
     } catch { /* best-effort */ }
   }
+  const identity = resolveAgentIdentity();
   const entry: TelemetryEntry = {
     ts: Date.now(),
     tool,
@@ -359,7 +370,8 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     ns: extractNamespace(key),
     src: source,
     scope,
-    agent: process.env.RVR_AGENT_NAME ?? undefined,
+    agent: identity.agent,
+    ...(identity.agentDetected && { agentDetected: true }),
     ...(isTestRun() && { test: true }),
     ...extras,
     project,

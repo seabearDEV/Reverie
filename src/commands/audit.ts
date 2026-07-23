@@ -3,7 +3,7 @@ import path from 'path';
 import { queryAuditLog, tailAuditLog, getAuditPath, AuditEntry } from '../utils/audit';
 import { parsePeriodDays } from '../utils';
 import { color } from '../formatting';
-import { isJsonMode, setResult } from '../utils/output';
+import { isJsonMode, setResult, emitEnvelope } from '../utils/output';
 
 export interface AuditCommandOptions {
   period?: string;
@@ -20,6 +20,7 @@ export interface AuditCommandOptions {
   follow?: boolean;
   includeTest?: boolean;
   includeSelfRef?: boolean;
+  excludeSession?: string;
 }
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -140,6 +141,7 @@ export function showAuditLog(key: string | undefined, options: AuditCommandOptio
     limit,
     includeTest: options.includeTest,
     includeSelfRef: options.includeSelfRef,
+    excludeSession: options.excludeSession,
   });
 
   if (isJsonMode()) {
@@ -186,6 +188,8 @@ function matchesFilter(entry: AuditEntry, options: AuditCommandOptions, key: str
     // Self-exclusion (#134): follow mode does not stream the observability
     // calls of other shells watching the same log unless asked to.
     (options.includeSelfRef === true || entry.selfRef !== true) &&
+    // #135: a watcher agent excludes its own session's traffic
+    (!options.excludeSession || entry.session !== options.excludeSession) &&
     (!key || entry.key === key || !!entry.key?.startsWith(keyPrefix!)) &&
     (!options.writes || entry.op === 'write') &&
     (!options.mcp || entry.src === 'mcp') &&
@@ -203,19 +207,27 @@ export function followAuditLog(key: string | undefined, options: AuditCommandOpt
   const diffMax = termWidth - 14 - 2;
   const ctx: FormatContext = { lastDate: '', showProject: true, detailed: Boolean(options.detailed), diffMax };
 
-  console.log(color.bold('\nFollowing audit log\u2026 (Ctrl+C to stop)\n'));
+  // Watch mode (#135): in JSON mode the stream is NDJSON \u2014 one raw
+  // AuditEntry per line, no envelope. An unbounded stream can't satisfy the
+  // single-envelope contract (#117 WS1), and watcher agents want machine
+  // rows, not rendered text. Banner/spacing stay on the human path only.
+  const json = isJsonMode();
+
+  if (!json) console.log(color.bold('\nFollowing audit log\u2026 (Ctrl+C to stop)\n'));
 
   // Drain any entries already in the cache so tailAuditLog starts clean
   tailAuditLog();
 
-  // JSON mode is refused upstream (audit --follow can't satisfy the
-  // single-envelope contract), so this only ever renders the human stream.
   const onFileChange = (): void => {
     const newEntries = tailAuditLog();
     for (const entry of newEntries) {
       if (!matchesFilter(entry, options, key)) continue;
-      for (const line of formatAuditEntry(entry, ctx)) {
-        console.log(line);
+      if (json) {
+        process.stdout.write(JSON.stringify(entry) + '\n');
+      } else {
+        for (const line of formatAuditEntry(entry, ctx)) {
+          console.log(line);
+        }
       }
     }
   };
@@ -225,7 +237,13 @@ export function followAuditLog(key: string | undefined, options: AuditCommandOpt
   return new Promise<void>((resolve) => {
     const cleanup = (): void => {
       fs.unwatchFile(auditPath, onFileChange);
-      console.log('');
+      if (json) {
+        // Mark the envelope emitted with a no-op writer so the main()
+        // fallback doesn't append an envelope line after the NDJSON stream.
+        emitEnvelope(() => { /* stream mode: rows only, no envelope */ });
+      } else {
+        console.log('');
+      }
       resolve();
     };
     process.on('SIGINT', cleanup);

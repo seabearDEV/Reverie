@@ -41,6 +41,7 @@ import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
 import { interpolate, interpolateExec, interpolateObject, StrictInterpolationError } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace } from "./utils/telemetry";
+import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
@@ -352,7 +353,8 @@ server.tool = ((...args: any[]) => {
         op,
         hit,
         responseSize,
-        agent: process.env.RVR_AGENT_NAME,
+        agent: resolveAgentIdentity().agent,
+        agentDetected: resolveAgentIdentity().agentDetected,
       });
       for (const mp of closedPaths) {
         void appendMissPath(mp);

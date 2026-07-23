@@ -38,6 +38,7 @@ STRUCTURED OUTPUT (for agents):
 - Pass \`--json\` to any command, or set \`RVR_OUTPUT=json\` once for the whole session, to get a single machine-readable envelope on stdout: { "reverie": "1", "ok": true|false, "command": "...", "result": ..., "warnings": [{ "code": ..., "message": ... }], "error": { "code": ..., "message": ..., "preview": ... } }.
 - On failure, "ok" is false, "error.code" is from a frozen set (${ERROR_CODES.join(', ')}), and the process exits non-zero. Branch on "error.code", not on prose.
 - Diagnostics and prompts go to stderr; stdout carries only the one envelope. Run \`rvr manifest --json\` to discover every command, flag, and the MCP-tool↔CLI-command map.
+- One exception: \`rvr audit --follow --json\` is an unbounded watch stream — it emits raw NDJSON audit rows (one JSON object per line, no envelope) until interrupted. Every single-shot command keeps the envelope contract.
 - Set \`RVR_SESSION=<any-id>\` once per agent session so separate \`rvr\` invocations count as one session: write-amplification warnings (3rd+ write of a key in 30min) land in \`warnings[]\` with code WRITE_AMP, and miss-path telemetry works across invocations — the same session guardrails MCP agents get.
 
 HOW TO USE:

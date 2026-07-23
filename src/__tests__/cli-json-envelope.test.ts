@@ -160,15 +160,36 @@ describe('CLI JSON envelope (#117)', () => {
     expect(env.result.theme).toBe('light');
   });
 
-  // ── audit --follow refuses in JSON mode (review #3) ───────────────────
+  // ── audit --follow --json streams NDJSON rows (#135) ──────────────────
+  // Replaced the pre-#135 refusal test: watch mode is now the supported
+  // machine surface for watcher agents — raw rows, no envelope.
 
-  it('audit --follow --json refuses with INVALID_INPUT (no stdout pollution / hang)', () => {
-    const r = run('--json audit --follow');
-    expect(r.status).not.toBe(0);
-    const env = parse(r.stdout);
-    expect(env.ok).toBe(false);
-    expect(env.error.code).toBe('INVALID_INPUT');
-  });
+  it('audit --follow --json streams NDJSON rows for new writes (#135)', async () => {
+    const { spawn } = await import('child_process');
+    // --include-test: the harness sets RVR_TEST (#130), so the probe row is
+    // test-tagged and the stream's default exclusion would (correctly) hide it.
+    const proc = spawn('bun', ['dist/index.js', '--json', 'audit', '--follow', '--include-test'], { env: baseEnv });
+    let out = '';
+    proc.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+    try {
+      // Let fs.watchFile arm (250ms poll interval), then produce a write.
+      await new Promise(r => setTimeout(r, 600));
+      run('set stream.probe "val"');
+      const deadline = Date.now() + 5000;
+      while (!out.includes('stream.probe') && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+    } finally {
+      proc.kill('SIGINT');
+    }
+    const line = out.split('\n').find(l => l.includes('stream.probe'));
+    expect(line).toBeDefined();
+    const row = JSON.parse(line!);
+    expect(row.tool).toBe('reverie_set');
+    expect(row.key).toBe('stream.probe');
+    // Raw row, not an envelope
+    expect(row.reverie).toBeUndefined();
+  }, 15000);
 
   // ── #119 WS3: RVR_SESSION-bridged write-amp guard ─────────────────────
 

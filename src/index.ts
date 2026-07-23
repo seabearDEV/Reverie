@@ -851,18 +851,15 @@ reverie
   .option('-D, --detailed', 'Show per-entry metrics (duration, sizes, hit/miss)')
   .option('-j, --json', 'Output as JSON')
   .option('-n, --limit <n>', 'Max entries to show (default: 50)', parseInt)
-  .option('-f, --follow', 'Follow the audit log in real time')
+  .option('-f, --follow', 'Follow the audit log in real time (with --json: stream NDJSON rows)')
   .option('--include-test', 'Include RVR_TEST-tagged rows (excluded by default)')
   .option('--include-self-ref', 'Include stats/audit self-instrumentation rows (excluded by default)')
-  .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean; includeTest?: boolean; includeSelfRef?: boolean }) => {
+  .option('--exclude-session <id>', 'Hide rows from the given session id (watcher self-exclusion)')
+  .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean; includeTest?: boolean; includeSelfRef?: boolean; excludeSession?: string }) => {
     if (options.follow) {
-      // --follow streams indefinitely; that is incompatible with the
-      // single-envelope JSON contract (#117 WS1). Refuse rather than emit a
-      // never-terminating stream of non-envelope lines on stdout.
-      if (isJsonMode()) {
-        printError('audit --follow streams continuously and cannot emit a single JSON envelope. Drop --follow (or RVR_OUTPUT) and poll `audit --json` instead.', 'INVALID_INPUT');
-        return;
-      }
+      // #135 watch mode. In JSON mode this streams raw NDJSON rows (one
+      // AuditEntry per line, no envelope) — the single-envelope contract
+      // (#117 WS1) applies to single-shot commands, not unbounded streams.
       // The wrapper can't enclose an unbounded stream (its logging finally
       // would never run), but the invocation must still reach the record
       // (#134) — log it fire-and-forget at stream start. success:true means

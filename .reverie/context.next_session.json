@@ -1,7 +1,7 @@
 {
-  "value": "2026-07-22 — Soak closed (gate rewritten + eval: window empty, not leaky), v1.3.0 'trust the record' implemented in PR #144 (#130 #133 #134 #141 #142), issues #137-#143 filed from cross-machine dataset. PICK UP: merge #144 after review, then #131/#132 (CI work, separate branches), then release v1.3.0 with deliberate MCP pass + README/CHANGELOG for new flags/fields. Sequence + full state: project.inFlight.",
+  "value": "2026-07-23 — #144 MERGED (squash 356b6de); branch deleted. PR #145 (extras: #135 watch mode + #138 ambient attribution) review-fixed on feat/v1.3.0-trust-extras: origin/main merged in (base=main now correct, diff clean, MERGEABLE), review findings addressed — NDJSON envelope exception documented in AGENTS.md + claude-md generator + CLI llm-instructions, agentDetected threaded through miss-path records, full fingerprint-table tests. 1502 tests, lint clean. PICK UP: merge #145 after re-review, then #131/#132 (CI work, separate branches), then v1.3.0 release: deliberate MCP pass + README/CHANGELOG (new flags --include-test/--include-self-ref/--exclude-session, include_test/include_self_ref, NDJSON watch mode, stats bulk fields, row fields test/selfRef/projectId/agentDetected). Possible bug to file: 'rvr --json get K' (global flag) returns null result shape where 'rvr get K --json' works. Full state: project.inFlight.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1784774853284
+    "updated": 1784777295305
   }
 }

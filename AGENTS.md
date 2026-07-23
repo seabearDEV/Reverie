@@ -9,7 +9,7 @@ This project keeps durable, cross-session knowledge in a Reverie store (`.reveri
 
 Attribution: each agent's harness sets `RVR_AGENT_NAME` (`sol` = Codex, `fable` = Claude Code) so audit/telemetry rows identify the writer.
 
-CLI commands emit a single machine-readable envelope with `--json` (or `RVR_OUTPUT=json`): `{ "reverie": "1", "ok": true, "command": "…", "result": …, "error": { "code": … }, "warnings": [] }`. Branch on `error.code`, not on prose.
+CLI commands emit a single machine-readable envelope with `--json` (or `RVR_OUTPUT=json`): `{ "reverie": "1", "ok": true, "command": "…", "result": …, "error": { "code": … }, "warnings": [] }`. Branch on `error.code`, not on prose. (One exception: `rvr audit --follow --json` streams raw NDJSON rows, no envelope.)
 
 Never hand-edit `.reverie/*.json` directly — that bypasses audit logging, alias resolution, interpolation, and staleness metadata (see `conventions.editSurface` in the store). Use `rvr` (or, on shell-less surfaces, the MCP tools) only.
 

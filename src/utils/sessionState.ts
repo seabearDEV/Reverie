@@ -166,6 +166,7 @@ export function trackCliMissPath(call: {
   hit: boolean | undefined;
   responseSize: number;
   agent?: string | undefined;
+  agentDetected?: boolean | undefined;
 }, now = Date.now()): MissPath[] {
   if (!isSharedSession()) return [];
   const closed = updateSessionState(getSessionId(), now, (state) => {
