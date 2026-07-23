@@ -899,7 +899,7 @@ rvr --debug get server.production
 | `stale` | | `[days]` | Show entries not updated in N days (default 30) |
 | `lint` | | | Check entries against namespace schema (`--json`) |
 | `stats` | | | View usage telemetry and trends, incl. organic vs bulk write split (`--period`, `--detailed`, `--include-test`, `--json`) |
-| `audit` | | `[key]` | Query audit log with before/after diffs (`--detailed`, `--cli`, `--mcp`, `--hits`, `--misses`, `--redundant`, `--include-test`); `--follow` streams live — with `--json`, as raw NDJSON rows for watcher agents (`--exclude-session <id>` to ignore your own traffic) |
+| `audit` | | `[key]` | Query audit log with before/after diffs (`--detailed`, `--cli`, `--mcp`, `--hits`, `--misses`, `--redundant`, `--include-test`, `--include-self-ref`); `--follow` streams live — with `--json`, as raw NDJSON rows for watcher agents (`--exclude-session <id>` to ignore your own traffic) |
 | `config` | | `<subcommand>` | View or change configuration settings |
 | `data` | | `<subcommand>` | Manage stored data (export, import, reset) |
 

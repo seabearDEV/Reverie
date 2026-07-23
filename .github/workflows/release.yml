@@ -25,9 +25,9 @@ jobs:
     name: Build ${{ matrix.binary }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - run: bun install --frozen-lockfile
 
@@ -44,7 +44,7 @@ jobs:
             ./dist/${{ matrix.binary }} --version
           fi
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.binary }}
           path: dist/${{ matrix.binary }}
@@ -54,9 +54,9 @@ jobs:
     name: Build rvr-macos-universal
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - run: bun install --frozen-lockfile
 
@@ -92,7 +92,7 @@ jobs:
       - name: Smoke test universal (x86_64)
         run: arch -x86_64 ./dist/rvr-macos-universal --version
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rvr-macos-universal
           path: dist/rvr-macos-universal
@@ -103,7 +103,7 @@ jobs:
     name: Create Release
 
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
           merge-multiple: true
@@ -132,7 +132,7 @@ jobs:
       # because v3 defaults overwrite_files: true. Tracked in #96.
       - name: Create Release (attempt 1)
         id: release
-        uses: softprops/action-gh-release@v3.0.0
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         continue-on-error: true
         with:
           generate_release_notes: true
@@ -141,7 +141,7 @@ jobs:
 
       - name: Create Release (retry on transient failure)
         if: steps.release.outcome == 'failure'
-        uses: softprops/action-gh-release@v3.0.0
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           generate_release_notes: true
           prerelease: ${{ steps.prerelease.outputs.prerelease == 'true' }}
@@ -198,7 +198,7 @@ jobs:
           echo "linux_arm64=$(sha256sum rvr-linux-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: seabearDEV/homebrew-reverie
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
