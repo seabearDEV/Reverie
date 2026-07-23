@@ -63,9 +63,16 @@ export function parseOriginUrl(config: string): string | undefined {
  */
 export function normalizeGitUrl(url: string): string {
   let u = url.trim();
+  const hadProtocol = /^[a-z+]+:\/\//i.test(u);
   u = u.replace(/^[a-z+]+:\/\//i, ''); // protocol
   u = u.replace(/^[^@/]+@/, '');       // user@
-  u = u.replace(':', '/');             // scp-style host:path separator
+  if (hadProtocol) {
+    // ssh://host:22/path — a port is not identity; the same repo cloned
+    // with and without one must not fragment.
+    u = u.replace(/^([^/:]+):\d+(?=\/)/, '$1');
+  } else {
+    u = u.replace(':', '/');           // scp-style host:path separator
+  }
   u = u.replace(/\.git$/i, '');
   u = u.replace(/\/+$/, '');
   return u.toLowerCase();

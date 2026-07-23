@@ -19,6 +19,7 @@ export interface AuditCommandOptions {
   detailed?: boolean;
   follow?: boolean;
   includeTest?: boolean;
+  includeSelfRef?: boolean;
 }
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -138,6 +139,7 @@ export function showAuditLog(key: string | undefined, options: AuditCommandOptio
     redundantOnly: options.redundant,
     limit,
     includeTest: options.includeTest,
+    includeSelfRef: options.includeSelfRef,
   });
 
   if (isJsonMode()) {
@@ -181,9 +183,9 @@ function matchesFilter(entry: AuditEntry, options: AuditCommandOptions, key: str
   const keyPrefix = key ? key + '.' : undefined;
   return (
     (options.includeTest === true || entry.test !== true) &&
-    // Self-exclusion (#134): follow mode never streams the observability
-    // calls of other shells watching the same log.
-    entry.selfRef !== true &&
+    // Self-exclusion (#134): follow mode does not stream the observability
+    // calls of other shells watching the same log unless asked to.
+    (options.includeSelfRef === true || entry.selfRef !== true) &&
     (!key || entry.key === key || !!entry.key?.startsWith(keyPrefix!)) &&
     (!options.writes || entry.op === 'write') &&
     (!options.mcp || entry.src === 'mcp') &&

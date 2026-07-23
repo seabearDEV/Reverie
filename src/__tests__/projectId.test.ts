@@ -16,6 +16,13 @@ describe('normalizeGitUrl (#141)', () => {
     expect(normalizeGitUrl('git@github.gwd.broadcom.net:kh734385/SED.git'))
       .toBe('github.gwd.broadcom.net/kh734385/sed');
   });
+
+  it('strips ports so port and portless clones of one repo unify', () => {
+    expect(normalizeGitUrl('ssh://git@github.com:22/seabearDEV/Reverie.git'))
+      .toBe('github.com/seabeardev/reverie');
+    expect(normalizeGitUrl('https://git.example.com:8443/owner/repo.git'))
+      .toBe('git.example.com/owner/repo');
+  });
 });
 
 describe('parseOriginUrl (#141)', () => {
