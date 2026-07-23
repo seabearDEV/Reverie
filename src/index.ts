@@ -798,36 +798,42 @@ reverie
   .option('-p, --period <period>', 'Time period: 7d, 30d, 90d, all', '30d')
   .option('-D, --detailed', 'Include namespace activity, project breakdown, and top tools')
   .option('-j, --json', 'Output raw JSON')
-  .action(async (options: { period: string; detailed?: boolean; json?: boolean }) => {
-    const { computeStats } = await import('./utils/telemetry');
-    const { parsePeriodDays } = await import('./utils');
-    const stats = computeStats(parsePeriodDays(options.period));
+  .option('--include-test', 'Include RVR_TEST-tagged rows (excluded by default)')
+  .action(async (options: { period: string; detailed?: boolean; json?: boolean; includeTest?: boolean }) => {
+    await withCliInstrumentation(
+      { tool: 'reverie_stats', params: { period: options.period, detailed: options.detailed, includeTest: options.includeTest } },
+      async () => {
+        const { computeStats } = await import('./utils/telemetry');
+        const { parsePeriodDays } = await import('./utils');
+        const stats = computeStats(parsePeriodDays(options.period), Boolean(options.includeTest));
 
-    if (isJsonMode()) {
-      setResult(stats);
-      return;
-    }
+        if (isJsonMode()) {
+          setResult(stats);
+          return;
+        }
 
-    if (stats.totalCalls === 0) {
-      console.log(color.gray('No telemetry data yet. Usage is tracked automatically via CLI and MCP.'));
-      return;
-    }
+        if (stats.totalCalls === 0) {
+          console.log(color.gray('No telemetry data yet. Usage is tracked automatically via CLI and MCP.'));
+          return;
+        }
 
-    const { formatStatsReport } = await import('./commands/statsReport');
-    const lines = formatStatsReport(stats, {
-      detailed: Boolean(options.detailed),
-      palette: {
-        header: color.bold,
-        value: color.white,
-        dim: color.gray,
-        good: color.green,
-        warn: color.yellow,
-        bad: color.red,
+        const { formatStatsReport } = await import('./commands/statsReport');
+        const lines = formatStatsReport(stats, {
+          detailed: Boolean(options.detailed),
+          palette: {
+            header: color.bold,
+            value: color.white,
+            dim: color.gray,
+            good: color.green,
+            warn: color.yellow,
+            bad: color.red,
+          },
+        });
+        console.log('');
+        for (const line of lines) console.log(line);
+        console.log('');
       },
-    });
-    console.log('');
-    for (const line of lines) console.log(line);
-    console.log('');
+    );
   });
 
 // Audit log command
@@ -846,7 +852,9 @@ reverie
   .option('-j, --json', 'Output as JSON')
   .option('-n, --limit <n>', 'Max entries to show (default: 50)', parseInt)
   .option('-f, --follow', 'Follow the audit log in real time')
-  .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean }) => {
+  .option('--include-test', 'Include RVR_TEST-tagged rows (excluded by default)')
+  .option('--include-self-ref', 'Include stats/audit self-instrumentation rows (excluded by default)')
+  .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean; includeTest?: boolean; includeSelfRef?: boolean }) => {
     if (options.follow) {
       // --follow streams indefinitely; that is incompatible with the
       // single-envelope JSON contract (#117 WS1). Refuse rather than emit a
@@ -855,11 +863,26 @@ reverie
         printError('audit --follow streams continuously and cannot emit a single JSON envelope. Drop --follow (or RVR_OUTPUT) and poll `audit --json` instead.', 'INVALID_INPUT');
         return;
       }
+      // The wrapper can't enclose an unbounded stream (its logging finally
+      // would never run), but the invocation must still reach the record
+      // (#134) — log it fire-and-forget at stream start. success:true means
+      // "stream started"; the exit (SIGINT) has no outcome to record.
+      const { logToolCall } = await import('./utils/telemetry');
+      const { logAudit } = await import('./utils/audit');
+      void logToolCall('reverie_audit', key, 'cli', undefined, { selfRef: true });
+      void logAudit({ src: 'cli', tool: 'reverie_audit', op: 'meta', key, success: true, selfRef: true });
       const { followAuditLog } = await import('./commands/audit');
       await followAuditLog(key, options);
     } else {
       const { showAuditLog } = await import('./commands/audit');
-      await withPager(() => showAuditLog(key, options));
+      // Instrumented with selfRef:true (#134). --follow above logs its own
+      // row at stream start instead: it streams until SIGINT, so the
+      // wrapper's logging finally would never run and stdout would stay
+      // monkey-patched for the process lifetime.
+      await withCliInstrumentation(
+        { tool: 'reverie_audit', key, params: { period: options.period, writes: options.writes, limit: options.limit, includeTest: options.includeTest } },
+        () => withPager(() => showAuditLog(key, options)),
+      );
     }
   });
 

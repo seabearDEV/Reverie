@@ -2,6 +2,8 @@ import path from 'path';
 import { getDataDirectory, findProjectFile } from './paths';
 import { getSessionId } from './session';
 import { createJsonlLog } from './jsonl';
+import { isTestRun } from './testTraffic';
+import { getProjectId } from './projectId';
 
 export interface TelemetryEntry {
   ts: number;
@@ -12,6 +14,10 @@ export interface TelemetryEntry {
   src?: 'mcp' | 'cli';
   scope?: 'project' | 'global' | undefined;
   project?: string | undefined;
+  /** Canonical project identity (#141): git origin URL normalized to
+   *  host/owner/repo, falling back to the project path. Grouping key for
+   *  projectBreakdown; `project` stays the raw path for filtering. */
+  projectId?: string | undefined;
   duration?: number | undefined;
   hit?: boolean | undefined;
   redundant?: boolean | undefined;
@@ -39,6 +45,13 @@ export interface TelemetryEntry {
   writeAmpWarning?: boolean | undefined;
   /** reverie_set only: count of in-window writes when writeAmpWarning fired (#101). */
   writeAmpCount?: number | undefined;
+  /** True when the row was produced under RVR_TEST (#130). Excluded from
+   *  stats by default; pre-tag historical test rows remain untagged. */
+  test?: boolean | undefined;
+  /** True for observability-tool calls (reverie_stats/reverie_audit, #134).
+   *  Logged so the record is complete, excluded from aggregates so they
+   *  never count the act of looking at them. */
+  selfRef?: boolean | undefined;
 }
 
 // Re-export for backward compatibility — anything that previously imported
@@ -326,6 +339,7 @@ export interface TelemetryExtras {
   shedNamespaces?: string[] | undefined;
   writeAmpWarning?: boolean | undefined;
   writeAmpCount?: number | undefined;
+  selfRef?: boolean | undefined;
 }
 
 export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 'mcp', scope?: 'project' | 'global', extras?: TelemetryExtras, sync = false): Promise<void> {
@@ -346,8 +360,10 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     src: source,
     scope,
     agent: process.env.RVR_AGENT_NAME ?? undefined,
+    ...(isTestRun() && { test: true }),
     ...extras,
     project,
+    ...(project !== undefined && { projectId: getProjectId(project) }),
   };
   return telemetryLog.append(entry, sync);
 }
@@ -376,6 +392,11 @@ export interface TelemetryStats {
   removes: number;
   execs: number;
   readWriteRatio: string;
+  // Bulk-write segmentation (#142): burst runs (≥5 writes ≤1s apart) are a
+  // distinct usage mode — bulk store population — not write indiscipline.
+  bulkWrites: number;
+  organicWrites: number;
+  organicReadWriteRatio: string;
   namespaceCoverage: Record<string, { reads: number; writes: number; lastWrite: number | undefined }>;
   topTools: { tool: string; count: number }[];
   scopeBreakdown: { project: number; global: number; unscoped: number };
@@ -426,9 +447,14 @@ function pctChange(current: number, previous: number): number | undefined {
 /**
  * Compute trending stats from telemetry entries.
  * @param periodDays - Number of days to analyze (0 = all time)
+ * @param includeTest - Include RVR_TEST-tagged rows (#130). Default false:
+ *   stats reflect real agent activity. Applies to the trend window too.
  */
-export function computeStats(periodDays = 0): TelemetryStats {
-  const all = loadTelemetry();
+export function computeStats(periodDays = 0, includeTest = false): TelemetryStats {
+  const raw = loadTelemetry();
+  // selfRef rows (#134) are never aggregated — stats about using stats would
+  // recursively inflate every run. The raw log keeps them for watchers.
+  const all = raw.filter(e => e.selfRef !== true && (includeTest || e.test !== true));
   const cutoff = periodDays > 0 ? Date.now() - periodDays * 86400000 : 0;
   const entries = cutoff > 0 ? all.filter(e => e.ts >= cutoff) : all;
 
@@ -458,6 +484,25 @@ export function computeStats(periodDays = 0): TelemetryStats {
   const writes = entries.filter(e => e.op === 'write').length;
   const removes = entries.filter(e => e.op === 'remove').length;
   const execs = entries.filter(e => e.op === 'exec').length;
+
+  // Bulk-write segmentation (#142). Detection is time-based over ALL writes
+  // rather than per-session: un-bridged CLI bulk runs carry a different
+  // session id per call (one session per process), so session grouping would
+  // miss exactly the runs this exists to find. Two agents organically
+  // interleaving writes <1s apart on one machine is rare enough to accept.
+  const BULK_GAP_MS = 1000;
+  const BULK_MIN_RUN = 5;
+  const writeRows = entries.filter(e => e.op === 'write').sort((a, b) => a.ts - b.ts);
+  let bulkWrites = 0;
+  let runStart = 0;
+  for (let i = 1; i <= writeRows.length; i++) {
+    if (i === writeRows.length || writeRows[i].ts - writeRows[i - 1].ts > BULK_GAP_MS) {
+      const runLen = i - runStart;
+      if (runLen >= BULK_MIN_RUN) bulkWrites += runLen;
+      runStart = i;
+    }
+  }
+  const organicWrites = writes - bulkWrites;
 
   // Namespace coverage
   // Filter noise from the namespace dashboard:
@@ -512,10 +557,13 @@ export function computeStats(periodDays = 0): TelemetryStats {
   }
 
   // Project breakdown — null-prototype, see nsCoverage rationale above.
+  // Grouped by canonical projectId (#141) so path variants of the same repo
+  // count as one project; pre-#141 rows have no projectId and group by path.
   const projectBreakdown = Object.create(null) as Record<string, number>;
   for (const e of entries) {
-    if (e.project) {
-      projectBreakdown[e.project] = (projectBreakdown[e.project] ?? 0) + 1;
+    const id = e.projectId ?? e.project;
+    if (id) {
+      projectBreakdown[id] = (projectBreakdown[id] ?? 0) + 1;
     }
   }
 
@@ -664,6 +712,9 @@ export function computeStats(periodDays = 0): TelemetryStats {
     removes,
     execs,
     readWriteRatio: writes > 0 ? `${(reads / writes).toFixed(1)}:1` : reads > 0 ? '∞:1' : '0:0',
+    bulkWrites,
+    organicWrites,
+    organicReadWriteRatio: organicWrites > 0 ? `${(reads / organicWrites).toFixed(1)}:1` : reads > 0 ? '∞:1' : '0:0',
     namespaceCoverage: nsCoverage,
     topTools,
     scopeBreakdown,

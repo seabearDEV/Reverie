@@ -11,7 +11,6 @@ import path from "path";
 
 import { loadData, saveData, getValue, setValue, removeValue, getEntriesFlat, Scope, validateImportEntries, validateImportAliases, validateImportConfirm } from "./storage";
 import { isValidEntryKey } from "./utils/directoryStore";
-import { CodexData } from "./types";
 import {
   flattenObject,
   expandFlatKeys,
@@ -35,7 +34,7 @@ import { fileURLToPath } from "url";
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
 import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS, DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES } from "./config";
-import { deepMerge } from "./utils/deepMerge";
+import { computeImportSections } from "./utils/importSections";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
@@ -130,7 +129,7 @@ const server = new McpServer(
 
 // Wrap server.tool to auto-log telemetry and audit for every tool call
 const _origTool = server.tool.bind(server);
-import { SKIP_AUDIT, BULK_OPS, captureValue, captureCopySource, captureBulkCount, deriveAfterValue, isRedundantWrite } from "./utils/instrumentation";
+import { SELF_REF_TOOLS, BULK_OPS, captureValue, captureCopySource, captureBulkCount, deriveAfterValue, isRedundantWrite } from "./utils/instrumentation";
 
 // ── Per-call guardrail signals ──────────────────────────────────────
 // Handlers stash guardrail outcomes here (size-budget shedding for #100,
@@ -222,9 +221,7 @@ server.tool = ((...args: any[]) => {
       } catch { /* ignore — alias resolution is best-effort */ }
     }
 
-    const shouldAudit = !SKIP_AUDIT.has(name);
-    if (!shouldAudit) return origHandler(params, extra);
-
+    const selfRef = SELF_REF_TOOLS.has(name) ? true : undefined;
     const op = classifyOp(name);
     const isWrite = op === 'write' || op === 'exec' || op === 'remove';
 
@@ -316,6 +313,7 @@ server.tool = ((...args: any[]) => {
         project: projectFile ? path.dirname(projectFile) : undefined,
         refusedReason,
         rescuedByExplicitGlobal,
+        selfRef,
         ...guardrails,
       };
       void logToolCall(name, key, 'mcp', resolvedScope, telemetryExtras);
@@ -341,6 +339,7 @@ server.tool = ((...args: any[]) => {
         redundant,
         refusedReason,
         rescuedByExplicitGlobal,
+        selfRef,
         ...guardrails,
       });
 
@@ -1112,7 +1111,7 @@ server.tool(
   {
     data: z.union([z.string(), z.record(z.string(), z.unknown())]).describe("Data to import — either a JSON string or an object literal"),
     type: z.enum(["entries", "aliases", "confirm", "all"]).optional().describe("What to import (default: entries)"),
-    merge: z.boolean().optional().describe("Merge with existing data instead of replacing (default true — pass false to wipe and replace)"),
+    merge: z.boolean().optional().describe("Merge with existing data instead of replacing (default true — merge:false replaces each section present in the file; omitted sections are left untouched)"),
     preview: z.boolean().optional().describe("Preview changes without modifying data (returns diff text)"),
     scope: SCOPE_PARAM,
   },
@@ -1293,34 +1292,24 @@ server.tool(
       }
       if (confirmSection) validateImportConfirm(confirmSection);
 
-      // Compute each section's final value, then commit all sections in a
-      // single saveAll cycle. For replace-all semantics (isAll && !merge)
-      // any section the import omitted gets cleared to match the CLI-side
-      // "replace everything" contract.
-      const nextEntries: CodexData | undefined = entriesSection
-        ? ((merge
-            ? deepMerge(loadData(scope), expandFlatKeys(entriesSection))
-            : expandFlatKeys(entriesSection)) as CodexData)
-        : undefined;
-      const nextAliases: Record<string, string> | undefined = aliasesSection
-        ? (merge
-            ? { ...loadAliases(scope), ...(aliasesSection as Record<string, string>) }
-            : aliasesSection as Record<string, string>)
-        : (isAll && !merge ? {} : undefined);
-      const nextConfirm: Record<string, true> | undefined = confirmSection
-        ? (merge
-            ? { ...loadConfirmKeys(scope), ...(confirmSection as Record<string, true>) }
-            : confirmSection as Record<string, true>)
-        : (isAll && !merge ? {} : undefined);
-
-      saveAll(
+      // Compute each section's final value (shared #133 contract: omitted
+      // sections are never touched, including type:'all' replace), then
+      // commit all sections in a single saveAll cycle.
+      const next = computeImportSections(
         {
-          ...(nextEntries !== undefined && { entries: nextEntries }),
-          ...(nextAliases !== undefined && { aliases: nextAliases }),
-          ...(nextConfirm !== undefined && { confirm: nextConfirm }),
+          entries: entriesSection,
+          aliases: aliasesSection as Record<string, string> | undefined,
+          confirm: confirmSection as Record<string, true> | undefined,
         },
-        scope,
+        !!merge,
+        {
+          entries: () => loadData(scope),
+          aliases: () => loadAliases(scope),
+          confirm: () => loadConfirmKeys(scope),
+        },
       );
+
+      saveAll(next, scope);
 
       const warningPrefix = envelopeWarnings.length > 0 ? envelopeWarnings.map(w => `⚠ ${w}\n`).join('') : '';
       return textResponse(
@@ -1570,10 +1559,11 @@ server.tool(
   {
     period: z.enum(["7d", "30d", "90d", "all"]).optional().describe("Time period to analyze (default: 30d)"),
     detailed: z.boolean().optional().describe("Include namespace activity, project breakdown, and top tools (default: false)"),
+    include_test: z.boolean().optional().describe("Include RVR_TEST-tagged rows (excluded by default)"),
   },
-  async ({ period, detailed }) => {
+  async ({ period, detailed, include_test }) => {
     try {
-      const stats = computeStats(parsePeriodDays(period));
+      const stats = computeStats(parsePeriodDays(period), Boolean(include_test));
 
       if (stats.totalCalls === 0) {
         return textResponse("No telemetry data yet. Usage will be tracked automatically as MCP tools are called.");
@@ -1602,10 +1592,12 @@ server.tool(
     redundant_only: z.boolean().optional().describe("Show only writes where value didn't change"),
     detailed: z.boolean().optional().describe("Show per-entry metrics (duration, sizes, hit/miss) (default: false)"),
     limit: z.coerce.number().int().min(1).max(500).optional().describe("Max entries to return (default: 50)"),
+    include_test: z.boolean().optional().describe("Include RVR_TEST-tagged rows (excluded by default)"),
+    include_self_ref: z.boolean().optional().describe("Include stats/audit self-instrumentation rows (excluded by default)"),
   },
-  async ({ key, period, writes_only, src, project, hits_only, misses_only, redundant_only, detailed, limit }) => {
+  async ({ key, period, writes_only, src, project, hits_only, misses_only, redundant_only, detailed, limit, include_test, include_self_ref }) => {
     try {
-      const entries = queryAuditLog({ key, periodDays: parsePeriodDays(period), writesOnly: writes_only, src, project, hitsOnly: hits_only, missesOnly: misses_only, redundantOnly: redundant_only, limit: limit ?? 50 });
+      const entries = queryAuditLog({ key, periodDays: parsePeriodDays(period), writesOnly: writes_only, src, project, hitsOnly: hits_only, missesOnly: misses_only, redundantOnly: redundant_only, limit: limit ?? 50, includeTest: include_test, includeSelfRef: include_self_ref });
 
       if (entries.length === 0) {
         return textResponse("No audit entries found.");

@@ -3,6 +3,8 @@ import { getDataDirectory, findProjectFile } from './paths';
 import { isEncrypted } from './crypto';
 import { getSessionId } from './session';
 import { createJsonlLog } from './jsonl';
+import { isTestRun } from './testTraffic';
+import { getProjectId } from './projectId';
 
 export interface AuditEntry {
   ts: number;
@@ -13,6 +15,8 @@ export interface AuditEntry {
   key?: string | undefined;
   scope?: string | undefined;
   project?: string | undefined;
+  // Canonical project identity (#141) — see TelemetryEntry.projectId
+  projectId?: string | undefined;
   success: boolean;
   before?: string | undefined;
   after?: string | undefined;
@@ -37,6 +41,10 @@ export interface AuditEntry {
   // reverie_set write-amp guard (#101)
   writeAmpWarning?: boolean | undefined;
   writeAmpCount?: number | undefined;
+  // RVR_TEST-tagged row (#130) — excluded from queries by default
+  test?: boolean | undefined;
+  // Observability-tool call (#134) — excluded from queries by default
+  selfRef?: boolean | undefined;
 }
 
 export interface AuditQueryOptions {
@@ -49,6 +57,8 @@ export interface AuditQueryOptions {
   missesOnly?: boolean | undefined;
   redundantOnly?: boolean | undefined;
   limit?: number | undefined;
+  includeTest?: boolean | undefined;
+  includeSelfRef?: boolean | undefined;
 }
 
 export function getAuditPath(): string {
@@ -86,12 +96,15 @@ export function sanitizeParams(params: Record<string, unknown>): Record<string, 
 
 export function logAudit(partial: Omit<AuditEntry, 'ts' | 'session' | 'agent' | 'project'>, sync = false): Promise<void> {
   const projectFile = findProjectFile();
+  const projectDir = projectFile ? path.dirname(projectFile) : undefined;
   const entry: AuditEntry = {
     ...partial,
     ts: Date.now(),
     session: getSessionId(),
-    project: projectFile ? path.dirname(projectFile) : undefined,
+    project: projectDir,
+    ...(projectDir !== undefined && { projectId: getProjectId(projectDir) }),
     agent: process.env.RVR_AGENT_NAME ?? undefined,
+    ...(isTestRun() && { test: true }),
   };
   return auditLog.append(entry, sync);
 }
@@ -129,6 +142,8 @@ export function queryAuditLog(options: AuditQueryOptions = {}): AuditEntry[] {
   const keyPrefix = options.key ? options.key + '.' : undefined;
 
   const filtered = cached.filter(e =>
+    (options.includeTest === true || e.test !== true) &&
+    (options.includeSelfRef === true || e.selfRef !== true) &&
     (cutoff <= 0 || e.ts >= cutoff) &&
     (!options.key || e.key === options.key || !!e.key?.startsWith(keyPrefix!)) &&
     (!options.writesOnly || e.op === 'write') &&
