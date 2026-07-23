@@ -449,6 +449,20 @@ describe('computeStats', () => {
     expect(stats.projectBreakdown['/repo/two']).toBe(1);
   });
 
+  it('groups path variants of the same repo by projectId (#141)', () => {
+    const now = Date.now();
+    writeEntries([
+      { ts: now - 100, tool: 'reverie_get', session: 's1', op: 'read', ns: 'a', project: '/old/Path/Repo', projectId: 'github.com/owner/repo' },
+      { ts: now - 90, tool: 'reverie_set', session: 's1', op: 'write', ns: 'b', project: '/new/path/repo', projectId: 'github.com/owner/repo' },
+      // pre-#141 row: no projectId, groups by raw path
+      { ts: now - 80, tool: 'reverie_get', session: 's1', op: 'read', ns: 'c', project: '/legacy/path' },
+    ]);
+    const stats = computeStats();
+    expect(stats.projectBreakdown['github.com/owner/repo']).toBe(2);
+    expect(stats.projectBreakdown['/legacy/path']).toBe(1);
+    expect(stats.projectBreakdown['/old/Path/Repo']).toBeUndefined();
+  });
+
   it('estimates tokens saved from cache hits', () => {
     const now = Date.now();
     writeEntries([

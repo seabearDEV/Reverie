@@ -4,6 +4,7 @@ import { isEncrypted } from './crypto';
 import { getSessionId } from './session';
 import { createJsonlLog } from './jsonl';
 import { isTestRun } from './testTraffic';
+import { getProjectId } from './projectId';
 
 export interface AuditEntry {
   ts: number;
@@ -14,6 +15,8 @@ export interface AuditEntry {
   key?: string | undefined;
   scope?: string | undefined;
   project?: string | undefined;
+  // Canonical project identity (#141) — see TelemetryEntry.projectId
+  projectId?: string | undefined;
   success: boolean;
   before?: string | undefined;
   after?: string | undefined;
@@ -90,11 +93,13 @@ export function sanitizeParams(params: Record<string, unknown>): Record<string, 
 
 export function logAudit(partial: Omit<AuditEntry, 'ts' | 'session' | 'agent' | 'project'>, sync = false): Promise<void> {
   const projectFile = findProjectFile();
+  const projectDir = projectFile ? path.dirname(projectFile) : undefined;
   const entry: AuditEntry = {
     ...partial,
     ts: Date.now(),
     session: getSessionId(),
-    project: projectFile ? path.dirname(projectFile) : undefined,
+    project: projectDir,
+    ...(projectDir !== undefined && { projectId: getProjectId(projectDir) }),
     agent: process.env.RVR_AGENT_NAME ?? undefined,
     ...(isTestRun() && { test: true }),
   };

@@ -3,6 +3,7 @@ import { getDataDirectory, findProjectFile } from './paths';
 import { getSessionId } from './session';
 import { createJsonlLog } from './jsonl';
 import { isTestRun } from './testTraffic';
+import { getProjectId } from './projectId';
 
 export interface TelemetryEntry {
   ts: number;
@@ -13,6 +14,10 @@ export interface TelemetryEntry {
   src?: 'mcp' | 'cli';
   scope?: 'project' | 'global' | undefined;
   project?: string | undefined;
+  /** Canonical project identity (#141): git origin URL normalized to
+   *  host/owner/repo, falling back to the project path. Grouping key for
+   *  projectBreakdown; `project` stays the raw path for filtering. */
+  projectId?: string | undefined;
   duration?: number | undefined;
   hit?: boolean | undefined;
   redundant?: boolean | undefined;
@@ -353,6 +358,7 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     ...(isTestRun() && { test: true }),
     ...extras,
     project,
+    ...(project !== undefined && { projectId: getProjectId(project) }),
   };
   return telemetryLog.append(entry, sync);
 }
@@ -520,10 +526,13 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
   }
 
   // Project breakdown — null-prototype, see nsCoverage rationale above.
+  // Grouped by canonical projectId (#141) so path variants of the same repo
+  // count as one project; pre-#141 rows have no projectId and group by path.
   const projectBreakdown = Object.create(null) as Record<string, number>;
   for (const e of entries) {
-    if (e.project) {
-      projectBreakdown[e.project] = (projectBreakdown[e.project] ?? 0) + 1;
+    const id = e.projectId ?? e.project;
+    if (id) {
+      projectBreakdown[id] = (projectBreakdown[id] ?? 0) + 1;
     }
   }
 
