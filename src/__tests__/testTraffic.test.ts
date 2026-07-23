@@ -108,3 +108,16 @@ describe('selfRef instrumentation (#134)', () => {
     expect(queryAuditLog({ includeSelfRef: true })).toHaveLength(2);
   });
 });
+
+describe('watcher self-exclusion (#135)', () => {
+  it('queryAuditLog hides rows from an excluded session', async () => {
+    delete process.env.RVR_TEST;
+    await logAudit({ src: 'cli', tool: 'reverie_set', op: 'write', key: 'a.one', success: true }, true);
+    const [own] = queryAuditLog();
+    expect(own).toBeDefined();
+
+    const excluded = queryAuditLog({ excludeSession: own.session });
+    expect(excluded).toHaveLength(0);
+    expect(queryAuditLog({ excludeSession: 'someone-else' })).toHaveLength(1);
+  });
+});
