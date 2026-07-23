@@ -1,0 +1,15 @@
+# Leg A continuous scanning (#131, docs/security/release-process.md).
+# Version updates only — security alerts + automated security fixes are
+# repo settings, enabled alongside this file.
+version: 2
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

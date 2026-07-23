@@ -1,0 +1,28 @@
+# Leg A weekly dependency scan (#131, docs/security/release-process.md).
+# Detection is scheduled, patching is event-driven (project.patchPolicy):
+# a failure here files the finding; critical/high → out-of-band patch,
+# moderate/low → next themed minor.
+name: Security scan
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bun-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      # Fails on any known advisory in the dependency tree. Transitive-dep
+      # remediation playbook: context.bunTransitiveDedup in the store
+      # (overrides + fresh resolve — bun install --force does NOT dedupe).
+      - run: bun audit
