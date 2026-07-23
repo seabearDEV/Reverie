@@ -1,0 +1,36 @@
+# Perf regression cron (#132) — the detection slice of #48 pulled forward.
+# stress-test.mjs drives the MCP server over stdio with interleaved CLI
+# writers and fails (exit 1) on errors, calls over STRESS_SLOW_MS, an
+# internal slowdown ratio ≥ 2× (cache/state-leak signature — the
+# mcpServerFreezeDiagnosis class), or a mean above STRESS_MEAN_MS.
+# Findings ride the next minor unless severe (project.patchPolicy).
+name: Perf regression
+
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Mondays 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      # Mean ceiling is deliberately generous for shared runners (local mean
+      # is single-digit ms) — it exists to catch O(N)-blowup regressions like
+      # context.logQueryOnCost, not single-digit drift.
+      - run: bun scripts/stress-test.mjs
+        env:
+          STRESS_ITERATIONS: '1000'
+          STRESS_MEAN_MS: '50'
