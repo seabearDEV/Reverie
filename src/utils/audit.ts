@@ -3,6 +3,7 @@ import { getDataDirectory, findProjectFile } from './paths';
 import { isEncrypted } from './crypto';
 import { getSessionId } from './session';
 import { createJsonlLog } from './jsonl';
+import { isTestRun } from './testTraffic';
 
 export interface AuditEntry {
   ts: number;
@@ -37,6 +38,8 @@ export interface AuditEntry {
   // reverie_set write-amp guard (#101)
   writeAmpWarning?: boolean | undefined;
   writeAmpCount?: number | undefined;
+  // RVR_TEST-tagged row (#130) — excluded from queries by default
+  test?: boolean | undefined;
 }
 
 export interface AuditQueryOptions {
@@ -49,6 +52,7 @@ export interface AuditQueryOptions {
   missesOnly?: boolean | undefined;
   redundantOnly?: boolean | undefined;
   limit?: number | undefined;
+  includeTest?: boolean | undefined;
 }
 
 export function getAuditPath(): string {
@@ -92,6 +96,7 @@ export function logAudit(partial: Omit<AuditEntry, 'ts' | 'session' | 'agent' | 
     session: getSessionId(),
     project: projectFile ? path.dirname(projectFile) : undefined,
     agent: process.env.RVR_AGENT_NAME ?? undefined,
+    ...(isTestRun() && { test: true }),
   };
   return auditLog.append(entry, sync);
 }
@@ -129,6 +134,7 @@ export function queryAuditLog(options: AuditQueryOptions = {}): AuditEntry[] {
   const keyPrefix = options.key ? options.key + '.' : undefined;
 
   const filtered = cached.filter(e =>
+    (options.includeTest || e.test !== true) &&
     (cutoff <= 0 || e.ts >= cutoff) &&
     (!options.key || e.key === options.key || !!e.key?.startsWith(keyPrefix!)) &&
     (!options.writesOnly || e.op === 'write') &&

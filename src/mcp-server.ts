@@ -1559,10 +1559,11 @@ server.tool(
   {
     period: z.enum(["7d", "30d", "90d", "all"]).optional().describe("Time period to analyze (default: 30d)"),
     detailed: z.boolean().optional().describe("Include namespace activity, project breakdown, and top tools (default: false)"),
+    include_test: z.boolean().optional().describe("Include RVR_TEST-tagged rows (excluded by default)"),
   },
-  async ({ period, detailed }) => {
+  async ({ period, detailed, include_test }) => {
     try {
-      const stats = computeStats(parsePeriodDays(period));
+      const stats = computeStats(parsePeriodDays(period), Boolean(include_test));
 
       if (stats.totalCalls === 0) {
         return textResponse("No telemetry data yet. Usage will be tracked automatically as MCP tools are called.");
@@ -1591,10 +1592,11 @@ server.tool(
     redundant_only: z.boolean().optional().describe("Show only writes where value didn't change"),
     detailed: z.boolean().optional().describe("Show per-entry metrics (duration, sizes, hit/miss) (default: false)"),
     limit: z.coerce.number().int().min(1).max(500).optional().describe("Max entries to return (default: 50)"),
+    include_test: z.boolean().optional().describe("Include RVR_TEST-tagged rows (excluded by default)"),
   },
-  async ({ key, period, writes_only, src, project, hits_only, misses_only, redundant_only, detailed, limit }) => {
+  async ({ key, period, writes_only, src, project, hits_only, misses_only, redundant_only, detailed, limit, include_test }) => {
     try {
-      const entries = queryAuditLog({ key, periodDays: parsePeriodDays(period), writesOnly: writes_only, src, project, hitsOnly: hits_only, missesOnly: misses_only, redundantOnly: redundant_only, limit: limit ?? 50 });
+      const entries = queryAuditLog({ key, periodDays: parsePeriodDays(period), writesOnly: writes_only, src, project, hitsOnly: hits_only, missesOnly: misses_only, redundantOnly: redundant_only, limit: limit ?? 50, includeTest: include_test });
 
       if (entries.length === 0) {
         return textResponse("No audit entries found.");

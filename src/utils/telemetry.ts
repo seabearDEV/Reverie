@@ -2,6 +2,7 @@ import path from 'path';
 import { getDataDirectory, findProjectFile } from './paths';
 import { getSessionId } from './session';
 import { createJsonlLog } from './jsonl';
+import { isTestRun } from './testTraffic';
 
 export interface TelemetryEntry {
   ts: number;
@@ -39,6 +40,9 @@ export interface TelemetryEntry {
   writeAmpWarning?: boolean | undefined;
   /** reverie_set only: count of in-window writes when writeAmpWarning fired (#101). */
   writeAmpCount?: number | undefined;
+  /** True when the row was produced under RVR_TEST (#130). Excluded from
+   *  stats by default; pre-tag historical test rows remain untagged. */
+  test?: boolean | undefined;
 }
 
 // Re-export for backward compatibility — anything that previously imported
@@ -346,6 +350,7 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     src: source,
     scope,
     agent: process.env.RVR_AGENT_NAME ?? undefined,
+    ...(isTestRun() && { test: true }),
     ...extras,
     project,
   };
@@ -426,9 +431,12 @@ function pctChange(current: number, previous: number): number | undefined {
 /**
  * Compute trending stats from telemetry entries.
  * @param periodDays - Number of days to analyze (0 = all time)
+ * @param includeTest - Include RVR_TEST-tagged rows (#130). Default false:
+ *   stats reflect real agent activity. Applies to the trend window too.
  */
-export function computeStats(periodDays = 0): TelemetryStats {
-  const all = loadTelemetry();
+export function computeStats(periodDays = 0, includeTest = false): TelemetryStats {
+  const raw = loadTelemetry();
+  const all = includeTest ? raw : raw.filter(e => e.test !== true);
   const cutoff = periodDays > 0 ? Date.now() - periodDays * 86400000 : 0;
   const entries = cutoff > 0 ? all.filter(e => e.ts >= cutoff) : all;
 

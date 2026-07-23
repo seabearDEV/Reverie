@@ -798,10 +798,11 @@ reverie
   .option('-p, --period <period>', 'Time period: 7d, 30d, 90d, all', '30d')
   .option('-D, --detailed', 'Include namespace activity, project breakdown, and top tools')
   .option('-j, --json', 'Output raw JSON')
-  .action(async (options: { period: string; detailed?: boolean; json?: boolean }) => {
+  .option('--include-test', 'Include RVR_TEST-tagged rows (excluded by default)')
+  .action(async (options: { period: string; detailed?: boolean; json?: boolean; includeTest?: boolean }) => {
     const { computeStats } = await import('./utils/telemetry');
     const { parsePeriodDays } = await import('./utils');
-    const stats = computeStats(parsePeriodDays(options.period));
+    const stats = computeStats(parsePeriodDays(options.period), Boolean(options.includeTest));
 
     if (isJsonMode()) {
       setResult(stats);
@@ -846,7 +847,8 @@ reverie
   .option('-j, --json', 'Output as JSON')
   .option('-n, --limit <n>', 'Max entries to show (default: 50)', parseInt)
   .option('-f, --follow', 'Follow the audit log in real time')
-  .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean }) => {
+  .option('--include-test', 'Include RVR_TEST-tagged rows (excluded by default)')
+  .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean; includeTest?: boolean }) => {
     if (options.follow) {
       // --follow streams indefinitely; that is incompatible with the
       // single-envelope JSON contract (#117 WS1). Refuse rather than emit a
