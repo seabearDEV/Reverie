@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-07-23
+
+**Theme: Trust — "trust the record."** Scoped at the v1.2.x soak exit from the first cross-machine usage dataset (two machines, ~10 weeks of telemetry): the analysis showed the observability layer itself couldn't be trusted — 56% of one log was untagged test traffic, one repo counted as three projects across path renames, bulk store-population read as write indiscipline, and the stats tools were invisible to their own record. This release makes the measurement layer honest before the next soak cycle reads it, and promotes watcher agents to a first-class pattern.
+
+### Added
+
+- **Test traffic is tagged and excluded** ([#130](https://github.com/seabearDEV/reverie/issues/130)). `RVR_TEST=1` marks telemetry/audit rows `test:true` at write time — rows are never dropped (the log stays evidence), but `stats`/`audit` exclude them by default. Opt back in with `--include-test` (CLI) / `include_test` (MCP). The test harness sets the marker, so suite traffic stays identifiable even if data-dir redirection regresses.
+- **Canonical project identity** ([#141](https://github.com/seabearDEV/reverie/issues/141)). Rows carry `projectId` — the git origin URL normalized to `host/owner/repo` (path fallback for non-git projects). `projectBreakdown` groups by it, so directory renames and case variants of one repo count as one project; the raw path stays on the row for filtering.
+- **Bulk-population writes segment out of organic stats** ([#142](https://github.com/seabearDEV/reverie/issues/142)). Runs of ≥5 writes ≤1s apart classify as `bulkWrites`; stats gain `organicWrites` and `organicReadWriteRatio`. Validated on the cross-machine dataset: a store that looked 2.6:1 write-heavy is 0.9:1 organically — bulk init is a usage mode, not indiscipline.
+- **The observability tools observe themselves** ([#134](https://github.com/seabearDEV/reverie/issues/134)). `reverie_stats`/`reverie_audit` calls are now logged (`op:'meta'` fires for the first time) tagged `selfRef:true`, and excluded from aggregates by default — "stats were never run" and "stats runs are invisible" are finally distinguishable from the record. Audit queries opt back in with `--include-self-ref` (CLI) / `include_self_ref` (MCP).
+- **Watch mode for watcher agents** ([#135](https://github.com/seabearDEV/reverie/issues/135)). `rvr audit --follow --json` streams raw NDJSON rows (no envelope — the single-envelope contract covers single-shot commands, not unbounded streams). `--exclude-session <id>` hides a watcher's own traffic; selfRef rows are self-excluded from the stream.
+- **Ambient agent attribution** ([#138](https://github.com/seabearDEV/reverie/issues/138)). When `RVR_AGENT_NAME` is unset, the harness is detected from env fingerprints (Claude Code, Codex, Cursor, Copilot, Gemini, Aider); explicit names always win, and detected rows carry `agentDetected:true` as a confidence marker. Closes the fail-open where an unconfigured machine logged everything unattributed.
+- **Leg A security automation** ([#131](https://github.com/seabearDEV/reverie/issues/131)): Dependabot (bun + github-actions), weekly `bun audit` cron, CodeQL (push/PR/weekly), private vulnerability reporting enabled, SECURITY.md gains the detection/response policy and hostile-store threat-model scope.
+- **Perf regression cron** ([#132](https://github.com/seabearDEV/reverie/issues/132)): weekly MCP stress run with a new `STRESS_MEAN_MS` mean-latency ceiling to catch O(N)-blowup regressions that stay under the per-call slow threshold.
+
+### Fixed
+
+- **`type:'all'` replace imports no longer wipe omitted sections via MCP** ([#133](https://github.com/seabearDEV/reverie/issues/133), data-loss class). `reverie_import` cleared aliases/confirm to `{}` when a replace-all file omitted them — behavior its own preview never showed, and which the CLI never had. The contract is now "omitted sections are untouched," enforced on both surfaces by a shared `computeImportSections` helper so the section math cannot re-diverge.
+
 ## [1.2.2] - 2026-06-09
 
 **Quality & performance pass — no new features.** A whole-repo review (dead code, complexity, algorithmic patterns, lint) followed by fixes: several real performance defects, ~530 lines of CLI/MCP twin-implementation dedup, and test code brought under lint. The structural theme: every place the CLI and MCP surfaces carried separate copies of the same logic was a drift bug waiting to happen (one was found and filed as [#133](https://github.com/seabearDEV/reverie/issues/133)) — the copies are now shared modules.

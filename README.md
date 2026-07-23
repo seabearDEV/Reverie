@@ -151,7 +151,8 @@ Reverie honors a small set of environment variables for deployment-time configur
 | `RVR_PROJECT` | Explicit path to a `.reverie/` directory, a legacy `.codexcli.json` file, or a containing directory. Fails closed if the path doesn't resolve — no `cwd` walk-up fallback. | unset (walk up from `cwd`) |
 | `RVR_PROJECT_DIR` | MCP-server launcher hint — the directory the server should treat as the project root. Equivalent to passing `--cwd <dir>`. Applied via `setProjectRootOverride` (no `process.chdir`), so it works whether the server is run as a binary or imported. | unset |
 | `RVR_NO_PROJECT` | Disable project-file lookup entirely. Set to any non-empty value (e.g. `1`) and `findProjectFile()` returns `null` regardless of `cwd` or `RVR_PROJECT`. | unset |
-| `RVR_AGENT_NAME` | Identifier recorded in the audit and telemetry logs for the calling agent. Used by `rvr stats` and `rvr audit` to break down activity per agent (Claude, Cursor, Copilot, etc.). | unset |
+| `RVR_AGENT_NAME` | Identifier recorded in the audit and telemetry logs for the calling agent. Used by `rvr stats` and `rvr audit` to break down activity per agent. When unset, the harness is detected from env fingerprints (Claude Code, Codex, Cursor, Copilot, Gemini, Aider) and rows carry `agentDetected: true`; the explicit name always wins. | unset (ambient detection) |
+| `RVR_TEST` | Set to `1` (or `true`) to tag telemetry/audit rows `test: true`. Tagged rows are excluded from `stats`/`audit` by default (`--include-test` / `include_test` opts back in) so test runs never distort usage data. | unset |
 | `RVR_OUTPUT` | When set to `json`, every command emits the structured JSON envelope on stdout (equivalent to passing `--json`), session-wide. Diagnostics and prompts go to stderr. | unset |
 | `RVR_SESSION` | Shared session id for CLI-driven agents: invocations with the same id count as one session, with guardrail state (write-amp window, miss-path tracking) persisted to `~/.reverie/store/sessions/<id>.json` (TTL-pruned after 24h). Unset → each invocation is its own session. | unset |
 | `RVR_DISABLE_LOCKING` | **Test-only.** When set to `1`, `withFileLock` falls back to running its closure without acquiring the file lock if lock acquisition fails. The default (production) behavior since v1.11 is to fail closed and propagate the lock error. Production code should never set this — there are no known production environments where lock acquisition is expected to fail. Tests that intentionally exercise contended-lock scenarios use this opt-out instead. | unset |
@@ -897,8 +898,8 @@ rvr --debug get server.production
 | `init` | | | Initialize project (`.reverie/` + codebase scan + `CLAUDE.md` + `AGENTS.md`; `--no-claude` / `--no-agents` to skip) |
 | `stale` | | `[days]` | Show entries not updated in N days (default 30) |
 | `lint` | | | Check entries against namespace schema (`--json`) |
-| `stats` | | | View MCP usage telemetry and trends (`--period`, `--detailed`, `--json`) |
-| `audit` | | `[key]` | Query audit log with before/after diffs (`--detailed`, `--cli`, `--mcp`, `--hits`, `--misses`, `--redundant`) |
+| `stats` | | | View usage telemetry and trends, incl. organic vs bulk write split (`--period`, `--detailed`, `--include-test`, `--json`) |
+| `audit` | | `[key]` | Query audit log with before/after diffs (`--detailed`, `--cli`, `--mcp`, `--hits`, `--misses`, `--redundant`, `--include-test`, `--include-self-ref`); `--follow` streams live — with `--json`, as raw NDJSON rows for watcher agents (`--exclude-session <id>` to ignore your own traffic) |
 | `config` | | `<subcommand>` | View or change configuration settings |
 | `data` | | `<subcommand>` | Manage stored data (export, import, reset) |
 

@@ -15,6 +15,7 @@
 //   STRESS_TIMEOUT     per-call timeout in ms                    (default 5000)
 //   STRESS_SLOW_MS     calls slower than this are flagged        (default 2000)
 //   STRESS_CLI_EVERY   spawn a CLI writer every N iterations     (default 50)
+//   STRESS_MEAN_MS     fail if mean per-call latency exceeds this (default off)
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -35,6 +36,9 @@ const BATCH_SIZE = parseInt(process.env.STRESS_BATCH_SIZE || '5', 10);
 const PER_CALL_TIMEOUT_MS = parseInt(process.env.STRESS_TIMEOUT || '5000', 10);
 const SLOW_THRESHOLD_MS = parseInt(process.env.STRESS_SLOW_MS || '2000', 10);
 const CLI_INTERLEAVE_EVERY = parseInt(process.env.STRESS_CLI_EVERY || '50', 10);
+// #132: optional absolute mean-latency ceiling (0 = off). The CI perf cron
+// sets this to catch O(N)-blowup regressions that stay under SLOW_MS per call.
+const MEAN_THRESHOLD_MS = parseInt(process.env.STRESS_MEAN_MS || '0', 10);
 const PRE_POPULATE = 20;
 const WARMUP = 20;
 const NO_GROWTH = process.env.STRESS_NO_GROWTH === '1';
@@ -302,10 +306,12 @@ if (errors.length > 0) {
 
 // --- verdict -----------------------------------------------------------------
 console.log('');
+const meanExceeded = MEAN_THRESHOLD_MS > 0 && mean > MEAN_THRESHOLD_MS;
 const passed =
   errors.length === 0 &&
   slowCalls.length === 0 &&
-  slowdown < 2.0;
+  slowdown < 2.0 &&
+  !meanExceeded;
 
 console.log(`VERDICT: ${passed ? 'PASS' : 'REVIEW'}`);
 if (!passed) {
@@ -313,6 +319,7 @@ if (!passed) {
   if (errors.length > 0)     console.log(`  - ${errors.length} errors`);
   if (slowCalls.length > 0)  console.log(`  - ${slowCalls.length} calls exceeded ${SLOW_THRESHOLD_MS}ms`);
   if (slowdown >= 2.0)       console.log(`  - slowdown ratio ${slowdown.toFixed(2)}x suggests cache/state leak`);
+  if (meanExceeded)          console.log(`  - mean ${mean.toFixed(1)}ms exceeded STRESS_MEAN_MS=${MEAN_THRESHOLD_MS}ms`);
 }
 
 await client.close();
