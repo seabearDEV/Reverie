@@ -16,14 +16,17 @@ vi.mock('../utils/crypto', () => ({
 }));
 
 import { logAudit, loadAuditLog, queryAuditLog, sanitizeValue, sanitizeParams, AuditEntry } from '../utils/audit';
+import { clearAgentIdentityCache } from '../utils/agentIdentity';
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-audit-'));
+  clearAgentIdentityCache();
 });
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
   delete process.env.RVR_AGENT_NAME;
+  clearAgentIdentityCache();
   mockProjectFile = null;
 });
 
@@ -96,6 +99,7 @@ describe('logAudit', () => {
 
   it('captures RVR_AGENT_NAME env var', async () => {
     process.env.RVR_AGENT_NAME = 'cursor';
+    clearAgentIdentityCache();
     await logAudit({
       src: 'mcp',
       tool: 'reverie_get',
@@ -104,9 +108,15 @@ describe('logAudit', () => {
     });
     const entries = loadAuditLog();
     expect(entries[0].agent).toBe('cursor');
+    expect(entries[0].agentDetected).toBeUndefined();
   });
 
-  it('leaves agent undefined when env var not set', async () => {
+  it('falls back to ambient harness detection when RVR_AGENT_NAME unset (#138)', async () => {
+    // The suite itself runs under a harness, so pin the fingerprint rather
+    // than depend on whichever agent is hosting this test run.
+    delete process.env.RVR_AGENT_NAME;
+    process.env.CLAUDECODE = '1';
+    clearAgentIdentityCache();
     await logAudit({
       src: 'cli',
       tool: 'reverie_set',
@@ -114,7 +124,8 @@ describe('logAudit', () => {
       success: true,
     });
     const entries = loadAuditLog();
-    expect(entries[0].agent).toBeUndefined();
+    expect(entries[0].agent).toBe('claude-code');
+    expect(entries[0].agentDetected).toBe(true);
   });
 
   it('records project directory from findProjectFile', async () => {

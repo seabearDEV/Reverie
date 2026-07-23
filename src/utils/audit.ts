@@ -5,6 +5,7 @@ import { getSessionId } from './session';
 import { createJsonlLog } from './jsonl';
 import { isTestRun } from './testTraffic';
 import { getProjectId } from './projectId';
+import { resolveAgentIdentity } from './agentIdentity';
 
 export interface AuditEntry {
   ts: number;
@@ -23,6 +24,8 @@ export interface AuditEntry {
   error?: string | undefined;
   params?: Record<string, unknown> | undefined;
   agent?: string | undefined;
+  // Agent came from env fingerprinting, not explicit RVR_AGENT_NAME (#138)
+  agentDetected?: boolean | undefined;
   duration?: number | undefined;
   aliasResolved?: string | undefined;
   // Token-efficiency metrics
@@ -59,6 +62,7 @@ export interface AuditQueryOptions {
   limit?: number | undefined;
   includeTest?: boolean | undefined;
   includeSelfRef?: boolean | undefined;
+  excludeSession?: string | undefined;
 }
 
 export function getAuditPath(): string {
@@ -97,13 +101,15 @@ export function sanitizeParams(params: Record<string, unknown>): Record<string, 
 export function logAudit(partial: Omit<AuditEntry, 'ts' | 'session' | 'agent' | 'project'>, sync = false): Promise<void> {
   const projectFile = findProjectFile();
   const projectDir = projectFile ? path.dirname(projectFile) : undefined;
+  const identity = resolveAgentIdentity();
   const entry: AuditEntry = {
     ...partial,
     ts: Date.now(),
     session: getSessionId(),
     project: projectDir,
     ...(projectDir !== undefined && { projectId: getProjectId(projectDir) }),
-    agent: process.env.RVR_AGENT_NAME ?? undefined,
+    agent: identity.agent,
+    ...(identity.agentDetected && { agentDetected: true }),
     ...(isTestRun() && { test: true }),
   };
   return auditLog.append(entry, sync);
@@ -144,6 +150,7 @@ export function queryAuditLog(options: AuditQueryOptions = {}): AuditEntry[] {
   const filtered = cached.filter(e =>
     (options.includeTest === true || e.test !== true) &&
     (options.includeSelfRef === true || e.selfRef !== true) &&
+    (!options.excludeSession || e.session !== options.excludeSession) &&
     (cutoff <= 0 || e.ts >= cutoff) &&
     (!options.key || e.key === options.key || !!e.key?.startsWith(keyPrefix!)) &&
     (!options.writesOnly || e.op === 'write') &&

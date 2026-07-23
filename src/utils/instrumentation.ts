@@ -9,6 +9,7 @@ import { recordCliWrite, trackCliMissPath } from './sessionState';
 import { formatWriteAmpWarning, WriteAmpResult } from './writeAmp';
 import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
+import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
 import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError } from './output';
 
@@ -413,7 +414,7 @@ export async function withCliInstrumentation<T>(
         op,
         hit,
         responseSize: responseSize ?? 0,
-        agent: process.env.RVR_AGENT_NAME,
+        agent: resolveAgentIdentity().agent,
       });
       for (const mp of closedPaths) {
         void appendMissPath(mp);

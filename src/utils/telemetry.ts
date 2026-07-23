@@ -4,6 +4,7 @@ import { getSessionId } from './session';
 import { createJsonlLog } from './jsonl';
 import { isTestRun } from './testTraffic';
 import { getProjectId } from './projectId';
+import { resolveAgentIdentity } from './agentIdentity';
 
 export interface TelemetryEntry {
   ts: number;
@@ -23,6 +24,9 @@ export interface TelemetryEntry {
   redundant?: boolean | undefined;
   responseSize?: number | undefined;
   agent?: string | undefined;
+  /** True when agent came from env fingerprinting rather than an explicit
+   *  RVR_AGENT_NAME (#138) — a confidence signal, not an identity change. */
+  agentDetected?: boolean | undefined;
   /** Whether the operation succeeded. Optional for backward compat with
    *  pre-v1.11.x telemetry that didn't carry this field. */
   success?: boolean | undefined;
@@ -351,6 +355,7 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
       project = pf ? path.dirname(pf) : undefined;
     } catch { /* best-effort */ }
   }
+  const identity = resolveAgentIdentity();
   const entry: TelemetryEntry = {
     ts: Date.now(),
     tool,
@@ -359,7 +364,8 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     ns: extractNamespace(key),
     src: source,
     scope,
-    agent: process.env.RVR_AGENT_NAME ?? undefined,
+    agent: identity.agent,
+    ...(identity.agentDetected && { agentDetected: true }),
     ...(isTestRun() && { test: true }),
     ...extras,
     project,
