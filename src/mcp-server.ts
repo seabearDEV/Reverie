@@ -1594,10 +1594,11 @@ server.tool(
     detailed: z.boolean().optional().describe("Show per-entry metrics (duration, sizes, hit/miss) (default: false)"),
     limit: z.coerce.number().int().min(1).max(500).optional().describe("Max entries to return (default: 50)"),
     include_test: z.boolean().optional().describe("Include RVR_TEST-tagged rows (excluded by default)"),
+    include_self_ref: z.boolean().optional().describe("Include stats/audit self-instrumentation rows (excluded by default)"),
   },
-  async ({ key, period, writes_only, src, project, hits_only, misses_only, redundant_only, detailed, limit, include_test }) => {
+  async ({ key, period, writes_only, src, project, hits_only, misses_only, redundant_only, detailed, limit, include_test, include_self_ref }) => {
     try {
-      const entries = queryAuditLog({ key, periodDays: parsePeriodDays(period), writesOnly: writes_only, src, project, hitsOnly: hits_only, missesOnly: misses_only, redundantOnly: redundant_only, limit: limit ?? 50, includeTest: include_test });
+      const entries = queryAuditLog({ key, periodDays: parsePeriodDays(period), writesOnly: writes_only, src, project, hitsOnly: hits_only, missesOnly: misses_only, redundantOnly: redundant_only, limit: limit ?? 50, includeTest: include_test, includeSelfRef: include_self_ref });
 
       if (entries.length === 0) {
         return textResponse("No audit entries found.");

@@ -1303,6 +1303,14 @@ describe('MCP Server Tools', () => {
       await toolHandlers['reverie_audit']({ key: 'arch', period: '7d', writes_only: true, limit: 10 });
       expect(queryAuditLog).toHaveBeenCalledWith({ key: 'arch', periodDays: 7, writesOnly: true, limit: 10 });
     });
+
+    it('passes include_test and include_self_ref through (#130 #134)', async () => {
+      const { queryAuditLog } = await import('../utils/audit');
+      await toolHandlers['reverie_audit']({ include_test: true, include_self_ref: true });
+      expect(queryAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({ includeTest: true, includeSelfRef: true })
+      );
+    });
   });
 
   describe('MCP wrapper audit logging', () => {

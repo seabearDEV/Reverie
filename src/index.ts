@@ -853,19 +853,29 @@ reverie
   .option('-n, --limit <n>', 'Max entries to show (default: 50)', parseInt)
   .option('-f, --follow', 'Follow the audit log in real time (with --json: stream NDJSON rows)')
   .option('--include-test', 'Include RVR_TEST-tagged rows (excluded by default)')
+  .option('--include-self-ref', 'Include stats/audit self-instrumentation rows (excluded by default)')
   .option('--exclude-session <id>', 'Hide rows from the given session id (watcher self-exclusion)')
-  .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean; includeTest?: boolean; excludeSession?: string }) => {
+  .action(async (key: string | undefined, options: { period: string; writes?: boolean; mcp?: boolean; cli?: boolean; project?: string; hits?: boolean; misses?: boolean; redundant?: boolean; detailed?: boolean; json?: boolean; limit?: number; follow?: boolean; includeTest?: boolean; includeSelfRef?: boolean; excludeSession?: string }) => {
     if (options.follow) {
       // #135 watch mode. In JSON mode this streams raw NDJSON rows (one
       // AuditEntry per line, no envelope) — the single-envelope contract
       // (#117 WS1) applies to single-shot commands, not unbounded streams.
+      // The wrapper can't enclose an unbounded stream (its logging finally
+      // would never run), but the invocation must still reach the record
+      // (#134) — log it fire-and-forget at stream start. success:true means
+      // "stream started"; the exit (SIGINT) has no outcome to record.
+      const { logToolCall } = await import('./utils/telemetry');
+      const { logAudit } = await import('./utils/audit');
+      void logToolCall('reverie_audit', key, 'cli', undefined, { selfRef: true });
+      void logAudit({ src: 'cli', tool: 'reverie_audit', op: 'meta', key, success: true, selfRef: true });
       const { followAuditLog } = await import('./commands/audit');
       await followAuditLog(key, options);
     } else {
       const { showAuditLog } = await import('./commands/audit');
-      // Instrumented with selfRef:true (#134). --follow stays unwrapped: it
-      // streams until SIGINT, so the wrapper's logging finally would never
-      // run and stdout would stay monkey-patched for the process lifetime.
+      // Instrumented with selfRef:true (#134). --follow above logs its own
+      // row at stream start instead: it streams until SIGINT, so the
+      // wrapper's logging finally would never run and stdout would stay
+      // monkey-patched for the process lifetime.
       await withCliInstrumentation(
         { tool: 'reverie_audit', key, params: { period: options.period, writes: options.writes, limit: options.limit, includeTest: options.includeTest } },
         () => withPager(() => showAuditLog(key, options)),
