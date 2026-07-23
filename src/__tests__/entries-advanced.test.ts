@@ -4,7 +4,7 @@
  * Covers: encrypted values, --confirm flow, batch set, --force,
  * rename with alias re-pointing, copy subtrees, edge cases.
  */
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -257,6 +257,53 @@ describe('entries advanced', () => {
       run('set conf.cmd2 --no-confirm');
       const data = readData();
       expect(data.confirm['conf.cmd2']).toBeUndefined();
+    });
+
+    // #158 regression: a non-gated entry that references a confirm-gated
+    // command via ${key} or $(key) must NOT bypass the tripwire. Non-TTY
+    // (spawn) run of an unconfirmed gated command fails closed. Args pass as
+    // an array (execFileSync, no shell) so ${key}/$(key) reach rvr intact —
+    // the shared string-based run() would let the outer shell eat them.
+    const rvr = (args: string[]): { stdout: string; status: number } => {
+      try {
+        const stdout = execFileSync('bun', ['dist/index.js', ...args], {
+          env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' }, timeout: 10000,
+        }).toString();
+        return { stdout, status: 0 };
+      } catch (e: unknown) {
+        const err = e as { stdout?: Buffer; status?: number };
+        return { stdout: (err.stdout ?? Buffer.from('')).toString(), status: err.status ?? 1 };
+      }
+    };
+
+    // A filesystem side-effect is the clean signal of ACTUAL execution — the
+    // safe preview resolves ${key} into the displayed command text, so string
+    // matching on stdout can't distinguish "previewed" from "ran".
+    it('confirm gate is NOT bypassed by a ${key} reference to a gated command (#158)', () => {
+      const marker = path.join(tmpDir, 'pwned-1');
+      rvr(['set', '--global', '--force', 'gated.deploy', `touch ${marker}`, '--confirm']);
+      rvr(['set', '--global', '--force', 'wrapper.build', 'true && ${gated.deploy}']);
+      const r = rvr(['run', 'wrapper.build']);
+      expect(r.status).not.toBe(0);
+      expect(fs.existsSync(marker)).toBe(false);
+    });
+
+    it('confirm gate is NOT bypassed by a $(key) exec reference to a gated command (#158)', () => {
+      const marker = path.join(tmpDir, 'pwned-2');
+      rvr(['set', '--global', '--force', 'gated.deploy2', `touch ${marker}`, '--confirm']);
+      rvr(['set', '--global', '--force', 'wrapper.build2', 'true && $(gated.deploy2)']);
+      const r = rvr(['run', 'wrapper.build2']);
+      expect(r.status).not.toBe(0);
+      expect(fs.existsSync(marker)).toBe(false);
+    });
+
+    it('gated command reached via reference runs with --yes (#158, no false-positive)', () => {
+      const marker = path.join(tmpDir, 'approved-3');
+      rvr(['set', '--global', '--force', 'gated.deploy3', `touch ${marker}`, '--confirm']);
+      rvr(['set', '--global', '--force', 'wrapper.build3', 'true && ${gated.deploy3}']);
+      const r = rvr(['run', 'wrapper.build3', '--yes']);
+      expect(r.status).toBe(0);
+      expect(fs.existsSync(marker)).toBe(true);
     });
   });
 

@@ -39,7 +39,7 @@ import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
-import { interpolate, interpolateExec, interpolateObject, StrictInterpolationError } from "./utils/interpolate";
+import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, StrictInterpolationError } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace } from "./utils/telemetry";
 import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
@@ -914,6 +914,19 @@ function runGated(
     command = rawValues.map((cv) => interpolate(cv)).join(' && ');
   } catch (err) {
     return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // #158: the caller's needsConfirm covers only the top-level/chain keys. A
+  // confirm-gated command pulled in transitively via ${key}/$(key) must also
+  // force the gate — enumerate the referenced keys (no execution) and OR them
+  // in. Done here so both the single-key and chain callsites are covered.
+  if (!needsConfirm) {
+    for (const cv of rawValues) {
+      for (const k of collectReferencedKeys(cv)) {
+        if (hasConfirm(k)) { needsConfirm = true; break; }
+      }
+      if (needsConfirm) break;
+    }
   }
 
   if (opts.dry) return textResponse(`$ ${command}`);

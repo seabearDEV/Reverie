@@ -18,7 +18,7 @@ import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
-import { interpolate, interpolateExec, interpolateObject } from '../utils/interpolate';
+import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
 import { isJsonMode, setResult, failJson } from '../utils/output';
 
@@ -137,6 +137,15 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     const value = commands.join(' && ');
     const rawValue = rawCommands.join(' && ');
 
+    // #158: the confirm gate must cover every key run touches, not just the
+    // top-level segments. A hostile non-gated entry that references a
+    // confirm-gated command via ${key} or $(key) would otherwise execute it
+    // with no prompt. Enumerate the transitive key set (no execution) and
+    // gate on any of them carrying confirm metadata.
+    const confirmKeys = new Set<string>(resolvedKeys);
+    for (const k of collectReferencedKeys(rawValue)) confirmKeys.add(k);
+    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k));
+
     // SECURITY: produce the real shell command ONLY when actually executing —
     // this is the single place `$(key)` exec refs run. Callers invoke it past
     // the dry/confirm gate; on interpolation error it reports and returns
@@ -155,7 +164,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     // the child's stdio. --source (the shell-eval wrapper path) is exempt — it
     // is an internal integration, not an agent surface.
     if (isJsonMode() && !options.source) {
-      const needsConfirmJson = resolvedKeys.some(k => hasConfirm(k));
+      const needsConfirmJson = anyKeyNeedsConfirm;
       if (options.dry) {
         setResult({ keys: resolvedKeys, command: value });
         return;
@@ -200,7 +209,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     }
 
     // Only prompt if any resolved key has confirm metadata set (and --yes not passed)
-    const needsConfirm = resolvedKeys.some(k => hasConfirm(k));
+    const needsConfirm = anyKeyNeedsConfirm;
     if (needsConfirm && !options.yes) {
       if (process.stdin.isTTY) {
         const answer = await askConfirmation('Run this? [y/N] ', options.source ? process.stderr : undefined);
