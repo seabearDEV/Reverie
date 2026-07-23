@@ -142,8 +142,8 @@ export function queryAuditLog(options: AuditQueryOptions = {}): AuditEntry[] {
   const keyPrefix = options.key ? options.key + '.' : undefined;
 
   const filtered = cached.filter(e =>
-    (options.includeTest || e.test !== true) &&
-    (options.includeSelfRef || e.selfRef !== true) &&
+    (options.includeTest === true || e.test !== true) &&
+    (options.includeSelfRef === true || e.selfRef !== true) &&
     (cutoff <= 0 || e.ts >= cutoff) &&
     (!options.key || e.key === options.key || !!e.key?.startsWith(keyPrefix!)) &&
     (!options.writesOnly || e.op === 'write') &&

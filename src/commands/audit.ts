@@ -180,7 +180,7 @@ export function showAuditLog(key: string | undefined, options: AuditCommandOptio
 function matchesFilter(entry: AuditEntry, options: AuditCommandOptions, key: string | undefined): boolean {
   const keyPrefix = key ? key + '.' : undefined;
   return (
-    (options.includeTest || entry.test !== true) &&
+    (options.includeTest === true || entry.test !== true) &&
     // Self-exclusion (#134): follow mode never streams the observability
     // calls of other shells watching the same log.
     entry.selfRef !== true &&
