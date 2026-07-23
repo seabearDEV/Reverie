@@ -20,10 +20,28 @@ describe('atomicWriteFileSync', () => {
     expect(fs.readFileSync(target, 'utf8')).toBe('{"hello":"world"}');
   });
 
-  it('does not leave a .tmp file behind', () => {
+  it('does not leave any .tmp file behind', () => {
     const target = path.join(tmpDir, 'test.json');
     atomicWriteFileSync(target, 'content');
-    expect(fs.existsSync(target + '.tmp')).toBe(false);
+    expect(fs.readdirSync(tmpDir).filter(f => f.includes('.tmp'))).toEqual([]);
+  });
+
+  // #159 write-side regression: a hostile store pre-plants a symlink at the
+  // (formerly predictable) tmp path pointing outside the store. The write
+  // must NOT follow it and clobber the target. Randomized tmp suffix + 'wx'
+  // (O_EXCL, no-follow) close this.
+  it('does not follow a pre-planted symlink at the legacy tmp path (#159)', () => {
+    const victim = path.join(tmpDir, 'victim.txt');
+    fs.writeFileSync(victim, 'ORIGINAL');
+    const target = path.join(tmpDir, 'entry.json');
+    // The old predictable tmp path an attacker would have targeted.
+    fs.symlinkSync(victim, target + '.tmp');
+
+    atomicWriteFileSync(target, '{"v":"written"}');
+
+    // Victim untouched; target written correctly.
+    expect(fs.readFileSync(victim, 'utf8')).toBe('ORIGINAL');
+    expect(fs.readFileSync(target, 'utf8')).toBe('{"v":"written"}');
   });
 
   it('overwrites existing file atomically', () => {

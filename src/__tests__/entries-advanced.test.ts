@@ -305,6 +305,18 @@ describe('entries advanced', () => {
       expect(r.status).toBe(0);
       expect(fs.existsSync(marker)).toBe(true);
     });
+
+    // Audit round 2 (#158): the gated command is reached through a ${value}
+    // hop that then contains a $(exec) ref — the case the first fix missed.
+    it('confirm gate is NOT bypassed by a ${value}→$(exec) chain to a gated command (#158)', () => {
+      const marker = path.join(tmpDir, 'pwned-chain');
+      rvr(['set', '--global', '--force', 'chain.dangerous', `touch ${marker}`, '--confirm']);
+      rvr(['set', '--global', '--force', 'chain.wrap', '$(chain.dangerous)']);
+      rvr(['set', '--global', '--force', 'chain.readme', 'true && ${chain.wrap}']);
+      const r = rvr(['run', 'chain.readme']);
+      expect(r.status).not.toBe(0);
+      expect(fs.existsSync(marker)).toBe(false);
+    });
   });
 
   // ── _meta staleness ────────────────────────────────────────────────

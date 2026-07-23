@@ -116,15 +116,18 @@ describe('Config', () => {
     it('writes formatted JSON to config path via atomic write', () => {
       saveConfig({ colors: true, theme: 'dark', max_backups: 10 });
 
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
-        '/mock/config.json.tmp',
-        JSON.stringify({ colors: true, theme: 'dark', max_backups: 10 }, null, 2),
-        { encoding: 'utf8', mode: 0o600 }
-      );
-      expect(fs.renameSync).toHaveBeenCalledWith(
-        '/mock/config.json.tmp',
-        '/mock/config.json'
-      );
+      // #159 write-side: tmp path carries a random suffix and the write uses
+      // the no-follow exclusive flag ('wx'). Match the shape, not the exact
+      // random tmp name.
+      const tmpRe = /^\/mock\/config\.json\.[0-9a-f]+\.tmp$/;
+      const writeCall = (fs.writeFileSync as Mock).mock.calls[0];
+      expect(writeCall[0]).toMatch(tmpRe);
+      expect(writeCall[1]).toBe(JSON.stringify({ colors: true, theme: 'dark', max_backups: 10 }, null, 2));
+      expect(writeCall[2]).toEqual({ encoding: 'utf8', mode: 0o600, flag: 'wx' });
+
+      const renameCall = (fs.renameSync as Mock).mock.calls[0];
+      expect(renameCall[0]).toMatch(tmpRe);
+      expect(renameCall[1]).toBe('/mock/config.json');
     });
 
     it('logs error when writeFileSync throws', () => {

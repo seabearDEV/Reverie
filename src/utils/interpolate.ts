@@ -70,7 +70,7 @@ function parseRef(ref: string): { key: string; modifier?: ':-' | ':?'; modValue?
  *   `${key:-default}` — use default if key is not found
  *   `${key:?error}`   — throw custom error if key is not found
  */
-function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>, allowExec: boolean, visited?: Set<string>): string {
+function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>, allowExec: boolean, visited?: Set<string>, noExec = false): string {
   const { key: rawKey, modifier, modValue } = parseRef(ref);
   const resolvedKey = resolveKey(rawKey.trim());
   // #158: record every key reached through interpolation so the run-path
@@ -91,7 +91,7 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
   if (resolved === undefined) {
     if (modifier === ':-') {
       // Default value — interpolate it in case it contains ${} references
-      return interpolate(modValue ?? '', maxDepth, seen, execCache, allowExec, visited);
+      return interpolate(modValue ?? '', maxDepth, seen, execCache, allowExec, visited, noExec);
     }
     if (modifier === ':?') {
       // Strict: the user opted in to fail-loud by writing `:?`. If we
@@ -116,7 +116,11 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
 
   const nextSeen = new Set(seen);
   nextSeen.add(resolvedKey);
-  return interpolate(resolved, maxDepth - 1, nextSeen, execCache, allowExec, visited);
+  // #158 (audit round 2): thread noExec so a `${value}` → `$(exec)` chain
+  // stays in collect mode. Dropping it here left the nested exec ref literal
+  // during enumeration while the real run (allowExec) still executed it — the
+  // exact enumeration≠execution divergence the confirm gate must not have.
+  return interpolate(resolved, maxDepth - 1, nextSeen, execCache, allowExec, visited, noExec);
 }
 
 /**
@@ -262,7 +266,7 @@ export function interpolate(
         }
         if (depth === 0) {
           const ref = result.slice(i + 2, j);
-          out += ref === '' ? '${}' : resolveRef(ref, maxDepth, seen, execCache, allowExec, visited);
+          out += ref === '' ? '${}' : resolveRef(ref, maxDepth, seen, execCache, allowExec, visited, noExec);
           i = j + 1;
         } else {
           // Unclosed brace — leave as-is
