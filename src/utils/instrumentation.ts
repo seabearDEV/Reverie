@@ -415,6 +415,7 @@ export async function withCliInstrumentation<T>(
         hit,
         responseSize: responseSize ?? 0,
         agent: resolveAgentIdentity().agent,
+        agentDetected: resolveAgentIdentity().agentDetected,
       });
       for (const mp of closedPaths) {
         void appendMissPath(mp);

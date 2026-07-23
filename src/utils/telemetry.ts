@@ -79,6 +79,8 @@ export interface MissPath {
   resolution: 'writeback' | 'moved_on' | 'timeout';
   resolvedAt: number;
   agent?: string | undefined;
+  /** Agent came from env fingerprinting, not explicit RVR_AGENT_NAME (#138). */
+  agentDetected?: boolean | undefined;
 }
 
 export function getMissPathsPath(): string {
@@ -107,6 +109,7 @@ export interface OpenMissWindow {
   toolCalls: number;
   explorationBytes: number;
   agent?: string | undefined;
+  agentDetected?: boolean | undefined;
 }
 
 const MISS_WINDOW_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -129,6 +132,7 @@ export class MissWindowTracker {
     hit: boolean | undefined;
     responseSize: number;
     agent?: string | undefined;
+    agentDetected?: boolean | undefined;
   }): MissPath[] {
     const now = Date.now();
     const closed: MissPath[] = [];
@@ -177,6 +181,7 @@ export class MissWindowTracker {
           toolCalls: 0,
           explorationBytes: 0,
           agent: params.agent,
+          agentDetected: params.agentDetected,
         });
       }
     }
@@ -227,6 +232,7 @@ export class MissWindowTracker {
       resolution,
       resolvedAt: now,
       agent: w.agent,
+      ...(w.agentDetected && { agentDetected: true }),
     };
   }
 }

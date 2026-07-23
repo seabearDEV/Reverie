@@ -354,6 +354,7 @@ server.tool = ((...args: any[]) => {
         hit,
         responseSize,
         agent: resolveAgentIdentity().agent,
+        agentDetected: resolveAgentIdentity().agentDetected,
       });
       for (const mp of closedPaths) {
         void appendMissPath(mp);

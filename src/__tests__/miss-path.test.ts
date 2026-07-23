@@ -191,6 +191,18 @@ describe('MissWindowTracker', () => {
     expect(flushed[0].agent).toBe('claude-code');
   });
 
+  it('carries the agentDetected confidence marker through to closed records (#138)', () => {
+    const tracker = new MissWindowTracker();
+
+    tracker.onToolCall({
+      session: 's1', tool: 'reverie_get', namespace: 'arch', key: 'arch.mcp',
+      op: 'read', hit: false, responseSize: 0, agent: 'claude-code', agentDetected: true,
+    });
+
+    const flushed = tracker.flushAll();
+    expect(flushed[0].agentDetected).toBe(true);
+  });
+
   it('returns empty array when no windows are open', () => {
     const tracker = new MissWindowTracker();
     expect(tracker.flushAll()).toHaveLength(0);

@@ -19,6 +19,14 @@ describe('deriveAgentIdentity (#138)', () => {
     expect(id.agentDetected).toBe(true);
   });
 
+  it('detects the remaining fingerprint table entries', () => {
+    expect(deriveAgentIdentity({ CURSOR_TRACE_ID: 'abc' }).agent).toBe('cursor');
+    expect(deriveAgentIdentity({ CURSOR_AGENT_MODE: '1' }).agent).toBe('cursor');
+    expect(deriveAgentIdentity({ COPILOT_AGENT_ID: 'x' }).agent).toBe('copilot');
+    expect(deriveAgentIdentity({ GEMINI_CLI: '1' }).agent).toBe('gemini');
+    expect(deriveAgentIdentity({ AIDER_MODEL: 'gpt' }).agent).toBe('aider');
+  });
+
   it('returns unattributed on a clean environment', () => {
     const id = deriveAgentIdentity({ PATH: '/usr/bin', HOME: '/home/u' });
     expect(id.agent).toBeUndefined();
