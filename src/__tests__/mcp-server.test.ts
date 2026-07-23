@@ -1394,16 +1394,20 @@ describe('MCP Server Tools', () => {
       );
     });
 
-    it('does not call logAudit for reverie_stats', async () => {
+    it('logs reverie_stats with selfRef:true and op meta (#134)', async () => {
       logAuditMock.mockClear();
       await toolHandlers['reverie_stats']({});
-      expect(logAuditMock).not.toHaveBeenCalled();
+      expect(logAuditMock).toHaveBeenCalledWith(
+        expect.objectContaining({ tool: 'reverie_stats', op: 'meta', selfRef: true })
+      );
     });
 
-    it('does not call logAudit for reverie_audit tool itself', async () => {
+    it('logs reverie_audit itself with selfRef:true and op meta (#134)', async () => {
       logAuditMock.mockClear();
       await toolHandlers['reverie_audit']({});
-      expect(logAuditMock).not.toHaveBeenCalled();
+      expect(logAuditMock).toHaveBeenCalledWith(
+        expect.objectContaining({ tool: 'reverie_audit', op: 'meta', selfRef: true })
+      );
     });
   });
 

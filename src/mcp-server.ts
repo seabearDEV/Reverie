@@ -129,7 +129,7 @@ const server = new McpServer(
 
 // Wrap server.tool to auto-log telemetry and audit for every tool call
 const _origTool = server.tool.bind(server);
-import { SKIP_AUDIT, BULK_OPS, captureValue, captureCopySource, captureBulkCount, deriveAfterValue, isRedundantWrite } from "./utils/instrumentation";
+import { SELF_REF_TOOLS, BULK_OPS, captureValue, captureCopySource, captureBulkCount, deriveAfterValue, isRedundantWrite } from "./utils/instrumentation";
 
 // ── Per-call guardrail signals ──────────────────────────────────────
 // Handlers stash guardrail outcomes here (size-budget shedding for #100,
@@ -221,9 +221,7 @@ server.tool = ((...args: any[]) => {
       } catch { /* ignore — alias resolution is best-effort */ }
     }
 
-    const shouldAudit = !SKIP_AUDIT.has(name);
-    if (!shouldAudit) return origHandler(params, extra);
-
+    const selfRef = SELF_REF_TOOLS.has(name) ? true : undefined;
     const op = classifyOp(name);
     const isWrite = op === 'write' || op === 'exec' || op === 'remove';
 
@@ -315,6 +313,7 @@ server.tool = ((...args: any[]) => {
         project: projectFile ? path.dirname(projectFile) : undefined,
         refusedReason,
         rescuedByExplicitGlobal,
+        selfRef,
         ...guardrails,
       };
       void logToolCall(name, key, 'mcp', resolvedScope, telemetryExtras);
@@ -340,6 +339,7 @@ server.tool = ((...args: any[]) => {
         redundant,
         refusedReason,
         rescuedByExplicitGlobal,
+        selfRef,
         ...guardrails,
       });
 

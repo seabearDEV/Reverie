@@ -12,7 +12,7 @@ vi.mock('../utils/paths', () => ({
 }));
 
 import { isTestRun } from '../utils/testTraffic';
-import { logToolCall, loadTelemetry, computeStats } from '../utils/telemetry';
+import { logToolCall, loadTelemetry, computeStats, classifyOp } from '../utils/telemetry';
 import { logAudit, queryAuditLog, clearAuditLogCache } from '../utils/audit';
 
 const savedRvrTest = process.env.RVR_TEST;
@@ -77,5 +77,34 @@ describe('test-traffic tagging (#130)', () => {
     expect(defaultRows.map(e => e.key)).toEqual(['a.real']);
     const allRows = queryAuditLog({ includeTest: true });
     expect(allRows.map(e => e.key).sort()).toEqual(['a.real', 'a.test']);
+  });
+});
+
+describe('selfRef instrumentation (#134)', () => {
+  it('classifies the observability tools as meta ops', () => {
+    expect(classifyOp('reverie_stats')).toBe('meta');
+    expect(classifyOp('reverie_audit')).toBe('meta');
+  });
+
+  it('selfRef rows are logged but excluded from stats', async () => {
+    delete process.env.RVR_TEST;
+    await logToolCall('reverie_set', 'project.name', 'cli');
+    await logToolCall('reverie_stats', undefined, 'cli', undefined, { selfRef: true });
+
+    // The record is complete…
+    expect(loadTelemetry()).toHaveLength(2);
+    // …but aggregates never count the act of looking at them.
+    expect(computeStats().totalCalls).toBe(1);
+    // include_test does not open the selfRef gate — separate concerns.
+    expect(computeStats(0, true).totalCalls).toBe(1);
+  });
+
+  it('queryAuditLog excludes selfRef rows unless asked', async () => {
+    delete process.env.RVR_TEST;
+    await logAudit({ src: 'cli', tool: 'reverie_set', op: 'write', key: 'a.real', success: true }, true);
+    await logAudit({ src: 'cli', tool: 'reverie_audit', op: 'meta', success: true, selfRef: true }, true);
+
+    expect(queryAuditLog().map(e => e.tool)).toEqual(['reverie_set']);
+    expect(queryAuditLog({ includeSelfRef: true })).toHaveLength(2);
   });
 });

@@ -48,6 +48,10 @@ export interface TelemetryEntry {
   /** True when the row was produced under RVR_TEST (#130). Excluded from
    *  stats by default; pre-tag historical test rows remain untagged. */
   test?: boolean | undefined;
+  /** True for observability-tool calls (reverie_stats/reverie_audit, #134).
+   *  Logged so the record is complete, excluded from aggregates so they
+   *  never count the act of looking at them. */
+  selfRef?: boolean | undefined;
 }
 
 // Re-export for backward compatibility — anything that previously imported
@@ -335,6 +339,7 @@ export interface TelemetryExtras {
   shedNamespaces?: string[] | undefined;
   writeAmpWarning?: boolean | undefined;
   writeAmpCount?: number | undefined;
+  selfRef?: boolean | undefined;
 }
 
 export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 'mcp', scope?: 'project' | 'global', extras?: TelemetryExtras, sync = false): Promise<void> {
@@ -447,7 +452,9 @@ function pctChange(current: number, previous: number): number | undefined {
  */
 export function computeStats(periodDays = 0, includeTest = false): TelemetryStats {
   const raw = loadTelemetry();
-  const all = includeTest ? raw : raw.filter(e => e.test !== true);
+  // selfRef rows (#134) are never aggregated — stats about using stats would
+  // recursively inflate every run. The raw log keeps them for watchers.
+  const all = raw.filter(e => e.selfRef !== true && (includeTest || e.test !== true));
   const cutoff = periodDays > 0 ? Date.now() - periodDays * 86400000 : 0;
   const entries = cutoff > 0 ? all.filter(e => e.ts >= cutoff) : all;
 

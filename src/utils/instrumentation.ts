@@ -14,8 +14,15 @@ import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, h
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
-/** Tools that should not be audited (observability-only commands) */
-export const SKIP_AUDIT = new Set(['reverie_stats', 'reverie_audit']);
+/**
+ * Observability tools whose rows are tagged selfRef:true (#134). Formerly
+ * SKIP_AUDIT — these calls were not logged at all, which made stats/audit
+ * usage unverifiable from the record ("never run" and "invisible" looked
+ * identical) and left the 'meta' op class permanently unfired. They are now
+ * fully instrumented; computeStats and queryAuditLog exclude selfRef rows by
+ * default so aggregates never count the act of looking at them.
+ */
+export const SELF_REF_TOOLS = new Set(['reverie_stats', 'reverie_audit']);
 
 /** Tools that operate on the entire store (before/after = entry count) */
 export const BULK_OPS = new Set(['reverie_import', 'reverie_reset']);
@@ -138,11 +145,7 @@ export async function withCliInstrumentation<T>(
   ctx: CliToolContext,
   fn: () => T | Promise<T>,
 ): Promise<T> {
-  // Skip audit for observability-only tools
-  if (SKIP_AUDIT.has(ctx.tool)) {
-    return await Promise.resolve(fn());
-  }
-
+  const selfRef = SELF_REF_TOOLS.has(ctx.tool) ? true : undefined;
   const startTime = Date.now();
   const op = classifyOp(ctx.tool);
   const isWrite = op === 'write' || op === 'exec' || op === 'remove';
@@ -369,6 +372,7 @@ export async function withCliInstrumentation<T>(
       rescuedByExplicitGlobal,
       writeAmpWarning: writeAmp ? true : undefined,
       writeAmpCount: writeAmp?.count,
+      selfRef,
     };
     void logToolCall(ctx.tool, ctx.key, 'cli', resolvedScope, telemetryExtras, true);
 
@@ -395,6 +399,7 @@ export async function withCliInstrumentation<T>(
       rescuedByExplicitGlobal,
       writeAmpWarning: writeAmp ? true : undefined,
       writeAmpCount: writeAmp?.count,
+      selfRef,
     }, true);
 
     // Miss-path tracking on CLI reads (#119). Only meaningful when

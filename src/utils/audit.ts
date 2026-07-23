@@ -43,6 +43,8 @@ export interface AuditEntry {
   writeAmpCount?: number | undefined;
   // RVR_TEST-tagged row (#130) — excluded from queries by default
   test?: boolean | undefined;
+  // Observability-tool call (#134) — excluded from queries by default
+  selfRef?: boolean | undefined;
 }
 
 export interface AuditQueryOptions {
@@ -56,6 +58,7 @@ export interface AuditQueryOptions {
   redundantOnly?: boolean | undefined;
   limit?: number | undefined;
   includeTest?: boolean | undefined;
+  includeSelfRef?: boolean | undefined;
 }
 
 export function getAuditPath(): string {
@@ -140,6 +143,7 @@ export function queryAuditLog(options: AuditQueryOptions = {}): AuditEntry[] {
 
   const filtered = cached.filter(e =>
     (options.includeTest || e.test !== true) &&
+    (options.includeSelfRef || e.selfRef !== true) &&
     (cutoff <= 0 || e.ts >= cutoff) &&
     (!options.key || e.key === options.key || !!e.key?.startsWith(keyPrefix!)) &&
     (!options.writesOnly || e.op === 'write') &&
