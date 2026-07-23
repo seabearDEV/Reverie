@@ -222,6 +222,50 @@ describe('paths utilities', () => {
       }
     });
 
+    // #159 regression: a hostile cloned repo ships `.reverie` as a symlink to
+    // an arbitrary directory (e.g. $HOME). statSync would follow it and every
+    // store write would escape the repo. A symlinked store dir must be refused.
+    it('rejects a symlinked .reverie project store dir (#159)', async () => {
+      const escapeTarget = path.join(tmpDir, 'escape-target');
+      fs.mkdirSync(escapeTarget);
+      const repo = path.join(tmpDir, 'repo');
+      fs.mkdirSync(repo);
+      // repo/.reverie → ../escape-target
+      fs.symlinkSync(escapeTarget, path.join(repo, '.reverie'), 'dir');
+
+      const original = process.env.RVR_PROJECT;
+      const originalNoProj = process.env.RVR_NO_PROJECT;
+      process.env.RVR_PROJECT = repo;
+      delete process.env.RVR_NO_PROJECT;
+      try {
+        const { findProjectStoreDir, clearProjectFileCache } = await import(`../utils/paths?t=${Date.now()}-${Math.random()}`);
+        clearProjectFileCache();
+        expect(findProjectStoreDir()).toBeNull();
+      } finally {
+        if (original !== undefined) process.env.RVR_PROJECT = original; else delete process.env.RVR_PROJECT;
+        if (originalNoProj !== undefined) process.env.RVR_NO_PROJECT = originalNoProj;
+      }
+    });
+
+    it('accepts a real .reverie directory (#159 no false-positive)', async () => {
+      const repo = path.join(tmpDir, 'repo2');
+      const store = path.join(repo, '.reverie');
+      fs.mkdirSync(store, { recursive: true });
+
+      const original = process.env.RVR_PROJECT;
+      const originalNoProj = process.env.RVR_NO_PROJECT;
+      process.env.RVR_PROJECT = repo;
+      delete process.env.RVR_NO_PROJECT;
+      try {
+        const { findProjectStoreDir, clearProjectFileCache } = await import(`../utils/paths?t=${Date.now()}-${Math.random()}`);
+        clearProjectFileCache();
+        expect(findProjectStoreDir()).toBe(store);
+      } finally {
+        if (original !== undefined) process.env.RVR_PROJECT = original; else delete process.env.RVR_PROJECT;
+        if (originalNoProj !== undefined) process.env.RVR_NO_PROJECT = originalNoProj;
+      }
+    });
+
     it('setProjectRootOverride changes the search start directory', async () => {
       const projectFile = path.join(tmpDir, '.codexcli.json');
       fs.writeFileSync(projectFile, '{}');

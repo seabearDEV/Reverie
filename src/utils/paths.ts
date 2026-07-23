@@ -318,7 +318,7 @@ function resolveProjectFile(): { path: string | null; diagnostic: ResolverDiagno
     try {
       if (
         fs.existsSync(resolved) &&
-        fs.statSync(resolved).isDirectory() &&
+        isRealDirectory(resolved) &&
         path.basename(resolved) === PROJECT_DIR_NAME
       ) {
         return { path: resolved, diagnostic };
@@ -329,7 +329,7 @@ function resolveProjectFile(): { path: string | null; diagnostic: ResolverDiagno
     try {
       if (
         fs.existsSync(resolved) &&
-        fs.statSync(resolved).isDirectory() &&
+        isRealDirectory(resolved) &&
         path.basename(resolved) === LEGACY_PROJECT_DIR_NAME
       ) {
         const parentDir = path.dirname(resolved);
@@ -347,11 +347,11 @@ function resolveProjectFile(): { path: string | null; diagnostic: ResolverDiagno
     // Containing directory: look for .reverie/, .codexcli/ (migrate), or .codexcli.json inside it
     if (fs.existsSync(resolved) && isDirectorySafe(resolved)) {
       const reverieCandidate = path.join(resolved, PROJECT_DIR_NAME);
-      if (fs.existsSync(reverieCandidate) && isDirectorySafe(reverieCandidate)) {
+      if (fs.existsSync(reverieCandidate) && isRealDirectory(reverieCandidate)) {
         return { path: reverieCandidate, diagnostic };
       }
       const legacyCandidate = path.join(resolved, LEGACY_PROJECT_DIR_NAME);
-      if (fs.existsSync(legacyCandidate) && isDirectorySafe(legacyCandidate)) {
+      if (fs.existsSync(legacyCandidate) && isRealDirectory(legacyCandidate)) {
         migrateLegacyProjectDir(legacyCandidate, reverieCandidate, resolved);
         return { path: reverieCandidate, diagnostic };
       }
@@ -384,12 +384,12 @@ function resolveProjectFile(): { path: string | null; diagnostic: ResolverDiagno
     // Prefer canonical `.reverie/` over legacy `.codexcli/` (with migration)
     // over legacy `.codexcli.json` (single-file format, migrated by store.ts).
     const reverieCandidate = path.join(dir, PROJECT_DIR_NAME);
-    if (fs.existsSync(reverieCandidate) && isDirectorySafe(reverieCandidate)) {
+    if (fs.existsSync(reverieCandidate) && isRealDirectory(reverieCandidate)) {
       return { path: reverieCandidate, diagnostic };
     }
 
     const legacyCandidate = path.join(dir, LEGACY_PROJECT_DIR_NAME);
-    if (fs.existsSync(legacyCandidate) && isDirectorySafe(legacyCandidate)) {
+    if (fs.existsSync(legacyCandidate) && isRealDirectory(legacyCandidate)) {
       migrateLegacyProjectDir(legacyCandidate, reverieCandidate, dir);
       return { path: reverieCandidate, diagnostic };
     }
@@ -465,6 +465,22 @@ function isDirectorySafe(p: string): boolean {
 }
 
 /**
+ * Like isDirectorySafe but rejects symlinks (#159). Used for the `.reverie` /
+ * `.codexcli` store-directory LEAF: a hostile cloned repo can ship the store
+ * dir as a symlink to an arbitrary location, and statSync would follow it so
+ * every subsequent store write lands outside the repo. lstat sees the link
+ * itself, so a symlinked store dir is refused. Containing/ancestor dirs still
+ * use isDirectorySafe — those are legitimately symlinks (e.g. macOS /tmp).
+ */
+function isRealDirectory(p: string): boolean {
+  try {
+    return fs.lstatSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Clear the cached project file path (for tests and after create/remove)
  */
 export function clearProjectFileCache(): void {
@@ -524,13 +540,13 @@ export function findProjectStoreDir(): string | null {
     const resolved = path.resolve(envPath);
 
     // Direct hit: resolved IS a `.reverie` directory
-    if (fs.existsSync(resolved) && isDirectorySafe(resolved) && path.basename(resolved) === PROJECT_DIR_NAME) {
+    if (fs.existsSync(resolved) && isRealDirectory(resolved) && path.basename(resolved) === PROJECT_DIR_NAME) {
       projectStoreDirCache = resolved;
       return resolved;
     }
 
     // Direct hit: resolved IS a legacy `.codexcli` directory — migrate
-    if (fs.existsSync(resolved) && isDirectorySafe(resolved) && path.basename(resolved) === LEGACY_PROJECT_DIR_NAME) {
+    if (fs.existsSync(resolved) && isRealDirectory(resolved) && path.basename(resolved) === LEGACY_PROJECT_DIR_NAME) {
       const parentDir = path.dirname(resolved);
       const newPath = path.join(parentDir, PROJECT_DIR_NAME);
       migrateLegacyProjectDir(resolved, newPath, parentDir);
@@ -541,12 +557,12 @@ export function findProjectStoreDir(): string | null {
     // Containing directory: look for `.reverie/` first, then legacy `.codexcli/`
     if (fs.existsSync(resolved) && isDirectorySafe(resolved)) {
       const reverieCandidate = path.join(resolved, PROJECT_DIR_NAME);
-      if (fs.existsSync(reverieCandidate) && isDirectorySafe(reverieCandidate)) {
+      if (fs.existsSync(reverieCandidate) && isRealDirectory(reverieCandidate)) {
         projectStoreDirCache = reverieCandidate;
         return reverieCandidate;
       }
       const legacyCandidate = path.join(resolved, LEGACY_PROJECT_DIR_NAME);
-      if (fs.existsSync(legacyCandidate) && isDirectorySafe(legacyCandidate)) {
+      if (fs.existsSync(legacyCandidate) && isRealDirectory(legacyCandidate)) {
         migrateLegacyProjectDir(legacyCandidate, reverieCandidate, resolved);
         projectStoreDirCache = reverieCandidate;
         return reverieCandidate;
@@ -572,7 +588,7 @@ export function findProjectStoreDir(): string | null {
 
     const reverieCandidate = path.join(dir, PROJECT_DIR_NAME);
     try {
-      if (fs.existsSync(reverieCandidate) && fs.statSync(reverieCandidate).isDirectory()) {
+      if (fs.existsSync(reverieCandidate) && isRealDirectory(reverieCandidate)) {
         projectStoreDirCache = reverieCandidate;
         return reverieCandidate;
       }
@@ -582,7 +598,7 @@ export function findProjectStoreDir(): string | null {
 
     const legacyCandidate = path.join(dir, LEGACY_PROJECT_DIR_NAME);
     try {
-      if (fs.existsSync(legacyCandidate) && fs.statSync(legacyCandidate).isDirectory()) {
+      if (fs.existsSync(legacyCandidate) && isRealDirectory(legacyCandidate)) {
         migrateLegacyProjectDir(legacyCandidate, reverieCandidate, dir);
         projectStoreDirCache = reverieCandidate;
         return reverieCandidate;

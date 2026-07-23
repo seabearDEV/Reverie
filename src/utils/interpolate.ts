@@ -70,9 +70,14 @@ function parseRef(ref: string): { key: string; modifier?: ':-' | ':?'; modValue?
  *   `${key:-default}` — use default if key is not found
  *   `${key:?error}`   — throw custom error if key is not found
  */
-function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>, allowExec: boolean): string {
+function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>, allowExec: boolean, visited?: Set<string>, noExec = false): string {
   const { key: rawKey, modifier, modValue } = parseRef(ref);
   const resolvedKey = resolveKey(rawKey.trim());
+  // #158: record every key reached through interpolation so the run-path
+  // confirm gate can consult keys pulled in transitively, not just the
+  // top-level segments. Recorded before the existence check so a `${gated}`
+  // ref counts even via a `:-`/`:?` path.
+  visited?.add(resolvedKey);
 
   if (seen.has(resolvedKey)) {
     const chain = [...seen, resolvedKey].join(' → ');
@@ -86,7 +91,7 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
   if (resolved === undefined) {
     if (modifier === ':-') {
       // Default value — interpolate it in case it contains ${} references
-      return interpolate(modValue ?? '', maxDepth, seen, execCache, allowExec);
+      return interpolate(modValue ?? '', maxDepth, seen, execCache, allowExec, visited, noExec);
     }
     if (modifier === ':?') {
       // Strict: the user opted in to fail-loud by writing `:?`. If we
@@ -111,7 +116,11 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
 
   const nextSeen = new Set(seen);
   nextSeen.add(resolvedKey);
-  return interpolate(resolved, maxDepth - 1, nextSeen, execCache, allowExec);
+  // #158 (audit round 2): thread noExec so a `${value}` → `$(exec)` chain
+  // stays in collect mode. Dropping it here left the nested exec ref literal
+  // during enumeration while the real run (allowExec) still executed it — the
+  // exact enumeration≠execution divergence the confirm gate must not have.
+  return interpolate(resolved, maxDepth - 1, nextSeen, execCache, allowExec, visited, noExec);
 }
 
 /**
@@ -122,8 +131,11 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
  * path). Read/display/dry/preview passes leave `$(key)` literal instead — see
  * the SECURITY note on `interpolate()`.
  */
-function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>): string {
+function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>, visited?: Set<string>, noExec = false): string {
   const resolvedKey = resolveKey(ref.trim());
+  // #158: an exec ref pulls in a key transitively too — record it for the
+  // confirm gate.
+  visited?.add(resolvedKey);
 
   if (seen.has(resolvedKey)) {
     const chain = [...seen, resolvedKey].join(' → ');
@@ -138,14 +150,19 @@ function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCa
   const resolved = getValue(resolvedKey);
 
   if (resolved === undefined) {
+    // Collect mode (#158): a missing exec ref is not fatal — we are only
+    // enumerating keys for the gate, not producing a command.
+    if (noExec) return '';
     throw new Error(`Exec interpolation failed: "${ref}" not found`);
   }
 
   if (typeof resolved !== 'string') {
+    if (noExec) return '';
     throw new Error(`Exec interpolation failed: "${ref}" is not a string value`);
   }
 
   if (isEncrypted(resolved)) {
+    if (noExec) return '';
     throw new Error(`Exec interpolation failed: "${ref}" is encrypted`);
   }
 
@@ -157,7 +174,10 @@ function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCa
   // We are already on the exec path, so nested refs resolve in exec mode too.
   const nextSeen = new Set(seen);
   nextSeen.add(resolvedKey);
-  const command = interpolate(resolved, maxDepth - 1, nextSeen, execCache, true);
+  const command = interpolate(resolved, maxDepth - 1, nextSeen, execCache, !noExec, visited, noExec);
+
+  // Collect mode (#158): recurse to enumerate nested keys but never execute.
+  if (noExec) return '';
 
   // Execute
   const shell = process.env.SHELL ?? '/bin/sh';
@@ -204,6 +224,8 @@ export function interpolate(
   seen = new Set<string>(),
   execCache = new Map<string, string>(),
   allowExec = false,
+  visited?: Set<string>,
+  noExec = false,
 ): string {
   // Early return if no interpolation markers present
   if (!value.includes('${') && !value.includes('$(')) return value;
@@ -244,7 +266,7 @@ export function interpolate(
         }
         if (depth === 0) {
           const ref = result.slice(i + 2, j);
-          out += ref === '' ? '${}' : resolveRef(ref, maxDepth, seen, execCache, allowExec);
+          out += ref === '' ? '${}' : resolveRef(ref, maxDepth, seen, execCache, allowExec, visited, noExec);
           i = j + 1;
         } else {
           // Unclosed brace — leave as-is
@@ -279,9 +301,11 @@ export function interpolate(
       if (result[i] === '$' && result[i + 1] === '(') {
         const close = result.indexOf(')', i + 2);
         if (close !== -1) {
-          if (allowExec) {
+          if (allowExec || noExec) {
+            // noExec (#158): enter the ref to enumerate keys for the confirm
+            // gate, but resolveExecRef skips execSync in that mode.
             const ref = result.slice(i + 2, close);
-            out += resolveExecRef(ref, maxDepth, seen, execCache);
+            out += resolveExecRef(ref, maxDepth, seen, execCache, visited, noExec);
           } else {
             // SECURITY: safe (non-exec) pass — leave `$(key)` literal rather
             // than executing the referenced stored command. Reads, --dry, and
@@ -312,6 +336,28 @@ export function interpolate(
  */
 export function interpolateExec(value: string): string {
   return interpolate(value, MAX_DEPTH, new Set<string>(), new Map<string, string>(), true);
+}
+
+/**
+ * Enumerate every stored key a value would touch when run — both `${key}`
+ * value refs and `$(key)` exec refs, transitively — WITHOUT executing
+ * anything (#158). Uses the same scanner as interpolate() so the key set can
+ * never diverge from what execution actually reaches; that shared-scanner
+ * property is the whole point — a bespoke parser would be one crafted ref away
+ * from missing a gated key. The run-path confirm gate unions this with the
+ * top-level keys so a confirm-gated command pulled in via interpolation still
+ * forces the prompt / refusal.
+ */
+export function collectReferencedKeys(value: string): Set<string> {
+  const visited = new Set<string>();
+  try {
+    interpolate(value, MAX_DEPTH, new Set<string>(), new Map<string, string>(), false, visited, true);
+  } catch {
+    // Collection is best-effort for gating: a cycle or depth-limit throw still
+    // leaves `visited` populated with everything reached so far, and the gate
+    // errs toward MORE keys, never fewer.
+  }
+  return visited;
 }
 
 /**

@@ -211,10 +211,27 @@ function serializeSidecar<T extends Record<string, unknown>>(data: T): string {
   return JSON.stringify(sorted, null, 2);
 }
 
+/**
+ * Read a store-controlled file, refusing to follow a symlink (#159). Store
+ * contents ship inside cloned repos; a hostile `.reverie/<key>.json` (or
+ * sidecar) shipped as a symlink to a victim file would otherwise be read and
+ * surfaced as the entry value. lstat sees the link itself and we reject. A
+ * missing file throws ENOENT as before, so existing callers' ENOENT handling
+ * is unchanged. (Static-clone threat model — the lstat/read window is not a
+ * live-race concern here.)
+ */
+function readStoreFile(filePath: string): string {
+  const st = fs.lstatSync(filePath); // throws ENOENT if absent — callers handle
+  if (st.isSymbolicLink()) {
+    throw new Error(`Refusing to read symlinked store file: ${filePath}`);
+  }
+  return fs.readFileSync(filePath, 'utf8');
+}
+
 /** Reads a sidecar file, returning an empty object on ENOENT or parse failure. */
 function readSidecar<T>(filePath: string): T {
   try {
-    const raw = fs.readFileSync(filePath, 'utf8');
+    const raw = readStoreFile(filePath);
     return (raw?.trim() ? JSON.parse(raw) : {}) as T;
   } catch (err) {
     if (!isENOENT(err)) {
@@ -259,7 +276,7 @@ function isENOENT(err: unknown): boolean {
  */
 function readEpoch(dir: string): number {
   try {
-    const raw = fs.readFileSync(path.join(dir, EPOCH_FILE), 'utf8');
+    const raw = readStoreFile(path.join(dir, EPOCH_FILE));
     const parsed = JSON.parse(raw) as { epoch?: unknown };
     if (typeof parsed.epoch === 'number'
       && Number.isSafeInteger(parsed.epoch)
@@ -459,7 +476,7 @@ export function createDirectoryStore(
       const cached = entryCache.get(key);
       if (cached?.mtimeMs === mtimeMs) continue;
       try {
-        const raw = fs.readFileSync(filePath, 'utf8');
+        const raw = readStoreFile(filePath);
         const wrapper = parseEntryWrapper(raw);
         if (wrapper) {
           entryCache.set(key, { wrapper, mtimeMs });
@@ -672,7 +689,7 @@ export function createDirectoryStore(
       return undefined;
     }
     try {
-      const raw = fs.readFileSync(filePath, 'utf8');
+      const raw = readStoreFile(filePath);
       const wrapper = parseEntryWrapper(raw);
       return wrapper?.value;
     } catch (err) {
@@ -763,7 +780,11 @@ export function createDirectoryStore(
         // Preserve `meta.created` if the entry already exists.
         let existingCreated: number | undefined;
         try {
-          const existingRaw = fs.readFileSync(filePath, 'utf8');
+          // #159: reject a symlinked existing entry file rather than reading
+          // its target. The atomicWriteFileSync below renames a tmp file over
+          // filePath, replacing the symlink with a real file, so the write
+          // still lands safely inside the (verified real) store dir.
+          const existingRaw = readStoreFile(filePath);
           existingCreated = parseEntryWrapper(existingRaw)?.meta?.created;
         } catch (err) {
           if (!isENOENT(err)) {
@@ -898,7 +919,7 @@ function migrateFileToDirectoryLocked(
   // Read and parse the old unified file.
   let parsed: Record<string, unknown>;
   try {
-    const raw = fs.readFileSync(oldFilePath, 'utf8');
+    const raw = readStoreFile(oldFilePath);
     parsed = (raw?.trim() ? JSON.parse(raw) : {}) as Record<string, unknown>;
   } catch (err) {
     throw new Error(
