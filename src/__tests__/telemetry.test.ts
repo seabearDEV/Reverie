@@ -463,6 +463,38 @@ describe('computeStats', () => {
     expect(stats.projectBreakdown['/old/Path/Repo']).toBeUndefined();
   });
 
+  it('segments bulk burst writes from organic writes (#142)', () => {
+    const now = Date.now();
+    // A bulk-init run: 6 writes 50ms apart, across DIFFERENT phantom
+    // sessions (un-bridged CLI = one session per process).
+    const burst = Array.from({ length: 6 }, (_, i) => ({
+      ts: now - 60000 + i * 50, tool: 'reverie_set', session: `p${i}`, op: 'write' as const, ns: 'arch',
+    }));
+    // Organic activity: spread out well beyond the burst gap.
+    const organic = [
+      { ts: now - 30000, tool: 'reverie_set', session: 's1', op: 'write' as const, ns: 'context' },
+      { ts: now - 10000, tool: 'reverie_get', session: 's1', op: 'read' as const, ns: 'context' },
+      { ts: now - 5000, tool: 'reverie_get', session: 's1', op: 'read' as const, ns: 'arch' },
+    ];
+    writeEntries([...burst, ...organic]);
+    const stats = computeStats();
+    expect(stats.writes).toBe(7);
+    expect(stats.bulkWrites).toBe(6);
+    expect(stats.organicWrites).toBe(1);
+    expect(stats.organicReadWriteRatio).toBe('2.0:1');
+  });
+
+  it('does not classify short close-together runs as bulk (#142)', () => {
+    const now = Date.now();
+    // 4 quick writes — below the 5-run threshold.
+    writeEntries(Array.from({ length: 4 }, (_, i) => ({
+      ts: now - 5000 + i * 100, tool: 'reverie_set', session: 's1', op: 'write' as const, ns: 'a',
+    })));
+    const stats = computeStats();
+    expect(stats.bulkWrites).toBe(0);
+    expect(stats.organicWrites).toBe(4);
+  });
+
   it('estimates tokens saved from cache hits', () => {
     const now = Date.now();
     writeEntries([

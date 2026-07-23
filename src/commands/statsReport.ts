@@ -82,6 +82,9 @@ export function formatStatsReport(stats: TelemetryStats, opts: StatsReportOption
   lines.push(`  CLI calls:       ${p.value(String(stats.cliCalls))}`);
   lines.push(`  Total calls:     ${p.value(String(stats.totalCalls))}`);
   lines.push(`  Read:write:      ${p.value(stats.readWriteRatio)} (${stats.reads} reads, ${stats.writes} writes, ${stats.removes} removes, ${stats.execs} execs)`);
+  if (stats.bulkWrites > 0) {
+    lines.push(`    Organic:       ${p.value(stats.organicReadWriteRatio)} (${stats.bulkWrites} of ${stats.writes} writes are bulk-population bursts)`);
+  }
 
   const { project, global: glob, unscoped } = stats.scopeBreakdown;
   if (project > 0 || glob > 0) {

@@ -387,6 +387,11 @@ export interface TelemetryStats {
   removes: number;
   execs: number;
   readWriteRatio: string;
+  // Bulk-write segmentation (#142): burst runs (≥5 writes ≤1s apart) are a
+  // distinct usage mode — bulk store population — not write indiscipline.
+  bulkWrites: number;
+  organicWrites: number;
+  organicReadWriteRatio: string;
   namespaceCoverage: Record<string, { reads: number; writes: number; lastWrite: number | undefined }>;
   topTools: { tool: string; count: number }[];
   scopeBreakdown: { project: number; global: number; unscoped: number };
@@ -472,6 +477,25 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
   const writes = entries.filter(e => e.op === 'write').length;
   const removes = entries.filter(e => e.op === 'remove').length;
   const execs = entries.filter(e => e.op === 'exec').length;
+
+  // Bulk-write segmentation (#142). Detection is time-based over ALL writes
+  // rather than per-session: un-bridged CLI bulk runs carry a different
+  // session id per call (one session per process), so session grouping would
+  // miss exactly the runs this exists to find. Two agents organically
+  // interleaving writes <1s apart on one machine is rare enough to accept.
+  const BULK_GAP_MS = 1000;
+  const BULK_MIN_RUN = 5;
+  const writeRows = entries.filter(e => e.op === 'write').sort((a, b) => a.ts - b.ts);
+  let bulkWrites = 0;
+  let runStart = 0;
+  for (let i = 1; i <= writeRows.length; i++) {
+    if (i === writeRows.length || writeRows[i].ts - writeRows[i - 1].ts > BULK_GAP_MS) {
+      const runLen = i - runStart;
+      if (runLen >= BULK_MIN_RUN) bulkWrites += runLen;
+      runStart = i;
+    }
+  }
+  const organicWrites = writes - bulkWrites;
 
   // Namespace coverage
   // Filter noise from the namespace dashboard:
@@ -681,6 +705,9 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
     removes,
     execs,
     readWriteRatio: writes > 0 ? `${(reads / writes).toFixed(1)}:1` : reads > 0 ? '∞:1' : '0:0',
+    bulkWrites,
+    organicWrites,
+    organicReadWriteRatio: organicWrites > 0 ? `${(reads / organicWrites).toFixed(1)}:1` : reads > 0 ? '∞:1' : '0:0',
     namespaceCoverage: nsCoverage,
     topTools,
     scopeBreakdown,
