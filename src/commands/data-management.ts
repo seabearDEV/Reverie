@@ -3,11 +3,11 @@ import { color } from '../formatting';
 import fs from 'fs';
 import { loadAliases, saveAliases } from '../alias';
 import { loadConfirmKeys, saveConfirmKeys } from '../confirm';
-import { CodexData, ExportOptions, ImportOptions, ResetOptions } from '../types';
+import { ExportOptions, ImportOptions, ResetOptions } from '../types';
 import path from 'path';
 import { validateDataType, validateResetType, confirmOrAbort, getInvalidDataTypeMessage, getInvalidResetTypeMessage, printSuccess, printError, printWarning } from './helpers';
-import { deepMerge } from '../utils/deepMerge';
 import { flattenObject, expandFlatKeys } from '../utils/objectPath';
+import { computeImportSections } from '../utils/importSections';
 import { maskEncryptedValues } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { createAutoBackup } from '../utils/autoBackup';
@@ -341,34 +341,26 @@ export async function importData(type: string, file: string, options: ImportOpti
       return;
     }
 
-    // Compute the final per-section payloads, then commit them together in
-    // a single saveAll call. Closes the cross-section tear window: even
-    // with process death or disk error mid-apply, the store never ends up
-    // with new entries and stale aliases / confirm (or vice versa).
-    const nextEntries: CodexData | undefined = entriesSection
-      ? (options.merge
-          ? deepMerge(loadData(scope), expandFlatKeys(entriesSection)) as CodexData
-          : expandFlatKeys(entriesSection) as CodexData)
-      : undefined;
-    const nextAliases: Record<string, string> | undefined = aliasesSection
-      ? (options.merge
-          ? { ...loadAliases(scope), ...(aliasesSection as Record<string, string>) }
-          : aliasesSection as Record<string, string>)
-      : undefined;
-    const nextConfirm: Record<string, true> | undefined = confirmSection
-      ? (options.merge
-          ? { ...loadConfirmKeys(scope), ...(confirmSection as Record<string, true>) }
-          : confirmSection as Record<string, true>)
-      : undefined;
-
-    saveAll(
+    // Compute the final per-section payloads (shared #133 contract: omitted
+    // sections are never touched), then commit them together in a single
+    // saveAll call. Closes the cross-section tear window: even with process
+    // death or disk error mid-apply, the store never ends up with new
+    // entries and stale aliases / confirm (or vice versa).
+    const next = computeImportSections(
       {
-        ...(nextEntries !== undefined && { entries: nextEntries }),
-        ...(nextAliases !== undefined && { aliases: nextAliases }),
-        ...(nextConfirm !== undefined && { confirm: nextConfirm }),
+        entries: entriesSection,
+        aliases: aliasesSection as Record<string, string> | undefined,
+        confirm: confirmSection as Record<string, true> | undefined,
       },
-      scope,
+      !!options.merge,
+      {
+        entries: () => loadData(scope),
+        aliases: () => loadAliases(scope),
+        confirm: () => loadConfirmKeys(scope),
+      },
     );
+
+    saveAll(next, scope);
 
     if (entriesSection) printSuccess(`Entries ${options.merge ? 'merged' : 'imported'} successfully`);
     if (aliasesSection) printSuccess(`Aliases ${options.merge ? 'merged' : 'imported'} successfully`);

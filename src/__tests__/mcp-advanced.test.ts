@@ -637,6 +637,26 @@ describe('MCP Server - Advanced Tests', () => {
       });
       expect(result.isError).toBe(true);
     });
+
+    it('replace-all with entries-only file leaves aliases and confirm untouched (#133)', async () => {
+      mockAliases.bn = 'project.name';
+      mockConfirmKeys['commands.deploy'] = true;
+      const { saveAll } = await import('../store');
+      (saveAll as any).mockClear();
+      const result = await toolHandlers['reverie_import']({
+        type: 'all',
+        merge: false,
+        data: JSON.stringify({ entries: { project: { name: 'imported' } } }),
+      });
+      expect(result.isError).not.toBe(true);
+      expect((saveAll as any).mock.calls.length).toBe(1);
+      const payload = (saveAll as any).mock.calls[0][0];
+      expect(payload.entries).toEqual({ project: { name: 'imported' } });
+      // The #133 contract: omitted sections must be ABSENT from the saveAll
+      // payload (untouched), not cleared to {}.
+      expect('aliases' in payload).toBe(false);
+      expect('confirm' in payload).toBe(false);
+    });
   });
 
   describe('reverie_export edge cases', () => {
