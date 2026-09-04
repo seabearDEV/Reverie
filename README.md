@@ -549,7 +549,7 @@ Available settings:
 
 ### Project-Scoped Data
 
-Reverie supports per-project knowledge stores that live alongside your code. The `.reverie/` directory is designed to be committed to version control, creating a shared knowledge base that persists across sessions, team members, and AI agents. As of v1.10.0, each entry is its own JSON file inside the directory (`.reverie/arch.storage.json`, `.reverie/commands.build.json`, etc.) — this eliminates merge conflict churn when multiple devs add different entries on parallel branches. Use CLI or MCP tools to edit; hand-editing the wrapper files is unsupported.
+Reverie supports per-project knowledge stores that live alongside your code. The `.reverie/` directory is designed to be committed to version control, creating a shared knowledge base that persists across sessions, team members, and AI agents. As of v1.10.0, each entry is its own JSON file inside the directory (`.reverie/arch.storage.json`, `.reverie/commands.build.json`, etc.) — this eliminates merge conflict churn when multiple devs add different entries on parallel branches. Use CLI or MCP tools to edit; hand-editing the wrapper files is unsupported. The store seeds its own `.gitignore` for per-clone state (`_epoch.json`, the crash-safety counter) so only entries and shared sidecars are committed; repos created before that landed untrack it once with `git rm --cached .reverie/_epoch.json`.
 
 ```bash
 # Initialize a project — scans codebase, creates .reverie/ and CLAUDE.md

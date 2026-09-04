@@ -10,7 +10,10 @@ store entry written through the CLI or MCP tools.
 - `_confirm.json` — entries that require confirmation before running
 - `_epoch.json` — internal commit counter for crash safety; the integer
   climbs by 2 with every save and is used by readers to detect a writer
-  mid-commit. You should never need to touch it.
+  mid-commit. Per-clone state: the `.gitignore` in this directory keeps it
+  out of commits (a fresh clone starts at 0). You should never need to touch it.
+- `.gitignore` — ignores `_epoch.json` so only entries and shared sidecars
+  are committed. Safe to extend.
 
 **Edit via one of:**
 
