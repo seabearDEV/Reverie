@@ -33,7 +33,7 @@ import {
 import { fileURLToPath } from "url";
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
 import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
-import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS, DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES } from "./config";
+import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
@@ -48,7 +48,6 @@ import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolutio
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
-import { HANDOFF_KEY, buildHandoffBanner } from "./utils/handoff";
 import { recordWrite, formatWriteAmpWarning } from "./utils/writeAmp";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -140,6 +139,11 @@ import { SELF_REF_TOOLS, BULK_OPS, captureValue, captureCopySource, captureBulkC
 interface GuardrailSignals {
   degraded?: boolean;
   shedNamespaces?: string[];
+  // reverie_context index-first shape (#188)
+  tier?: string;
+  pinned?: number;
+  indexed?: number;
+  demotedNamespaces?: string[];
   writeAmpWarning?: boolean;
   writeAmpCount?: number;
 }
@@ -185,7 +189,7 @@ function determineHit(result: unknown, success: boolean): boolean {
 /** Try to extract entry count from response text */
 function extractEntryCount(text: string): number | undefined {
   // reverie_context footer: "(N entries)"
-  const tierMatch = /\((\d+) entries?\)/.exec(text);
+  const tierMatch = /\((\d+) entries?[):]/.exec(text);
   if (tierMatch) return parseInt(tierMatch[1], 10);
   // Count non-empty content lines (rough approximation for listings)
   const lines = text.split('\n').filter(l => l.trim() && !l.startsWith('[tier:') && !l.startsWith('Aliases:'));
@@ -1377,15 +1381,25 @@ server.tool(
 
 // --- reverie_context ---
 
-import { filterEntriesByTier, computeContextSizeReport, formatContextSizeReport, estimateBootstrapOverheadBytes } from "./commands/context";
-import { shedToFitBudget, formatShedNotice, PATHOLOGICAL_OVERFLOW_NOTICE } from "./utils/contextBudget";
+import {
+  composeContext,
+  contextLines,
+  contextNotices,
+  contextSignals,
+  formatContextFooter,
+  computeContextSizeReport,
+  formatContextSizeReport,
+  resolveBootstrapBudget,
+  resolveGistChars,
+  MCP_HINTS,
+} from "./commands/context";
 
 server.tool(
   "reverie_context",
-  "Compact summary of all stored project knowledge — call FIRST at session start to bootstrap. Tiers: essential (project/commands/conventions only), standard (default, excludes arch.*), full (everything; bypasses the size budget). Tier-vs-task guidance: docs/schema-guide.md.",
+  "Front page of stored project knowledge — call FIRST at session start. standard (default): pinned namespaces (project/commands/conventions) in full + a one-line gist per other entry; open any entry with reverie_get. essential: pinned only. full: everything, bypasses the size budget. Tiers: docs/schema-guide.md.",
   {
     scope: SCOPE_PARAM,
-    tier: z.enum(["essential", "standard", "full"]).optional().describe("Context tier: essential (project/commands/conventions only — for focused work or when standard overflows), standard (default, excludes arch.* — typical session start), full (everything — for refactoring, architectural changes, or onboarding). See docs/schema-guide.md \"Bootstrap tiers\""),
+    tier: z.enum(["essential", "standard", "full"]).optional().describe("essential (pinned namespaces only — focused work, or when standard would demote), standard (default: pinned in full + a one-line index of everything else), full (every value — refactors, architecture, onboarding). Override the pinned set with a system.bootstrap.pinned entry. See docs/schema-guide.md \"Bootstrap tiers\""),
     sizeOnly: z.boolean().optional().describe("Return per-namespace entry/byte counts and the budget instead of content"),
   },
   async ({ scope: scopeParam, tier, sizeOnly }) => {
@@ -1397,113 +1411,65 @@ server.tool(
       const flat = getEntriesFlat(effectiveScope);
       const effectiveTier = tier ?? 'standard';
 
+      // Header: declare the resolved project file so agents know where
+      // writes will land.
+      const headerLine = hasProject
+        ? `[project: ${projectFile}]`
+        : `[project: NONE — auto-scope writes will fall through to global. Pin RVR_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`;
+
       // Size projection (#127): answer "how big is my bootstrap" without
       // paying for the bootstrap. Estimates handoff/alias/footer overhead
       // without rendering.
       if (sizeOnly) {
         const header = hasProject ? `[project: ${projectFile}]` : '[project: NONE]';
-        return textResponse(`${header}\n\n${formatContextSizeReport(computeContextSizeReport(flat, effectiveTier, effectiveScope))}`);
+        return textResponse(`${header}\n\n${formatContextSizeReport(computeContextSizeReport(flat, effectiveTier, effectiveScope, MCP_HINTS))}`);
       }
 
-      const filtered = filterEntriesByTier(flat, effectiveTier);
       const aliases = loadAliases(effectiveScope);
-
-      // Load meta for age indicators (needed both for banner and entry tags)
       const meta = effectiveScope === 'auto' ? loadMetaMerged() : loadMeta(effectiveScope);
 
-      // Handoff banner runs against the unfiltered flat map so it appears
-      // regardless of tier. When present, the key is dropped from the entries
-      // list below so the banner content isn't duplicated (#91).
-      const handoff = buildHandoffBanner(flat, meta);
-      if (handoff) {
-        delete filtered[HANDOFF_KEY];
+      // Shared composer (#188): partition by tier, gist the unpinned
+      // entries, demote then shed to fit the budget. The CLI renders the
+      // same payload; only the header line and hint wording differ.
+      const payload = composeContext(flat, {
+        tier: effectiveTier,
+        meta,
+        aliases,
+        budgetBytes: resolveBootstrapBudget(),
+        gistChars: resolveGistChars(),
+        hints: MCP_HINTS,
+        extraOverheadBytes: Buffer.byteLength(`${headerLine}\n\n`, 'utf8'),
+      });
+
+      if (!payload.handoff && payload.order.length === 0 && Object.keys(aliases).length === 0) {
+        return textResponse(`${headerLine}\n\nNo entries stored. Use reverie_set to add project knowledge.`);
       }
 
-      if (!handoff && Object.keys(filtered).length === 0 && Object.keys(aliases).length === 0) {
-        const header = hasProject
-          ? `[project: ${projectFile}]\n\n`
-          : `[project: NONE — auto-scope writes will fall through to global. Pin RVR_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]\n\n`;
-        return textResponse(`${header}No entries stored. Use reverie_set to add project knowledge.`);
-      }
+      emitGuardrailSignals(contextSignals(payload));
 
-      // Encrypt-display the entry values once so size accounting matches what
-      // we render below.
-      const displayed: Record<string, string> = {};
-      for (const [k, v] of Object.entries(filtered)) {
-        displayed[k] = isEncrypted(v) ? '[encrypted]' : v;
-      }
+      const lines: string[] = [headerLine, ''];
 
-      // Apply the size-budget shed (#100) before we render. tier:"full"
-      // bypasses entirely — user has opted in to the full payload.
-      let shedSegments: import('./utils/contextBudget').ShedSegment[] = [];
-      let pathologicalOverflow = false;
-      let kept: Record<string, string> = displayed;
-      if (effectiveTier !== 'full') {
-        const budget = (loadConfig().bootstrap_max_response_bytes) || DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES;
-        const envOverride = process.env.RVR_BOOTSTRAP_MAX_BYTES;
-        const effectiveBudget = envOverride && Number.isInteger(Number(envOverride)) && Number(envOverride) > 0
-          ? Number(envOverride)
-          : budget;
-
-        // Estimate non-entry overhead (handoff banner, aliases, tier footer,
-        // shed-notice allowance) via the shared estimator, plus the MCP-only
-        // project header line.
-        const headerLine = hasProject
-          ? `[project: ${projectFile}]`
-          : `[project: NONE — auto-scope writes will fall through to global. Pin RVR_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`;
-        const fixedOverheadBytes =
-          Buffer.byteLength(`${headerLine}\n\n`, 'utf8') +
-          estimateBootstrapOverheadBytes(handoff?.lines, aliases, effectiveTier, Object.keys(displayed).length, 'pass tier:"full" for complete context');
-
-        const decision = shedToFitBudget(displayed, (k) => getStalenessTag(k, meta), fixedOverheadBytes, effectiveBudget);
-        kept = decision.kept;
-        shedSegments = decision.segments;
-        pathologicalOverflow = decision.pathologicalOverflow;
-
-        if (shedSegments.length > 0 || pathologicalOverflow) {
-          emitGuardrailSignals({
-            degraded: true,
-            shedNamespaces: shedSegments.map(s => s.label),
-          });
-        }
-      }
-
-      const lines: string[] = [];
-
-      // Header: declare resolved project file so agents know where writes will land.
-      if (hasProject) {
-        lines.push(`[project: ${projectFile}]`);
-      } else {
-        lines.push(`[project: NONE — auto-scope writes will fall through to global. Pin RVR_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`);
-      }
-      lines.push('');
-
-      // Shed notice — first thing after the project banner so agents see
-      // exactly what was trimmed and how to retrieve it (#100).
-      if (shedSegments.length > 0) {
-        lines.push(formatShedNotice(shedSegments));
+      // Notices first — demoted, trimmed, pathological — so agents see
+      // exactly what changed shape and how to retrieve it (#100/#188).
+      for (const notice of contextNotices(payload, MCP_HINTS)) {
+        lines.push(notice);
         lines.push('');
       }
-      // Pathological overflow notice — surfaces explicitly that even after
-      // shedding everything sheddable, the response still exceeds budget.
-      if (pathologicalOverflow) {
-        lines.push(PATHOLOGICAL_OVERFLOW_NOTICE);
+      if (payload.pinnedWarning) {
+        lines.push(`[warning: ${payload.pinnedWarning}]`);
         lines.push('');
       }
 
-      // Banner before entries — first thing the agent sees after project line.
-      if (handoff) {
-        lines.push(...handoff.lines);
-        if (Object.keys(kept).length > 0 || Object.keys(aliases).length > 0) {
+      // Banner before entries — first thing the agent sees after the notices.
+      if (payload.handoff) {
+        lines.push(...payload.handoff.lines);
+        if (payload.order.length > 0 || Object.keys(aliases).length > 0) {
           lines.push('');
         }
       }
 
-      if (Object.keys(kept).length > 0) {
-        for (const [k, v] of Object.entries(kept)) {
-          const ageTag = getStalenessTag(k, meta);
-          lines.push(`${k}: ${v}${ageTag}`);
-        }
+      for (const line of contextLines(payload, meta)) {
+        lines.push(`${line.key}: ${line.text}${line.ageTag}`);
       }
 
       if (Object.keys(aliases).length > 0) {
@@ -1514,10 +1480,10 @@ server.tool(
         }
       }
 
-      const entryCount = Object.keys(kept).length;
-      if (effectiveTier !== 'full') {
+      const footer = formatContextFooter(payload, MCP_HINTS);
+      if (footer) {
         lines.push('');
-        lines.push(`[tier: ${effectiveTier} (${entryCount} entries) — pass tier:"full" for complete context]`);
+        lines.push(footer);
       }
 
       return textResponse(lines.join("\n"));

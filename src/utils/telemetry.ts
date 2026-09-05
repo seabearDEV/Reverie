@@ -44,6 +44,13 @@ export interface TelemetryEntry {
   /** reverie_context only: priority labels of namespaces shed when degraded
    *  fired (#100). E.g. `["files.*", "arch.*"]`. */
   shedNamespaces?: string[] | undefined;
+  /** reverie_context only (#188): requested tier, entries rendered in full,
+   *  entries rendered as index lines, and pinned namespaces demoted to
+   *  index lines to fit the budget. */
+  tier?: string | undefined;
+  pinned?: number | undefined;
+  indexed?: number | undefined;
+  demotedNamespaces?: string[] | undefined;
   /** reverie_set only: true when the same key was written ≥3 times in this
    *  session within a 30-min window (#101). */
   writeAmpWarning?: boolean | undefined;
@@ -347,6 +354,10 @@ export interface TelemetryExtras {
   rescuedByExplicitGlobal?: boolean | undefined;
   degraded?: boolean | undefined;
   shedNamespaces?: string[] | undefined;
+  tier?: string | undefined;
+  pinned?: number | undefined;
+  indexed?: number | undefined;
+  demotedNamespaces?: string[] | undefined;
   writeAmpWarning?: boolean | undefined;
   writeAmpCount?: number | undefined;
   selfRef?: boolean | undefined;

@@ -31,6 +31,7 @@ vi.mock('../formatting', () => ({
     bold: (s: string) => s,
     green: (s: string) => s,
     white: (s: string) => s,
+    red: (s: string) => s,
   },
 }));
 vi.mock('../utils/binaryName', () => ({
@@ -215,5 +216,132 @@ describe('showContext --size-only (#127)', () => {
     const result = contextJson({ sizeOnly: true, tier: 'essential' });
     expect(result.totalEntries).toBe(1);
     expect(result.namespaces.map((n: { ns: string }) => n.ns)).toEqual(['project']);
+  });
+});
+
+describe('showContext index-first (#188)', () => {
+  const LONG = 'Headline about the store. ' + 'x'.repeat(300);
+
+  it('standard tier renders pinned in full and the rest as index lines (arch.* included)', () => {
+    mockGetEntriesFlat.mockReturnValue({
+      'project.name': 'reverie',
+      'arch.store': LONG,
+      'context.short': 'fits on one line',
+    });
+    showContext({ plain: true });
+    const output = logged.join('\n');
+    expect(output).toContain('project.name: reverie');
+    expect(output).toContain('arch.store: Headline about the store.');
+    expect(output).toContain('… [+');
+    expect(output).not.toContain('x'.repeat(300));
+    expect(output).toContain('context.short: fits on one line');
+    expect(output).toContain('[tier: standard (3 entries: 1 in full, 2 indexed)');
+    expect(output).toContain('rvr get <key>');
+  });
+
+  it('--json splits entries (full) from index (gist, bytes, truncated) and names the pinned set', () => {
+    mockGetEntriesFlat.mockReturnValue({
+      'project.name': 'reverie',
+      'arch.store': LONG,
+      'context.short': 'fits on one line',
+    });
+    const parsed = contextJson();
+    expect(parsed.tier).toBe('standard');
+    expect(parsed.entries).toEqual({ 'project.name': 'reverie' });
+    expect(parsed.index['context.short']).toEqual({ gist: 'fits on one line', bytes: 16, truncated: false });
+    expect(parsed.index['arch.store'].truncated).toBe(true);
+    expect(parsed.index['arch.store'].bytes).toBe(LONG.length);
+    expect(parsed.index['arch.store'].gist.length).toBeLessThanOrEqual(160);
+    expect(parsed.pinned).toEqual(['project', 'commands', 'conventions']);
+    expect(parsed.degraded).toBeUndefined();
+  });
+
+  it('essential tier renders the pinned namespaces only, no index', () => {
+    mockGetEntriesFlat.mockReturnValue({ 'project.name': 'reverie', 'arch.store': LONG });
+    showContext({ plain: true, tier: 'essential' });
+    expect(logged.join('\n')).toContain('[tier: essential (1 entries) — use --tier full for complete context]');
+    const parsed = contextJson({ tier: 'essential' });
+    expect(parsed.entries).toEqual({ 'project.name': 'reverie' });
+    expect(parsed.index).toBeUndefined();
+  });
+
+  it('full tier renders every value with no index and no footer', () => {
+    mockGetEntriesFlat.mockReturnValue({ 'project.name': 'reverie', 'arch.store': LONG });
+    showContext({ plain: true, tier: 'full' });
+    const output = logged.join('\n');
+    expect(output).toContain('x'.repeat(300));
+    expect(output).not.toContain('[tier:');
+    const parsed = contextJson({ tier: 'full' });
+    expect(parsed.index).toBeUndefined();
+    expect(parsed.pinned).toBeUndefined();
+    expect(parsed.entries['arch.store']).toBe(LONG);
+  });
+
+  it('honors a system.bootstrap.pinned override', () => {
+    mockGetEntriesFlat.mockReturnValue({
+      'system.bootstrap.pinned': 'context',
+      'project.name': 'reverie',
+      'context.note': 'Note headline. ' + 'y'.repeat(300),
+    });
+    const parsed = contextJson();
+    expect(parsed.pinned).toEqual(['context']);
+    expect(parsed.entries['context.note']).toContain('y'.repeat(300));
+    expect(parsed.index['project.name']).toEqual({ gist: 'reverie', bytes: 7, truncated: false });
+  });
+
+  it('warns and falls back on an unusable pinned override', () => {
+    mockGetEntriesFlat.mockReturnValue({ 'system.bootstrap.pinned': ' , ', 'project.name': 'reverie' });
+    configureOutput({ json: true, command: 'context' });
+    showContext({});
+    const envelope = buildEnvelope();
+    expect((envelope.result as { pinned: string[] }).pinned).toEqual(['project', 'commands', 'conventions']);
+    expect(envelope.warnings.some(w => w.code === 'CONFIG' && w.message.includes('system.bootstrap.pinned'))).toBe(true);
+  });
+
+  it('demotes pinned namespaces to index lines before dropping anything', () => {
+    mockLoadConfig.mockReturnValue({ bootstrap_max_response_bytes: 1000 } as ReturnType<typeof loadConfig>);
+    mockGetEntriesFlat.mockReturnValue({
+      'project.big': 'Headline. ' + 'p'.repeat(2000),
+      'context.a': 'short',
+    });
+    showContext({ plain: true });
+    const output = logged.join('\n');
+    expect(output).toContain('[demoted to index: project.* (1 entry');
+    expect(output).toContain('project.big: Headline.');
+    expect(output).not.toContain('p'.repeat(2000));
+    expect(output).not.toContain('[trimmed:');
+    expect(output).toContain('context.a: short');
+
+    const parsed = contextJson();
+    expect(parsed.degraded).toBe(true);
+    expect(parsed.demotedNamespaces).toEqual(['project.*']);
+    expect(parsed.shedNamespaces).toEqual([]);
+    expect(parsed.entries).toBeUndefined();
+    expect(parsed.index['project.big'].truncated).toBe(true);
+  });
+
+  it('rejects an unknown tier with INVALID_INPUT', () => {
+    mockGetEntriesFlat.mockReturnValue({ 'project.name': 'reverie' });
+    configureOutput({ json: true, command: 'context' });
+    showContext({ tier: 'bogus' });
+    const envelope = buildEnvelope();
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('INVALID_INPUT');
+    expect(envelope.error?.message).toContain('bogus');
+    process.exitCode = undefined;
+  });
+
+  it('--size-only reports index-shaped namespaces and the pinned set', () => {
+    mockGetEntriesFlat.mockReturnValue({ 'project.name': 'reverie', 'context.gotcha': 'Gotcha headline. ' + 'z'.repeat(300) });
+    showContext({ plain: true, sizeOnly: true });
+    const output = logged.join('\n');
+    expect(output).toContain('(index)');
+    expect(output).toContain('Pinned (rendered in full): project, commands, conventions');
+    const result = contextJson({ sizeOnly: true });
+    const rows = Object.fromEntries(result.namespaces.map((n: { ns: string; bytes: number; shape: string }) => [n.ns, n]));
+    expect(rows.project.shape).toBe('full');
+    expect(rows.context.shape).toBe('index');
+    expect(rows.context.bytes).toBeLessThan(300);
+    expect(result.pinned).toEqual(['project', 'commands', 'conventions']);
   });
 });
