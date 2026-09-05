@@ -11,7 +11,7 @@ import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
 import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
-import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError } from './output';
+import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError, takeSignals } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
@@ -363,6 +363,9 @@ export async function withCliInstrumentation<T>(
     // scope:'global' but would have refused under scope:'auto' because
     // project resolution failed. Mirrors the MCP-side telemetry signal.
     const rescuedByExplicitGlobal = isWrite && scope === 'global' && !projectFile ? true : undefined;
+    // Shape/degradation signals recorded by the command (#188): the same
+    // fields the MCP wrapper gets through its guardrail channel.
+    const signals = takeSignals();
     const telemetryExtras: TelemetryExtras = {
       duration,
       hit,
@@ -374,6 +377,7 @@ export async function withCliInstrumentation<T>(
       writeAmpWarning: writeAmp ? true : undefined,
       writeAmpCount: writeAmp?.count,
       selfRef,
+      ...signals,
     };
     void logToolCall(ctx.tool, ctx.key, 'cli', resolvedScope, telemetryExtras, true);
 
@@ -401,6 +405,7 @@ export async function withCliInstrumentation<T>(
       writeAmpWarning: writeAmp ? true : undefined,
       writeAmpCount: writeAmp?.count,
       selfRef,
+      ...signals,
     }, true);
 
     // Miss-path tracking on CLI reads (#119). Only meaningful when

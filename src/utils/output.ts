@@ -79,12 +79,38 @@ function freshState(): OutputState {
 
 let state: OutputState = freshState();
 
+// Per-invocation signals for telemetry/audit (#188): a command records shape
+// and degradation facts here (tier, pinned/indexed counts, demoted/shed
+// namespaces) and the instrumentation wrapper drains them into the row —
+// the CLI analog of the MCP wrapper's AsyncLocalStorage guardrail channel.
+export interface InvocationSignals {
+  tier?: string | undefined;
+  pinned?: number | undefined;
+  indexed?: number | undefined;
+  degraded?: boolean | undefined;
+  shedNamespaces?: string[] | undefined;
+  demotedNamespaces?: string[] | undefined;
+}
+let signals: InvocationSignals = {};
+
+export function recordSignals(partial: InvocationSignals): void {
+  Object.assign(signals, partial);
+}
+
+/** Drain the recorded signals (empties the channel). */
+export function takeSignals(): InvocationSignals {
+  const drained = signals;
+  signals = {};
+  return drained;
+}
+
 /**
  * Initialize output state for a command invocation. Called from the preAction
  * hook with the resolved JSON-mode decision and the leaf command name.
  */
 export function configureOutput(opts: { json: boolean; command: string }): void {
   state = freshState();
+  signals = {};
   state.json = opts.json;
   state.command = opts.command;
 }
@@ -92,6 +118,7 @@ export function configureOutput(opts: { json: boolean; command: string }): void 
 /** Reset to defaults — test helper. */
 export function resetOutput(): void {
   state = freshState();
+  signals = {};
 }
 
 export function isJsonMode(): boolean {

@@ -1,58 +1,89 @@
-import { filterEntriesByTier, ESSENTIAL_PREFIXES, STANDARD_EXCLUDE_PREFIXES } from '../commands/context';
+import {
+  partitionByTier,
+  resolvePinnedNamespaces,
+  isContextTier,
+  DEFAULT_PINNED_NAMESPACES,
+  PINNED_CONFIG_KEY,
+  ESSENTIAL_PREFIXES,
+} from '../commands/context';
 
-describe('filterEntriesByTier', () => {
-  const flat: Record<string, string> = {
-    'project.name': 'test',
-    'project.stack': 'Node.js',
-    'commands.build': 'npm run build',
-    'conventions.tests': 'Vitest',
-    'arch.storage': 'Unified data.json',
-    'arch.mcp': 'MCP SDK',
-    'files.entry': 'src/index.ts',
-    'context.ci': 'GitHub Actions',
-    'deps.express': 'Express',
-  };
+const flat: Record<string, string> = {
+  'project.name': 'test',
+  'project.stack': 'Node.js',
+  'commands.build': 'npm run build',
+  'conventions.tests': 'Vitest',
+  'arch.storage': 'Unified data.json',
+  'arch.mcp': 'MCP SDK',
+  'files.entry': 'src/index.ts',
+  'context.ci': 'GitHub Actions',
+  'deps.express': 'Express',
+};
 
-  it('full tier returns all entries', () => {
-    const result = filterEntriesByTier(flat, 'full');
-    expect(Object.keys(result).length).toBe(Object.keys(flat).length);
-    expect(result).toEqual(flat);
+describe('partitionByTier (#188)', () => {
+  const pinned = resolvePinnedNamespaces(flat).prefixes;
+
+  it('full tier puts everything in full', () => {
+    const r = partitionByTier(flat, 'full', pinned);
+    expect(r.full).toEqual(flat);
+    expect(r.rest).toEqual({});
   });
 
-  it('essential tier returns only project/commands/conventions', () => {
-    const result = filterEntriesByTier(flat, 'essential');
-    expect(Object.keys(result).length).toBe(4);
-    expect(result['project.name']).toBe('test');
-    expect(result['commands.build']).toBe('npm run build');
-    expect(result['conventions.tests']).toBe('Vitest');
-    expect(result['arch.storage']).toBeUndefined();
-    expect(result['files.entry']).toBeUndefined();
+  it('essential tier renders the pinned namespaces only', () => {
+    const r = partitionByTier(flat, 'essential', pinned);
+    expect(Object.keys(r.full).sort()).toEqual(['commands.build', 'conventions.tests', 'project.name', 'project.stack']);
+    expect(r.rest).toEqual({});
   });
 
-  it('standard tier excludes arch.*', () => {
-    const result = filterEntriesByTier(flat, 'standard');
-    expect(result['arch.storage']).toBeUndefined();
-    expect(result['arch.mcp']).toBeUndefined();
-    // Everything else is included
-    expect(result['project.name']).toBe('test');
-    expect(result['files.entry']).toBe('src/index.ts');
-    expect(result['deps.express']).toBe('Express');
-    expect(Object.keys(result).length).toBe(7);
+  it('standard tier indexes everything else, arch.* included', () => {
+    const r = partitionByTier(flat, 'standard', pinned);
+    expect(Object.keys(r.full).length).toBe(4);
+    expect(Object.keys(r.rest).sort()).toEqual(['arch.mcp', 'arch.storage', 'context.ci', 'deps.express', 'files.entry']);
   });
 
   it('handles empty input', () => {
-    expect(filterEntriesByTier({}, 'full')).toEqual({});
-    expect(filterEntriesByTier({}, 'essential')).toEqual({});
-    expect(filterEntriesByTier({}, 'standard')).toEqual({});
+    expect(partitionByTier({}, 'full', pinned)).toEqual({ full: {}, rest: {} });
+    expect(partitionByTier({}, 'essential', pinned)).toEqual({ full: {}, rest: {} });
+    expect(partitionByTier({}, 'standard', pinned)).toEqual({ full: {}, rest: {} });
+  });
+});
+
+describe('resolvePinnedNamespaces (#188)', () => {
+  it('defaults to project/commands/conventions', () => {
+    const r = resolvePinnedNamespaces({});
+    expect(r.namespaces).toEqual([...DEFAULT_PINNED_NAMESPACES]);
+    expect(r.prefixes).toEqual([...ESSENTIAL_PREFIXES]);
+    expect(r.prefixes).toEqual(['project.', 'commands.', 'conventions.']);
+    expect(r.warning).toBeUndefined();
   });
 
-  it('essential prefixes are correct', () => {
-    expect(ESSENTIAL_PREFIXES).toContain('project.');
-    expect(ESSENTIAL_PREFIXES).toContain('commands.');
-    expect(ESSENTIAL_PREFIXES).toContain('conventions.');
+  it('reads a comma-separated override from system.bootstrap.pinned', () => {
+    const r = resolvePinnedNamespaces({ [PINNED_CONFIG_KEY]: 'conventions, commands., context' });
+    expect(r.namespaces).toEqual(['conventions', 'commands', 'context']);
+    expect(r.prefixes).toEqual(['conventions.', 'commands.', 'context.']);
+    expect(r.warning).toBeUndefined();
   });
 
-  it('standard exclude prefixes are correct', () => {
-    expect(STANDARD_EXCLUDE_PREFIXES).toContain('arch.');
+  it('dedupes repeated names', () => {
+    const r = resolvePinnedNamespaces({ [PINNED_CONFIG_KEY]: 'context,context' });
+    expect(r.namespaces).toEqual(['context']);
+  });
+
+  it('falls back to the default set with a warning on an unusable value', () => {
+    const empty = resolvePinnedNamespaces({ [PINNED_CONFIG_KEY]: ' , ' });
+    expect(empty.namespaces).toEqual([...DEFAULT_PINNED_NAMESPACES]);
+    expect(empty.warning).toContain(PINNED_CONFIG_KEY);
+    const bad = resolvePinnedNamespaces({ [PINNED_CONFIG_KEY]: 'a b/c' });
+    expect(bad.namespaces).toEqual([...DEFAULT_PINNED_NAMESPACES]);
+    expect(bad.warning).toBeDefined();
+  });
+});
+
+describe('isContextTier', () => {
+  it('accepts the three tiers and rejects anything else', () => {
+    expect(isContextTier('essential')).toBe(true);
+    expect(isContextTier('standard')).toBe(true);
+    expect(isContextTier('full')).toBe(true);
+    expect(isContextTier('bogus')).toBe(false);
+    expect(isContextTier('')).toBe(false);
   });
 });

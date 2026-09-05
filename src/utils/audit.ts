@@ -41,6 +41,10 @@ export interface AuditEntry {
   // reverie_context size-budget shedding (#100)
   degraded?: boolean | undefined;
   shedNamespaces?: string[] | undefined;
+  // reverie_context index-first shape (#188)
+  pinned?: number | undefined;
+  indexed?: number | undefined;
+  demotedNamespaces?: string[] | undefined;
   // reverie_set write-amp guard (#101)
   writeAmpWarning?: boolean | undefined;
   writeAmpCount?: number | undefined;

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { getConfigFilePath, ensureDataDirectoryExists } from './utils/paths';
 import { atomicWriteFileSync } from './utils/atomicWrite';
+import { DEFAULT_BOOTSTRAP_GIST_CHARS } from './utils/contextBudget';
 
 // Define the type for configuration
 interface Config {
@@ -9,10 +10,11 @@ interface Config {
   max_backups: number;
   import_max_bytes: number;
   bootstrap_max_response_bytes: number;
+  bootstrap_gist_chars: number;
 }
 
 const VALID_THEMES = ['default', 'dark', 'light'] as const;
-export const VALID_CONFIG_KEYS = ['colors', 'theme', 'max_backups', 'import_max_bytes', 'bootstrap_max_response_bytes'] as const;
+export const VALID_CONFIG_KEYS = ['colors', 'theme', 'max_backups', 'import_max_bytes', 'bootstrap_max_response_bytes', 'bootstrap_gist_chars'] as const;
 
 // 50 MB — a generous ceiling for any realistic Reverie store. Real stores
 // are KB-scale; this catches pathological inputs (misplaced heap dump,
@@ -27,6 +29,12 @@ const DEFAULT_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 // cap; users opted in.
 export const DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES = 38 * 1024;
 
+// Index-line gist length (#188): characters of an entry's first line shown
+// on the bootstrap front page before the "… [+N]" marker. The default lives
+// in contextBudget.ts next to the gist function; re-exported for config
+// consumers.
+export { DEFAULT_BOOTSTRAP_GIST_CHARS };
+
 // Default configuration
 const defaultConfig: Config = {
   colors: true,
@@ -34,6 +42,7 @@ const defaultConfig: Config = {
   max_backups: 10,
   import_max_bytes: DEFAULT_IMPORT_MAX_BYTES,
   bootstrap_max_response_bytes: DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES,
+  bootstrap_gist_chars: DEFAULT_BOOTSTRAP_GIST_CHARS,
 };
 
 // Mtime-based cache for config
@@ -84,6 +93,9 @@ export function loadConfig(): Config {
       bootstrap_max_response_bytes: typeof config.bootstrap_max_response_bytes === 'number' && config.bootstrap_max_response_bytes > 0
         ? config.bootstrap_max_response_bytes
         : defaultConfig.bootstrap_max_response_bytes,
+      bootstrap_gist_chars: typeof config.bootstrap_gist_chars === 'number' && Number.isInteger(config.bootstrap_gist_chars) && config.bootstrap_gist_chars > 0
+        ? config.bootstrap_gist_chars
+        : defaultConfig.bootstrap_gist_chars,
     };
 
     configCache = result;
@@ -164,6 +176,14 @@ export function setConfigSetting(key: string, value: string | boolean): void {
       return;
     }
     config.bootstrap_max_response_bytes = num;
+    saveConfig(config);
+  } else if (key === 'bootstrap_gist_chars') {
+    const num = Number(value);
+    if (!Number.isInteger(num) || num <= 0) {
+      console.error(`Invalid bootstrap_gist_chars: '${value}'. Must be a positive integer (characters).`);
+      return;
+    }
+    config.bootstrap_gist_chars = num;
     saveConfig(config);
   } else {
     console.error(`Unknown configuration key: ${key}`);

@@ -300,43 +300,57 @@ The Reverie project's own [`.reverie/`](../.reverie/) is the reference implement
 
 ## Bootstrap tiers
 
-`reverie_context` is the bootstrap entry point — agents call it at session start to load all stored knowledge in one tool result. But "all stored knowledge" can be larger than the agent's tool-result cap (~25k tokens on Claude Code / Desktop, sized similarly on most hosts). The `tier` parameter lets the caller pick how much detail to materialize.
+`reverie_context` is the bootstrap entry point — agents call it at session start. Since [#188](https://github.com/seabearDEV/reverie/issues/188) it renders a **front page** rather than every value: pinned namespaces in full, and one index line for every other entry. The `tier` parameter picks how much to materialize.
 
 ### The three tiers
 
-| Tier | Includes | Excludes | When to use |
+| Tier | Renders in full | Renders as index lines | When to use |
 |---|---|---|---|
-| `essential` | `project.*`, `commands.*`, `conventions.*` | everything else | Cheap preliminary bootstrap; or when even the standard tier overflows |
-| `standard` (default) | everything except `arch.*` | `arch.*` | Typical session start. Excludes architecture detail to keep payload compact |
-| `full` | everything | nothing | Refactoring a subsystem, onboarding to the codebase, or any task where architecture context matters |
+| `essential` | pinned namespaces | nothing | Focused work; or when even the standard tier would demote |
+| `standard` (default) | pinned namespaces | every other entry — `arch.*` included | Typical session start: every key is visible, only unpinned values are gisted |
+| `full` | everything | nothing | Refactoring a subsystem, onboarding, or any task where you would open most entries anyway |
 
-The tiers are inclusive cones: `essential ⊂ standard ⊂ full`. There's no way to ask for `arch.*` without also getting `project.*`/`commands.*`/`conventions.*`.
+`essential ⊂ standard ⊂ full` still holds: standard adds the index; full replaces gists with values.
 
-### Pick the right tier for the task
+### Pinned namespaces
 
-- **Answering a question, small fix, single-file edit** → `essential`. The agent rarely needs architecture context for a focused change.
-- **Multi-file change, bug fix, new feature** → omit (gets `standard`). The default — most work doesn't touch architecture decisions.
-- **Refactor, architectural change, learning the codebase** → `full`. You're going to read `arch.*` entries anyway; load them upfront.
-
-### Relationship to the size budget (#100)
-
-When the projected response would exceed `bootstrap_max_response_bytes` (default 38KB), `reverie_context` automatically sheds entries by priority — `files.*` first, then `arch.*`, then large `context.*` (largest-first). `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never shed. A `[trimmed: …]` notice at the top of the response names what was dropped and points at `reverie_get <key>` or `tier:"full"` for retrieval.
-
-`tier: "full"` opts out of degradation entirely. If you ask for the full payload, you get the full payload — even if that means hitting the host cap. The shed only fires for `essential` and `standard`.
-
-If even after shedding everything sheddable the response still exceeds budget (because `project.*`, `conventions.*`, `commands.*`, `deps.*`, or `context.next_session` alone are over), you'll see a second notice: `[warning: reverie_context payload still exceeds budget after shedding all sheddable namespaces. Increase bootstrap_max_response_bytes (reverie_config_set) or audit project.*, conventions.*, commands.*, deps.*, and context.next_session for over-long entries.]`. That's the signal to either raise the budget or trim long never-shed entries.
-
-### Configuring the budget
+Default: `project.*`, `commands.*`, `conventions.*`. Override per store with an entry:
 
 ```bash
-# Read current budget
-rvr config get bootstrap_max_response_bytes
-
-# Raise the cap (example: 100KB for hosts with larger tool-result limits)
-rvr config set bootstrap_max_response_bytes 102400
+rvr set system.bootstrap.pinned "conventions,commands"
 ```
 
-For test/integration workflows, `RVR_BOOTSTRAP_MAX_BYTES` env var overrides the config.
+The override travels with the repo (it is store content, not `config.json`) and applies to both surfaces. An unusable value falls back to the default with a warning.
+
+### Index lines
+
+```
+context.releaseTagStaleLocal: Release-tag hazard hit 2026-06-09 during v1.2.1: a STALE LOCAL tag v1.2.1 already existed… [+1.0K] [88d]
+```
+
+The gist is the entry's first line, cut at a word boundary within `bootstrap_gist_chars` (default 160). `[+1.0K]` is what opening the entry costs; the age tag is the usual one. An entry that fits on one line renders whole, exactly as before. Open an entry with `reverie_get <key>` / `rvr get <key>`, or a whole namespace with `rvr get context -v`. The footer repeats the hint: `[tier: standard (89 entries: 24 in full, 65 indexed) — open an entry with rvr get <key>, or use --tier full for everything]`.
+
+Write entries so the first sentence stands alone — it *is* the gist. `rvr lint --seed-quality` flags entries that don't.
+
+### Relationship to the size budget (#100, #188)
+
+When the projected response would exceed `bootstrap_max_response_bytes` (default 38KB):
+
+1. **Demote** — pinned namespaces fall back to index lines, largest first, never `context.next_session`. Notice: `[demoted to index: project.* (21 entries, 21.7K → 4.1K) — open entries with reverie_get <key>]`. Nothing is lost.
+2. **Drop** — the #100 order over what remains: `files.*` first, then `arch.*`, then large `context.*` largest-first. `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never dropped. Notice: `[trimmed: …]`.
+3. If the never-dropped namespaces still exceed the budget as index lines you get the `[warning: reverie_context payload still exceeds budget …]` notice — with ~200-byte index lines that takes hundreds of entries.
+
+`tier: "full"` opts out of all of it. In JSON output the notices appear in `warnings[]` and as `result.degraded`, `result.demotedNamespaces`, `result.shedNamespaces`; `result.entries` holds the values rendered in full and `result.index` the gists (`{ gist, bytes, truncated }`).
+
+### Configuring the budget and gist length
+
+```bash
+rvr config get bootstrap_max_response_bytes
+rvr config set bootstrap_max_response_bytes 102400   # hosts with larger tool-result limits
+rvr config set bootstrap_gist_chars 120              # shorter index lines
+```
+
+For test/integration workflows, `RVR_BOOTSTRAP_MAX_BYTES` and `RVR_BOOTSTRAP_GIST_CHARS` override the config.
 
 ## CLI agent sessions (`RVR_SESSION`)
 

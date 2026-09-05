@@ -8,16 +8,16 @@ import { ERROR_CODES } from './utils/output';
 export const DEFAULT_LLM_INSTRUCTIONS = `You are connected to a Reverie store via MCP — a persistent project knowledge base shared across sessions and agents.
 
 THE LOOP:
-1. Bootstrap: call reverie_context FIRST every session. Tiers: "essential" (small fixes), standard (default), "full" (refactors/onboarding). In a GitHub repo, follow with \`gh issue list --state open\`.
+1. Bootstrap: call reverie_context FIRST every session — pinned namespaces in full, a one-line gist per other entry; open any entry with reverie_get. Tiers: "essential" (pinned only), standard (default), "full" (everything). In a GitHub repo, follow with \`gh issue list --state open\`.
 2. Check before exploring: before reading or searching code, try reverie_get / reverie_find — arch.*, conventions.*, commands.*, files.* may already hold the answer.
 3. Write back: store non-obvious discoveries (decisions, gotchas, patterns) with reverie_set before the session ends; update or remove anything outdated. Do NOT store what package.json/README/code already says. Entries are seeds — concise insights, not code.
 4. Hand off: at session end consider setting context.next_session ("where things stand") — the next bootstrap surfaces it as a banner; auto-stale after 7 days.
 
-NAMESPACES: project.* commands.* arch.* conventions.* context.* (gotchas) files.* deps.*. Full schema + tier guidance: docs/schema-guide.md in the Reverie repo.
+NAMESPACES: project.* commands.* arch.* conventions.* context.* (gotchas) files.* deps.*. Schema + tiers: docs/schema-guide.md.
 
 SCOPE: the .reverie/ project store is the default when present; scope:"global" targets ~/.reverie/store. Writes refuse with PROJECT_UNRESOLVED when no project resolves — run reverie_init or retry with scope:"global". Reads fall through automatically.
 
-WARNINGS ARE ACTIONABLE: "[trimmed: ...]" = size budget shed (fetch dropped keys via reverie_get, or tier:"full"); "warning: ... written N times" = write-amplification (let entries stabilize). Entries tagged [Nd]/[untracked] are freshness-suspect — verify before trusting; reverie_stale audits this.
+WARNINGS ARE ACTIONABLE: "[demoted ...]"/"[trimmed ...]" = size budget (reverie_get the keys, or tier:"full"); "warning: ... written N times" = write-amplification (let entries stabilize). Entries tagged [Nd]/[untracked] are freshness-suspect — verify before trusting; reverie_stale audits this.
 
 NEVER hand-edit .reverie/*.json — it desyncs entry metadata. Use these tools or the \`rvr\` CLI (exact 1:1 equivalent; map via \`rvr manifest --json\`).
 
@@ -42,7 +42,7 @@ STRUCTURED OUTPUT (for agents):
 - Set \`RVR_SESSION=<any-id>\` once per agent session so separate \`rvr\` invocations count as one session: write-amplification warnings (3rd+ write of a key in 30min) land in \`warnings[]\` with code WRITE_AMP, and miss-path telemetry works across invocations — the same session guardrails MCP agents get.
 
 HOW TO USE:
-- At session start, run \`rvr context\` to load all stored project knowledge in one call.
+- At session start, run \`rvr context\`: pinned namespaces (project/commands/conventions) in full plus a one-line gist per other entry — open any entry with \`rvr get <key>\` when its gist is relevant.
 - Before exploring the codebase (reading files, searching code), check if the answer is already stored — e.g. \`rvr get arch\` or \`rvr get conventions\` or \`rvr get commands\`.
 - When you discover something non-obvious about the project (architecture decisions, gotchas, patterns, key file roles), store it with \`rvr set <key> <value>\`.
 - When you find stored information that is outdated or wrong, update it immediately.
@@ -65,7 +65,7 @@ SCOPE:
 - If a write fails with error code PROJECT_UNRESOLVED, project resolution failed (no .reverie/ found). Either run \`rvr init\` to create a project store, or retry with \`--global\` if the entry is genuinely user-level. Reads still fall through to global automatically — only writes refuse.
 
 GUARDRAILS:
-- \`rvr context\` may add a "[trimmed: ...]" warning when the response would exceed the configured size budget (default 38KB). Listed namespaces were dropped to fit; fetch the specific entries via \`rvr get <key>\`, or run \`rvr context --tier full\` to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never trimmed.
+- \`rvr context\` may add "[demoted to index: ...]" / "[trimmed: ...]" notices when the response would exceed the size budget (default 38KB): demoted namespaces fell back to one-line gists, trimmed ones were dropped. Fetch specific entries via \`rvr get <key>\`, or run \`rvr context --tier full\` to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never dropped.
 - In JSON mode these notices appear in the envelope's "warnings" array (and "result.degraded"/"result.shedNamespaces").
 
 EXECUTION:
@@ -79,7 +79,7 @@ DO NOT HAND-EDIT THE STORE:
 EFFECTIVE USAGE:
 - Run \`rvr context\` as your FIRST step to bootstrap session knowledge.
 - If the project is a GitHub repo, run \`gh issue list --state open\` after \`rvr context\` to see in-flight work. If the user's request relates to an open issue, read its body before coding.
-- Pick the right tier: \`rvr context --tier essential\` (small fixes), \`rvr context\` (standard — most work), \`rvr context --tier full\` (refactors, onboarding).
+- Pick the right tier: \`rvr context --tier essential\` (pinned namespaces only), \`rvr context\` (standard — pinned in full + index of the rest), \`rvr context --tier full\` (everything — refactors, onboarding). Pin different namespaces per store with \`rvr set system.bootstrap.pinned "conventions,commands"\`.
 - Write back: when you learn something non-obvious, store it before the session ends.
 - Hand off: at session end, consider \`rvr set context.next_session "<where things stand>"\` — the next session's \`rvr context\` surfaces it as a banner. Ephemeral; treated as stale after 7 days.
 - Audit freshness with \`rvr stale\` after \`rvr context\` when starting a new task. Entries tagged [untracked] or [Nd] are the most suspect — verify versions, URLs, and commands before trusting them.

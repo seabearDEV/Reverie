@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Index-first bootstrap** ([#188](https://github.com/seabearDEV/reverie/issues/188); [#186](https://github.com/seabearDEV/reverie/issues/186) step 1). `reverie_context` / `rvr context` is now a front page: pinned namespaces (`project.*`, `commands.*`, `conventions.*` by default; per-store override via a `system.bootstrap.pinned` entry) render in full, and every other entry — `arch.*` included, which the standard tier used to hide — renders as one line: key, first-line gist, and the bytes you get by opening it with `rvr get <key>`. Entries that fit on one line render whole, so small stores are unchanged. The size budget now demotes pinned namespaces to index lines before it drops anything (`[demoted to index: …]`), which makes the pathological overflow case effectively unreachable. JSON adds `result.index` (`{ gist, bytes, truncated }`) and `result.pinned`; context telemetry/audit rows gain `tier`, `pinned`, `indexed`, `demotedNamespaces` — and CLI rows carry `degraded` for the first time. New config key `bootstrap_gist_chars` (default 160). Measured on three real stores (standard tier, plain output, default 38KB budget / 140KB budget): Reverie 65KB → 23KB / 43KB; Tesserae 139KB (already shedding) → 38KB / 88KB; Taptory 111KB → 24KB / 84KB. `--tier full` is byte-identical to before.
+
+### Fixed
+
+- `rvr context --tier <bogus>` was silently treated as `standard` while the footer echoed the bogus name; it now fails with `INVALID_INPUT`.
+
 ## [1.3.0] - 2026-07-23
 
 **Theme: Trust — "trust the record."** Scoped at the v1.2.x soak exit from the first cross-machine usage dataset (two machines, ~10 weeks of telemetry): the analysis showed the observability layer itself couldn't be trusted — 56% of one log was untagged test traffic, one repo counted as three projects across path renames, bulk store-population read as write indiscipline, and the stats tools were invisible to their own record. This release makes the measurement layer honest before the next soak cycle reads it, and promotes watcher agents to a first-class pattern.

@@ -1,4 +1,14 @@
-import { shedToFitBudget, formatShedNotice, entryRenderBytes, PATHOLOGICAL_OVERFLOW_NOTICE } from '../utils/contextBudget';
+import {
+  shedToFitBudget,
+  formatShedNotice,
+  entryRenderBytes,
+  PATHOLOGICAL_OVERFLOW_NOTICE,
+  gistOf,
+  indexEntryOf,
+  formatIndexText,
+  demoteToFitBudget,
+  formatDemoteNotice,
+} from '../utils/contextBudget';
 
 const noTag = () => '';
 
@@ -190,5 +200,97 @@ describe('PATHOLOGICAL_OVERFLOW_NOTICE', () => {
     expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('bootstrap_max_response_bytes');
     expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('reverie_config_set');
     expect(PATHOLOGICAL_OVERFLOW_NOTICE).toContain('warning');
+  });
+});
+
+describe('gistOf / indexEntryOf / formatIndexText (#188)', () => {
+  it('returns a short single-line value untouched', () => {
+    expect(gistOf('npm test', 160)).toEqual({ gist: 'npm test', truncated: false });
+  });
+
+  it('cuts a long line at the last word boundary within the cap', () => {
+    const r = gistOf('alpha beta gamma delta epsilon', 12);
+    expect(r.gist).toBe('alpha beta');
+    expect(r.truncated).toBe(true);
+  });
+
+  it('hard-cuts when the first half of the line has no whitespace', () => {
+    const r = gistOf('x'.repeat(50), 20);
+    expect(r.gist).toBe('x'.repeat(20));
+    expect(r.truncated).toBe(true);
+  });
+
+  it('uses the first line of a multi-line value and marks it truncated', () => {
+    const r = gistOf('Headline sentence.\nMore detail below.', 160);
+    expect(r.gist).toBe('Headline sentence.');
+    expect(r.truncated).toBe(true);
+  });
+
+  it('a trailing newline alone does not count as truncation', () => {
+    expect(gistOf('done\n', 160)).toEqual({ gist: 'done', truncated: false });
+  });
+
+  it('index text carries the remaining-bytes marker only when truncated', () => {
+    const ix = indexEntryOf('a'.repeat(10) + ' ' + 'b'.repeat(1013), 12);
+    expect(ix.bytes).toBe(1024);
+    expect(ix.truncated).toBe(true);
+    expect(formatIndexText(ix)).toBe('aaaaaaaaaa… [+1014B]');
+    expect(formatIndexText(indexEntryOf('short', 160))).toBe('short');
+  });
+});
+
+describe('demoteToFitBudget (#188)', () => {
+  const noTag = () => '';
+  const toGist = () => 'g';
+
+  it('does nothing under budget', () => {
+    const display = { 'project.name': 'reverie', 'context.a': 'x' };
+    const r = demoteToFitBudget(display, ['project.name'], toGist, noTag, 0, 10_000);
+    expect(r.demotedKeys).toEqual([]);
+    expect(r.segments).toEqual([]);
+    expect(r.display).toEqual(display);
+  });
+
+  it('demotes the largest pinned namespace first and stops once under budget', () => {
+    const display = {
+      'project.big': 'p'.repeat(300),
+      'conventions.small': 'c'.repeat(50),
+      'context.idx': 'gist',
+    };
+    const base = entryRenderBytes('conventions.small', 'c'.repeat(50), '')
+      + entryRenderBytes('context.idx', 'gist', '')
+      + entryRenderBytes('project.big', 'g', '');
+    const r = demoteToFitBudget(display, ['project.big', 'conventions.small'], toGist, noTag, 0, base + 5);
+    expect(r.demotedKeys).toEqual(['project.big']);
+    expect(r.segments.map(s => s.label)).toEqual(['project.*']);
+    expect(r.display['project.big']).toBe('g');
+    expect(r.display['conventions.small']).toBe('c'.repeat(50));
+    expect(r.segments[0].bytesBefore).toBeGreaterThan(r.segments[0].bytesAfter);
+  });
+
+  it('keeps demoting whole namespaces until under budget', () => {
+    const display = { 'project.big': 'p'.repeat(300), 'conventions.mid': 'c'.repeat(100), 'context.idx': 'gist' };
+    const r = demoteToFitBudget(display, ['project.big', 'conventions.mid'], toGist, noTag, 0, 60);
+    expect(r.demotedKeys).toEqual(['project.big', 'conventions.mid']);
+    expect(r.segments.map(s => s.label)).toEqual(['project.*', 'conventions.*']);
+  });
+
+  it('never demotes context.next_session', () => {
+    const display = { 'context.next_session': 'x'.repeat(500) };
+    const r = demoteToFitBudget(display, ['context.next_session'], toGist, noTag, 0, 10);
+    expect(r.demotedKeys).toEqual([]);
+    expect(r.display['context.next_session']).toBe('x'.repeat(500));
+  });
+});
+
+describe('formatDemoteNotice', () => {
+  it('returns empty string when nothing was demoted', () => {
+    expect(formatDemoteNotice([], 'reverie_get <key>')).toBe('');
+  });
+
+  it('names the namespace, count, byte change, and the fetch hint', () => {
+    const notice = formatDemoteNotice([{ label: 'project.*', keys: ['project.a', 'project.b'], bytesBefore: 2048, bytesAfter: 400 }], 'reverie_get <key>');
+    expect(notice).toContain('[demoted to index: project.* (2 entries, 2.0K → 400B)');
+    expect(notice).toContain('open entries with reverie_get <key>]');
   });
 });
