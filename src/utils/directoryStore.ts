@@ -62,6 +62,7 @@ const ALIASES_FILE = '_aliases.json';
 const CONFIRM_FILE = '_confirm.json';
 const EPOCH_FILE = '_epoch.json';
 const README_FILE = '_README.md';
+const GITIGNORE_FILE = '.gitignore';
 const ENTRY_FILE_SUFFIX = '.json';
 
 /**
@@ -83,7 +84,10 @@ store entry written through the CLI or MCP tools.
 - \`_confirm.json\` — entries that require confirmation before running
 - \`_epoch.json\` — internal commit counter for crash safety; the integer
   climbs by 2 with every save and is used by readers to detect a writer
-  mid-commit. You should never need to touch it.
+  mid-commit. Per-clone state: the \`.gitignore\` in this directory keeps it
+  out of commits (a fresh clone starts at 0). You should never need to touch it.
+- \`.gitignore\` — ignores \`_epoch.json\` so only entries and shared sidecars
+  are committed. Safe to extend.
 
 **Edit via one of:**
 
@@ -295,22 +299,40 @@ function writeEpoch(dir: string, epoch: number): void {
 }
 
 /**
- * Write the hand-edit warning README to the store directory if it doesn't
+ * Git-ignore rules for per-clone store state, seeded to `<store>/.gitignore`
+ * (#187). `.reverie/` is designed to be committed, but `_epoch.json` is a
+ * local seqlock counter bumped on every write — committing it made every
+ * merge between two writers conflict on the counter before any entry did.
+ * readEpoch() treats a missing file as 0, so a fresh clone without it is in
+ * the correct initial state. The `.` prefix keeps the file out of entry
+ * scans (isEntryFilename requires the .json suffix).
+ */
+const GITIGNORE_CONTENT = `# Per-clone store state, managed by Reverie — not shared via git.
+_epoch.json
+`;
+
+/**
+ * Seed a documentation/config file into the store directory if it doesn't
  * already exist. Idempotent and best-effort: a failure to write (read-only
  * filesystem, permissions) is logged via debug and swallowed so the store
  * itself keeps working.
  *
- * Use an atomic no-clobber create so a README that appears concurrently
- * (for example, a user-customized file) is preserved rather than replaced.
+ * Uses an atomic no-clobber create so a file that appears concurrently
+ * (for example, a user-customized one) is preserved rather than replaced.
  */
-function ensureReadme(dir: string): void {
-  const readmePath = path.join(dir, README_FILE);
+function ensureSeedFile(dir: string, name: string, content: string): void {
   try {
-    fs.writeFileSync(readmePath, README_CONTENT, { flag: 'wx' });
+    fs.writeFileSync(path.join(dir, name), content, { flag: 'wx' });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') return;
-    debug(`Failed to write ${README_FILE} in ${dir}: ${String(err)}`);
+    debug(`Failed to write ${name} in ${dir}: ${String(err)}`);
   }
+}
+
+/** Seed the hand-edit warning README and the per-clone .gitignore (#187). */
+function ensureStoreSeeds(dir: string): void {
+  ensureSeedFile(dir, README_FILE, README_CONTENT);
+  ensureSeedFile(dir, GITIGNORE_FILE, GITIGNORE_CONTENT);
 }
 
 // ── Equality helpers ───────────────────────────────────────────────────
@@ -581,7 +603,7 @@ export function createDirectoryStore(
   function save(data: UnifiedData): void {
     const dir = getDirPath();
     ensureDir();
-    ensureReadme(dir);
+    ensureStoreSeeds(dir);
 
     withFileLock(getStoreLockKey(dir), () => {
       // 0. Begin commit: bump epoch to the next odd value. Readers that
@@ -724,7 +746,7 @@ export function createDirectoryStore(
     }
     const dir = getDirPath();
     ensureDir();
-    ensureReadme(dir);
+    ensureStoreSeeds(dir);
 
     return withFileLock(getStoreLockKey(dir), () => {
       // Whether the dir-mtime fast-skip token is current right now. Unlike
@@ -974,9 +996,9 @@ function migrateFileToDirectoryLocked(
     // first save will correctly detect the in-progress commit.
     writeEpoch(tmpDirPath, 0);
 
-    // Seed the hand-edit warning README alongside the data files, so the
-    // migrated directory gets the same nudge a fresh store does.
-    ensureReadme(tmpDirPath);
+    // Seed the hand-edit README and the per-clone .gitignore alongside the
+    // data files, so the migrated directory matches a fresh store (#187).
+    ensureStoreSeeds(tmpDirPath);
 
     // Atomic swap: rename the fully-written tmp directory to the final path.
     fs.renameSync(tmpDirPath, newDirPath);

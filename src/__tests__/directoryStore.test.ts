@@ -816,6 +816,62 @@ describe('_README.md hand-edit nudge', () => {
   });
 });
 
+// ── Per-clone state .gitignore (#187) ──────────────────────────────────
+
+describe('.gitignore per-clone state seed (#187)', () => {
+  it('save() writes .gitignore ignoring _epoch.json on first invocation', () => {
+    const dir = path.join(tmpRoot, 'store');
+    const store = makeStore(dir);
+
+    expect(fs.existsSync(path.join(dir, '.gitignore'))).toBe(false);
+
+    store.save({ entries: { a: '1' }, aliases: {}, confirm: {} });
+
+    const contents = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
+    expect(contents.split('\n')).toContain('_epoch.json');
+  });
+
+  it('setOne() seeds .gitignore on the fast path too', () => {
+    const dir = path.join(tmpRoot, 'store');
+    const store = makeStore(dir);
+
+    store.setOne('a', '1', Date.now());
+
+    expect(fs.existsSync(path.join(dir, '.gitignore'))).toBe(true);
+  });
+
+  it('does not overwrite a user-customized .gitignore', () => {
+    const dir = path.join(tmpRoot, 'store');
+    fs.mkdirSync(dir);
+    const custom = '_epoch.json\nmy-local-notes.md\n';
+    fs.writeFileSync(path.join(dir, '.gitignore'), custom);
+
+    const store = makeStore(dir);
+    store.save({ entries: { a: '1' }, aliases: {}, confirm: {} });
+
+    expect(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8')).toBe(custom);
+  });
+
+  it('.gitignore is not picked up as an entry file', () => {
+    const dir = path.join(tmpRoot, 'store');
+    const store = makeStore(dir);
+    store.save({ entries: { a: '1' }, aliases: {}, confirm: {} });
+
+    expect(store.load().entries).toEqual({ a: '1' });
+  });
+
+  it('migration seeds .gitignore alongside the migrated entries', () => {
+    const oldFile = path.join(tmpRoot, '.codexcli.json');
+    const newDir = path.join(tmpRoot, '.reverie');
+    fs.writeFileSync(oldFile, JSON.stringify({ entries: { a: '1' }, aliases: {}, confirm: {} }));
+
+    migrateFileToDirectory(oldFile, newDir);
+
+    const contents = fs.readFileSync(path.join(newDir, '.gitignore'), 'utf8');
+    expect(contents.split('\n')).toContain('_epoch.json');
+  });
+});
+
 // ── Lock failure propagation (v1.11 fail-closed) ───────────────────────
 
 describe('save() under lock failure', () => {

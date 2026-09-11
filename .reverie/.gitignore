@@ -1,0 +1,2 @@
+# Per-clone store state, managed by Reverie — not shared via git.
+_epoch.json

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **`_epoch.json` no longer commits with the store** ([#187](https://github.com/seabearDEV/reverie/issues/187)). The seqlock counter is per-clone state bumped on every write; committing it made every merge between two writers conflict on the counter before any entry did. Stores now seed a `.reverie/.gitignore` alongside `_README.md`; repos created earlier untrack it once with `git rm --cached .reverie/_epoch.json`. Side effect: `git status` stops reporting the store dirty after every agent write.
+
 ## [1.3.0] - 2026-07-23
 
 **Theme: Trust — "trust the record."** Scoped at the v1.2.x soak exit from the first cross-machine usage dataset (two machines, ~10 weeks of telemetry): the analysis showed the observability layer itself couldn't be trusted — 56% of one log was untagged test traffic, one repo counted as three projects across path renames, bulk store-population read as write indiscipline, and the stats tools were invisible to their own record. This release makes the measurement layer honest before the next soak cycle reads it, and promotes watcher agents to a first-class pattern.
