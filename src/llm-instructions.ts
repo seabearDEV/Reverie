@@ -65,7 +65,7 @@ SCOPE:
 - If a write fails with error code PROJECT_UNRESOLVED, project resolution failed (no .reverie/ found). Either run \`rvr init\` to create a project store, or retry with \`--global\` if the entry is genuinely user-level. Reads still fall through to global automatically — only writes refuse.
 
 GUARDRAILS:
-- \`rvr context\` may add "[demoted to index: ...]" / "[trimmed: ...]" notices when the response would exceed the size budget (default 38KB): demoted namespaces fell back to one-line gists, trimmed ones were dropped. Fetch specific entries via \`rvr get <key>\`, or run \`rvr context --tier full\` to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never dropped.
+- \`rvr context\` may add "[demoted to index: ...]" / "[trimmed: ...]" notices when the response would exceed the size budget (default 28KB): demoted namespaces fell back to one-line gists, trimmed ones were dropped. Fetch specific entries via \`rvr get <key>\`, or run \`rvr context --tier full\` to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never dropped.
 - In JSON mode these notices appear in the envelope's "warnings" array (and "result.degraded"/"result.shedNamespaces").
 
 EXECUTION:

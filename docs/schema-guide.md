@@ -334,11 +334,13 @@ Write entries so the first sentence stands alone — it *is* the gist. `rvr lint
 
 ### Relationship to the size budget (#100, #188)
 
-When the projected response would exceed `bootstrap_max_response_bytes` (default 38KB):
+When the projected response would exceed `bootstrap_max_response_bytes` (default 28KB):
 
 1. **Demote** — pinned namespaces fall back to index lines, largest first, never `context.next_session`. Notice: `[demoted to index: project.* (21 entries, 21.7K → 4.1K) — open entries with reverie_get <key>]`. Nothing is lost.
 2. **Drop** — the #100 order over what remains: `files.*` first, then `arch.*`, then large `context.*` largest-first. `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never dropped. Notice: `[trimmed: …]`.
 3. If the never-dropped namespaces still exceed the budget as index lines you get the `[warning: reverie_context payload still exceeds budget …]` notice — with ~200-byte index lines that takes hundreds of entries.
+
+Output order on both surfaces is handoff banner, entries, aliases, notices, tier footer (#212): the banner leads so a harness that truncates a large result to a short preview still shows it, and the notices sit beside the footer that carries the fetch hint. The default budget (28KB) is sized to the Claude Code Bash tool's 30,000-character inline limit — output past it is saved to a file and the model sees a 2KB preview.
 
 `tier: "full"` opts out of all of it. In JSON output the notices appear in `warnings[]` and as `result.degraded`, `result.demotedNamespaces`, `result.shedNamespaces`; `result.entries` holds the values rendered in full and `result.index` the gists (`{ gist, bytes, truncated }`).
 

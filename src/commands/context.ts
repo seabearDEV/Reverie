@@ -530,14 +530,9 @@ export function showContext(options: ContextOptions = {}): void {
     console.error(`warning: ${payload.pinnedWarning}`);
   }
 
-  // Notices — first thing the reader sees, ahead of the handoff banner
-  // and entries (#100).
-  for (const n of notices) {
-    console.log(options.plain ? n : color.yellow(n));
-    console.log('');
-  }
-
-  // Formatted output — banner first so it's the first thing the reader sees.
+  // Handoff banner first (#212): when the harness persists a large result
+  // and shows only a 2 KB preview, the banner is what survives. Shape
+  // notices move to the end, beside the footer that carries the fetch hint.
   if (payload.handoff) {
     for (const line of payload.handoff.lines) {
       if (options.plain) {
@@ -575,6 +570,15 @@ export function showContext(options: ContextOptions = {}): void {
       } else {
         console.log(`  ${color.green(a)} ${color.gray('->')} ${color.yellow(t)}`);
       }
+    }
+  }
+
+  // Notices — demoted, trimmed, pathological — after the entries so the
+  // handoff leads; JSON mode carries them in warnings[] (#100, #212).
+  if (notices.length > 0) {
+    console.log('');
+    for (const n of notices) {
+      console.log(options.plain ? n : color.yellow(n));
     }
   }
 

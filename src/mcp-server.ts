@@ -1449,18 +1449,8 @@ server.tool(
 
       const lines: string[] = [headerLine, ''];
 
-      // Notices first — demoted, trimmed, pathological — so agents see
-      // exactly what changed shape and how to retrieve it (#100/#188).
-      for (const notice of contextNotices(payload, MCP_HINTS)) {
-        lines.push(notice);
-        lines.push('');
-      }
-      if (payload.pinnedWarning) {
-        lines.push(`[warning: ${payload.pinnedWarning}]`);
-        lines.push('');
-      }
-
-      // Banner before entries — first thing the agent sees after the notices.
+      // Banner first (#212): a persisted result reaches the agent as a 2 KB
+      // preview — the handoff must be in it. Shape notices go at the end.
       if (payload.handoff) {
         lines.push(...payload.handoff.lines);
         if (payload.order.length > 0 || Object.keys(aliases).length > 0) {
@@ -1478,6 +1468,15 @@ server.tool(
         for (const [a, t] of Object.entries(aliases)) {
           lines.push(`  ${a} -> ${t}`);
         }
+      }
+
+      // Notices — demoted, trimmed, pathological, config — after the entries
+      // so the handoff leads (#100/#188/#212).
+      const notices = contextNotices(payload, MCP_HINTS);
+      if (payload.pinnedWarning) notices.push(`[warning: ${payload.pinnedWarning}]`);
+      if (notices.length > 0) {
+        lines.push('');
+        lines.push(...notices);
       }
 
       const footer = formatContextFooter(payload, MCP_HINTS);

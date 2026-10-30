@@ -17,7 +17,7 @@ vi.mock('../store', () => ({
 }));
 vi.mock('../config', () => ({
   loadConfig: vi.fn(() => ({ bootstrap_max_response_bytes: 50 * 1024 })),
-  DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES: 38 * 1024,
+  DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES: 28 * 1024,
 }));
 vi.mock('../utils/handoff', () => ({
   HANDOFF_KEY: 'context.next_session',
@@ -41,10 +41,12 @@ vi.mock('../utils/binaryName', () => ({
 import type { Mock } from 'bun:test';
 import { getEntriesFlat } from '../storage';
 import { loadConfig } from '../config';
+import { buildHandoffBanner } from '../utils/handoff';
 import { configureOutput, buildEnvelope } from '../utils/output';
 
 const mockGetEntriesFlat = getEntriesFlat as Mock<typeof getEntriesFlat>;
 const mockLoadConfig = loadConfig as Mock<typeof loadConfig>;
+const mockBuildHandoff = buildHandoffBanner as Mock<typeof buildHandoffBanner>;
 
 // #117: JSON output now goes inside the envelope's `result` (emitted by the
 // instrumentation wrapper at runtime). In a direct unit call we enable JSON
@@ -83,7 +85,7 @@ describe('showContext shed integration (#100)', () => {
     expect(output).toContain('project.name: reverie');
   });
 
-  it('sheds files.* and prepends notice when over budget', () => {
+  it('sheds files.* and appends notice when over budget', () => {
     mockLoadConfig.mockReturnValue({ bootstrap_max_response_bytes: 200 } as ReturnType<typeof loadConfig>);
     mockGetEntriesFlat.mockReturnValue({
       'project.name': 'reverie',
@@ -343,5 +345,46 @@ describe('showContext index-first (#188)', () => {
     expect(rows.context.shape).toBe('index');
     expect(rows.context.bytes).toBeLessThan(300);
     expect(result.pinned).toEqual(['project', 'commands', 'conventions']);
+  });
+});
+
+describe('showContext channel fit (#212) and handoff in JSON (#205)', () => {
+  const BANNER = { lines: ['→ Handoff from previous session (1d ago):', '  pick up with the soak eval'], ageDays: 1, isStale: false };
+  const STORE = {
+    'context.next_session': 'pick up with the soak eval',
+    'project.name': 'reverie',
+    'files.a': 'x'.repeat(200),
+    'files.b': 'x'.repeat(200),
+  };
+
+  beforeEach(() => {
+    mockBuildHandoff.mockReturnValue(BANNER as unknown as ReturnType<typeof buildHandoffBanner>);
+  });
+  afterEach(() => {
+    mockBuildHandoff.mockReturnValue(null);
+  });
+
+  it('handoff banner leads plain output; notices follow the entries, ahead of the footer', () => {
+    mockLoadConfig.mockReturnValue({ bootstrap_max_response_bytes: 300 } as ReturnType<typeof loadConfig>);
+    mockGetEntriesFlat.mockReturnValue({ ...STORE });
+    showContext({ plain: true });
+    // A harness that saves a large result shows only a short preview — the
+    // first line must be the handoff, not a shape notice.
+    expect(logged[0]).toBe(BANNER.lines[0]);
+    const output = logged.join('\n');
+    expect(output).toContain('[trimmed:');
+    expect(output.indexOf('[trimmed:')).toBeGreaterThan(output.indexOf('project.name: reverie'));
+    expect(output.indexOf('[trimmed:')).toBeLessThan(output.indexOf('[tier: standard'));
+    // The banner replaces the entry; it is not rendered twice.
+    expect(output).not.toContain('context.next_session:');
+  });
+
+  it('--json carries the handoff text at every tier (#205: full tier used to drop it)', () => {
+    mockGetEntriesFlat.mockReturnValue({ ...STORE });
+    for (const tier of ['essential', 'standard', 'full'] as const) {
+      const parsed = contextJson({ tier });
+      expect(parsed.handoff).toEqual({ value: 'pick up with the soak eval', ageDays: 1, stale: false });
+      expect(parsed.entries?.['context.next_session']).toBeUndefined();
+    }
   });
 });

@@ -122,7 +122,7 @@ Post-deploy questions:
 
 - **Bytes:** `responseSize` distribution per `projectId` before vs after. Measured at implementation time (standard tier, plain output):
 
-  | Store | Before | After, default 38 KB budget | After, 140 KB budget (this machine's config) |
+  | Store | Before | After, 38 KB budget (the default when measured; now 28 KB, #212) | After, 140 KB budget (this machine's config) |
   |---|---|---|---|
   | Reverie (110 entries) | 65 KB | 23 KB (`project.*` demoted, 23.6K → 3.8K) | 43 KB |
   | Tesserae (167 entries) | 139 KB, already shedding | 38 KB (`conventions.*` demoted, 53.3K → 4.6K) | 88 KB |
