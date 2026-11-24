@@ -63,7 +63,7 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Inline Editing**: Open entries in `$EDITOR` / `$VISUAL` for quick edits
 - **Structured Output**: A global `--json` flag — or `RVR_OUTPUT=json` for the whole session — wraps *every* command (reads and mutations) in one versioned envelope (`reverie`/`ok`/`command`/`result`/`warnings`/`error`) with a frozen `error.code` set and a non-zero exit on failure, so AI agents can drive Reverie through the CLI when MCP isn't available
 - **Command Manifest**: `rvr manifest --json` emits the full command/flag tree plus the MCP-tool ↔ CLI-command map — the `tools/list` analog for CLI-driven agents
-- **Stdin Piping**: Pipe values into `set` from other commands
+- **Stdin Values**: Pipe values into `set` from other commands, or feed a multi-line value from a heredoc or a file
 - **Project-Scoped Data**: Opt-in `.reverie/` per project — project entries take precedence, fall through to global
 - **Smart Init**: `rvr init` scans your codebase, populates `.reverie/` with project/commands/files/deps/conventions/context entries, generates `CLAUDE.md` and an agent-agnostic `AGENTS.md`, and seeds the three-file knowledge convention
 - **Auto-Backup**: Automatic timestamped backups with configurable rotation (`max_backups` setting)
@@ -201,6 +201,12 @@ rvr set a=1 b=2 c=3
 
 # Pipe a value from stdin
 echo "my value" | rvr set mykey
+
+# Multi-line value from a heredoc (or `rvr set mykey < notes.txt`)
+rvr set arch.cache <<'EOF'
+Two layers: in-process LRU, then Redis.
+Invalidate on write, never on read.
+EOF
 
 # Pipe from another command
 curl -s https://api.example.com/token | rvr set api.token

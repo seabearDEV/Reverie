@@ -15,6 +15,7 @@ import { getBinaryName } from './utils/binaryName';
 import fs from 'fs';
 import { DEFAULT_LLM_INSTRUCTIONS, CLI_LLM_INSTRUCTIONS, getEffectiveInstructions } from './llm-instructions';
 import { withCliInstrumentation } from './utils/instrumentation';
+import { readStdin } from './utils/stdin';
 import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult } from './utils/output';
 
 // Early-exit handler for shell tab-completion (must run before Commander parses args)
@@ -124,13 +125,10 @@ reverie
         }
       }
     } else if (valueArray.length === 0) {
-      // Read from stdin if piped (non-TTY)
+      // Read from stdin when it is not a terminal: a pipe, or a file
+      // (`< file`, here-string, heredoc — see readStdin for why that differs).
       if (!process.stdin.isTTY) {
-        const chunks: Buffer[] = [];
-        for await (const chunk of process.stdin) {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
-        }
-        const stdinValue = Buffer.concat(chunks).toString('utf8').trimEnd();
+        const stdinValue = (await readStdin()).toString('utf8').trimEnd();
         if (stdinValue.length > 0) {
           value = stdinValue;
         } else if (!options.alias && options.confirm === undefined) {
@@ -138,7 +136,10 @@ reverie
           process.exitCode = 1;
           return;
         }
-        // value stays undefined — intentional for alias-only or confirm-only updates
+        // value stays undefined — intentional for alias-only or confirm-only updates.
+        // Non-empty stdin wins over that, for a file as for a pipe: `set k -a x`
+        // inside a `while read … done < file` loop takes the rest of the file
+        // as k's value. `alias set` / `confirm set` never read stdin.
       } else if (!options.alias && options.confirm === undefined) {
         // Allow no value when -a or --confirm/--no-confirm is provided (metadata-only update)
         printError('Missing value. Provide a value or use --prompt (-p) to enter it interactively.');
