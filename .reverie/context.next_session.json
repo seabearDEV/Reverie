@@ -1,7 +1,7 @@
 {
-  "value": "2026-11-24 — PR queue cleared: #191 merged (index-first bootstrap + #212 + #205), action bumps #199 #200 #201 #214, bun batch #217 (superseded #193 #195–#198). Only main remains; landed main is green (1549 tests). Filed #215 + #216 under Forum. New seed context.dependabotOverrides. PICK UP: (1) decide #211; (2) #215 step 1 is small and independent; (3) GHSAs #158/#159; (4) retire milestone Find; (5) tick #186 checklist. Dependabot will likely reopen a bun round. Full state: project.inFlight.",
+  "value": "2026-11-24 (4) — DECIDED by owner: #189 + #186 are v1.4.0 items (earlier scope cut reversed); exempt context.next_session from write-amp: yes; machine budget: ignore for now. #211 merged (#218). #207 in PR #219 (884bd5c, 1604 tests) — if still open: gh pr merge 219 --squash --delete-branch --match-head-commit 884bd5ceae240942cba06a30df58abb5669ac1cf. PICK UP in order: (1) write-amp exemption for the handoff; (2) #215 step 1; (3) #216; (4) #189 design pass. Full state: project.inFlight.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1795539599107
+    "updated": 1795544512912
   }
 }
