@@ -1,0 +1,7 @@
+{
+  "value": "Dependabot bumps dependencies.<pkg> but never overrides.<pkg>. For a package pinned in overrides (zod, kept to one instance with the MCP SDK — see [[context.bunTransitiveDedup]]) its PR edits package.json while the lock still resolves the old version: a no-op that reads as a bump. Hit twice: #184→#185, #196→#217. FIX: move both specifiers together. To land an exact version, set both to that exact version, bun install, then restore the carets — `bun add zod@X` alone resolves the override's range to the registry's latest.\n\nNO TEST JOB RUNS ON PRs (CodeQL only), so a green Dependabot PR is untested: run commands.check locally.\n\nBATCHING: sibling bun PRs conflict on adjacent package.json/bun.lock lines, and can interact in the lock (#195 added an entry under a nested package #198 removed). Combine them on one deps/ branch built from Dependabot's own lock hunks so versions do not float; gate on frozen install from clean plus a plain bun install that leaves the lock unchanged. Close the superseded PRs only AFTER the batch merges — closing tells Dependabot to skip that version.",
+  "meta": {
+    "created": 1795539599064,
+    "updated": 1795539599064
+  }
+}

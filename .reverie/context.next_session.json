@@ -1,7 +1,7 @@
 {
-  "value": "2026-10-30 — External usage report ingested (context.channelFit). Filed #202–#213. PR #191 amended on its branch with #212 (bd06b93, 1544 tests green) — NOT PUSHED: git push origin feat/index-first-bootstrap, then review/merge #191. PICK UP: (1) decide #211 (shrink gists before dropping) — the Forum thesis fails for 300+ entry stores without it; (2) GHSAs for #158/#159 still unfiled; (3) two v1.4.0 milestones exist (Find, Forum) — retire Find. Full state: project.inFlight.",
+  "value": "2026-11-24 — PR queue cleared: #191 merged (index-first bootstrap + #212 + #205), action bumps #199 #200 #201 #214, bun batch #217 (superseded #193 #195–#198). Only main remains; landed main is green (1549 tests). Filed #215 + #216 under Forum. New seed context.dependabotOverrides. PICK UP: (1) decide #211; (2) #215 step 1 is small and independent; (3) GHSAs #158/#159; (4) retire milestone Find; (5) tick #186 checklist. Dependabot will likely reopen a bun round. Full state: project.inFlight.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1793387293985
+    "updated": 1795539599107
   }
 }
