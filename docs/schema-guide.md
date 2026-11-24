@@ -377,7 +377,7 @@ The write-amplification guard has no exempt keys: a handoff (`context.next_sessi
 Reverie treats a store file that exists but does not parse as an error, never as a missing entry ([#215](https://github.com/seabearDEV/reverie/issues/215)):
 
 - **Reading it fails** with error code `STORE_UNREADABLE` (not `NOT_FOUND`), naming the file and the reason.
-- **Writing over it is refused** — `set`, `copy`, `rename`, `import`, and for the sidecars `alias set` / `confirm set`. Nothing is written. Other keys stay writable.
+- **Writing over it is refused** — `set`, `copy`, `rename`, `import`, and for the sidecars `alias set` / `confirm set`. Nothing is written: a command that touches several files checks them all first. While `_aliases.json` or `_confirm.json` is unreadable, `rename` and `rm` are refused for every key (they have to carry aliases and confirm flags along), and so are `set -a` / `set --confirm`. Plain `set` and `copy` on other keys keep working.
 - **The bootstrap opens with the list** of unreadable files, ahead of the handoff banner; `--json` adds `result.unreadable`. Other commands warn (`warnings[]` code `STORE_UNREADABLE`, stderr in text mode).
 - **`rvr lint` fails** and lists each file.
 - **`rvr run` fails closed**: while `_confirm.json` is unreadable every entry requires confirmation.

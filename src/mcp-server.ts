@@ -45,7 +45,7 @@ import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
-import { StoreUnreadableError, bootstrapUnreadableLines, listUnreadableFiles, unreadableWarning } from "./utils/unreadable";
+import { StoreUnreadableError, assertSidecarsWritable, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, unreadableWarning } from "./utils/unreadable";
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
@@ -433,6 +433,9 @@ server.tool(
         }
         storedValue = encryptValue(value, password);
       }
+      // #215: the value and the alias map are two writes. Check the map
+      // before the value lands, so a refusal leaves nothing half-written.
+      if (alias) assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases']);
       setValue(resolved, storedValue, scope);
       if (alias) {
         setAlias(alias, resolved, scope);
@@ -642,6 +645,13 @@ server.tool(
       }
 
       const resolvedKey = resolveKey(key, scope);
+      // #215: a file that exists but does not parse must not be reported as
+      // "not found" (getValue throws for it), and the cascade below cannot
+      // see what points at this key while a sidecar is unreadable — refuse
+      // before the entry is gone.
+      if (getValue(resolvedKey, scope) !== undefined) {
+        assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
+      }
       const removed = removeValue(resolvedKey, scope);
       if (!removed) {
         return errorResponse(`Key '${key}' not found.`);
@@ -745,6 +755,11 @@ server.tool(
       if (existing !== undefined) {
         return errorResponse(`Key '${newKey}' already exists. Remove it first or choose a different key.`);
       }
+
+      // #215: a rename moves the value, re-points aliases and moves the
+      // confirm flag. With either sidecar unreadable it cannot know what to
+      // carry over — refuse before the value moves.
+      assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
       // Move the value
       if (typeof value === 'string') {
@@ -972,6 +987,11 @@ function runGated(
       if (needsConfirm) break;
     }
   }
+  // #215: fail closed. A confirmation list that does not parse loads as
+  // empty, so "no flag" proves nothing while one is unreadable — every entry
+  // is gated until it is resolved. Both callsites looked a flag up before
+  // calling here, which is the scan this check reads.
+  if (!needsConfirm && confirmListUnreadable()) needsConfirm = true;
 
   if (opts.dry) return textResponse(`$ ${command}`);
 

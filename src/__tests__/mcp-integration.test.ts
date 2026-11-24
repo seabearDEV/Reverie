@@ -460,6 +460,34 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.readFileSync(storeFile('_aliases.json'), 'utf8')).toBe(aliases);
     });
 
+    it('reverie_set with an alias refuses before the value is written', () => {
+      const aliases = conflictedSidecar('"hand": "context.next_session",', '"ho": "context.next_session",');
+      fs.writeFileSync(storeFile('_aliases.json'), aliases);
+      const r = callMcpTool('reverie_set', { key: 'arch.store', value: 'v2', alias: 'zz' });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/^Refusing to write the alias map/);
+      expect(callMcpTool('reverie_get', { key: 'arch.store' }).content[0].text).toContain('file per entry');
+      expect(fs.readFileSync(storeFile('_aliases.json'), 'utf8')).toBe(aliases);
+    });
+
+    it('reverie_rename and reverie_remove refuse before the entry moves or goes', () => {
+      fs.writeFileSync(storeFile('_confirm.json'), conflictedSidecar('"commands.deploy": true,', '"commands.wipe": true,'));
+      const renamed = callMcpTool('reverie_rename', { oldKey: 'arch.store', newKey: 'arch.moved', scope: 'global' });
+      expect(renamed.isError).toBe(true);
+      expect(renamed.content[0].text).toMatch(/^Refusing to write the confirmation list/);
+      const removed = callMcpTool('reverie_remove', { key: 'arch.store' });
+      expect(removed.isError).toBe(true);
+      expect(fs.existsSync(storeFile('arch.store.json'))).toBe(true);
+      expect(fs.existsSync(storeFile('arch.moved.json'))).toBe(false);
+    });
+
+    it('reverie_remove of the conflicted entry is not "not found", and keeps the file', () => {
+      const r = callMcpTool('reverie_remove', { key: HANDOFF });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/^Cannot read entry 'context\.next_session'/);
+      expect(fs.readFileSync(storeFile(`${HANDOFF}.json`), 'utf8')).toBe(conflictedEntry);
+    });
+
     it('reverie_run fails closed when the confirmation list is conflicted', () => {
       fs.writeFileSync(storeFile('_confirm.json'), conflictedSidecar('"commands.deploy": true,', '"commands.wipe": true,'));
       const r = callMcpTool('reverie_run', { key: 'commands.hello' });

@@ -12,7 +12,7 @@ import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './re
 import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
 import { color } from '../formatting';
-import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
+import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, takeWriteRefused, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
 import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError, takeSignals } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
@@ -298,6 +298,9 @@ export async function withCliInstrumentation<T>(
     if (success) {
       success = process.exitCode === prevExitCode;
     }
+    // #215: most commands render a refused write through handleError, so the
+    // catch above never sees it. Read (and always clear) the note it left.
+    if (takeWriteRefused() && refusedReason === undefined) refusedReason = 'store_unreadable';
 
     const duration = Date.now() - startTime;
 

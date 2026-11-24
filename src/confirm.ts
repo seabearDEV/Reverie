@@ -1,6 +1,5 @@
 import { debug } from './utils/debug';
 import { Scope, loadConfirmMap, saveConfirmMap, loadConfirmMapMerged } from './store';
-import { listUnreadableFiles } from './utils/unreadable';
 import { resolveScopeForWrite } from './projectResolution';
 
 
@@ -39,16 +38,13 @@ export function removeConfirm(key: string, scope?: Scope  ): void {
   }
 }
 
-// Check if a key requires confirmation (checks merged).
-//
-// Fails closed (#215): when a confirmation list exists but does not parse —
-// git conflict markers after a merge — it loads as empty, and "no flag" would
-// mean every entry that required confirmation runs without it. While any
-// list is unreadable, every entry requires confirmation.
+// Check if a key carries the confirm flag (checks merged). Literal: an
+// unreadable confirmation list (#215) loads as empty and this answers false.
+// The run gates add confirmListUnreadable() so they fail closed; rename asks
+// this to decide whether there is a flag to move, and must get the truth.
 export function hasConfirm(key: string): boolean {
   const keys = loadConfirmMapMerged();
-  if (keys[key] === true) return true;
-  return listUnreadableFiles().some(f => f.kind === 'confirm');
+  return keys[key] === true;
 }
 
 // Cascade delete: remove key and any children (e.g., removing "commands" removes "commands.deploy")

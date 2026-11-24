@@ -10,13 +10,17 @@ import type { UnifiedData } from '../store';
 import {
   StoreUnreadableError,
   UnreadableFile,
+  assertSidecarsWritable,
   bootstrapUnreadableLines,
   classifyUnparseable,
+  confirmListUnreadable,
   describeUnreadable,
   listUnreadableFiles,
   markUnreadableShown,
+  noteWriteRefused,
   registerUnreadableSource,
   resolutionHint,
+  takeWriteRefused,
   unreadableWarning,
   unreadableWarningBlock,
   withoutShown,
@@ -374,6 +378,48 @@ describe('bookkeeping', () => {
     markUnreadableShown();
     expect(withoutShown([a, b])).toEqual([]);
     expect(withoutShown([a, b])).toEqual([a, b]);
+  });
+
+  it('assertSidecarsWritable scans first, then refuses only for the sidecars asked about', () => {
+    const aliases: UnreadableFile = { kind: 'aliases', path: '/s/_aliases.json', reason: 'conflict' };
+    let scanned = 0;
+    let found: UnreadableFile[] = [];
+    registerUnreadableSource('test-store', () => found, () => { scanned++; found = [a, aliases]; });
+    try {
+      // The unreadable ENTRY is not this check's business, and neither is a sidecar it was not asked about.
+      expect(() => assertSidecarsWritable(() => 'test-store', ['confirm'])).not.toThrow();
+      expect(scanned).toBe(1);
+      let thrown: unknown;
+      try { assertSidecarsWritable(() => 'test-store', ['aliases', 'confirm']); } catch (err) { thrown = err; }
+      expect(thrown).toBeInstanceOf(StoreUnreadableError);
+      expect((thrown as StoreUnreadableError).attempted).toBe('write');
+      expect((thrown as StoreUnreadableError).files).toEqual([aliases]);
+      // A store nobody registered (a mocked one) has nothing to refuse.
+      expect(() => assertSidecarsWritable(() => 'test-unregistered', ['aliases', 'confirm'])).not.toThrow();
+      // No resolvable target: the write refuses on its own; this check does not pre-empt it.
+      expect(() => assertSidecarsWritable(() => { throw new Error('unresolved'); }, ['aliases', 'confirm'])).not.toThrow();
+      expect(scanned).toBe(2);
+    } finally {
+      registerUnreadableSource('test-store', () => []);
+    }
+  });
+
+  it('confirmListUnreadable is true only for a confirmation list', () => {
+    registerUnreadableSource('test-store', () => [a, { kind: 'aliases', path: '/s/_aliases.json', reason: 'conflict' }]);
+    try {
+      expect(confirmListUnreadable()).toBe(false);
+      registerUnreadableSource('test-store', () => [{ kind: 'confirm', path: '/s/_confirm.json', reason: 'parse' }]);
+      expect(confirmListUnreadable()).toBe(true);
+    } finally {
+      registerUnreadableSource('test-store', () => []);
+    }
+  });
+
+  it('the refused-write note is read once', () => {
+    expect(takeWriteRefused()).toBe(false);
+    noteWriteRefused();
+    expect(takeWriteRefused()).toBe(true);
+    expect(takeWriteRefused()).toBe(false);
   });
 
   it('listUnreadableFiles collects every source once, tolerating one that throws', () => {

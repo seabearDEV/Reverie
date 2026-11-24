@@ -342,12 +342,13 @@ export function loadConfirmMapMerged(): Record<string, true> {
 }
 
 // ── Unreadable files (#215) ─────────────────────────────────────────────
-// Project first, then global. The sources read the singletons lazily and
-// never instantiate one: listUnreadableFiles() (utils/unreadable.ts) reports
-// what this process's own reads turned up, nothing more.
+// Project first, then global. Listing reads the singletons lazily and never
+// instantiates one: listUnreadableFiles() (utils/unreadable.ts) reports what
+// this process's own reads turned up, nothing more. The refresh callbacks are
+// for the write pre-flight, which must look before a command's first write.
 
-registerUnreadableSource('project', () => projectStore?.unreadable() ?? []);
-registerUnreadableSource('global', () => globalStore?.unreadable() ?? []);
+registerUnreadableSource('project', () => projectStore?.unreadable() ?? [], () => { getProjectStore()?.load(); });
+registerUnreadableSource('global', () => globalStore?.unreadable() ?? [], () => { getGlobalStore().load(); });
 
 // ── Cache management ───────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@ import { debug } from './utils/debug';
 import { Scope, loadEntries, saveEntries, loadEntriesMerged, findProjectFile, saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta, getEntryFast, setEntryFast } from './store';
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, ProjectResolutionError } from './projectResolution';
-import { StoreUnreadableError, markUnreadableShown } from './utils/unreadable';
+import { StoreUnreadableError, markUnreadableShown, noteWriteRefused } from './utils/unreadable';
 import { isJsonMode, failJson } from './utils/output';
 
 export type { Scope } from './store';
@@ -36,6 +36,7 @@ export function handleError(message: string, error: unknown, context?: string): 
   // be STORE_UNREADABLE, never RUNTIME or NOT_FOUND.
   if (error instanceof StoreUnreadableError) {
     markUnreadableShown(error.files);
+    if (error.attempted === 'write') noteWriteRefused();
     if (isJsonMode()) {
       failJson('STORE_UNREADABLE', errorText);
     } else {

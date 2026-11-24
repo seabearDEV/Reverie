@@ -145,6 +145,33 @@ describe('a store with git conflict markers in it (#215)', () => {
       expect(epoch() % 2).toBe(0);
     });
 
+    it('import onto the key is refused whole: merge or replace, nothing lands', () => {
+      const payload = path.join(dataDir, 'import.json');
+      fs.writeFileSync(payload, JSON.stringify({ context: { next_session: 'imported', extra: 'x' }, arch: { store: 'imported' } }));
+      for (const mode of [['--merge'], []]) {
+        const r = rvr('data', 'import', 'entries', payload, '--force', '--global', ...mode);
+        expect(r.status, mode.join(' ') || 'replace').toBe(1);
+        expect(r.stderr).toContain(`Refusing to write entry '${HANDOFF}'`);
+      }
+      expect(read(`${HANDOFF}.json`)).toBe(before);
+      expect(json('get', 'arch.store').result).toEqual({ 'arch.store': 'file per entry' });
+      expect(fs.existsSync(file('context.extra.json'))).toBe(false);
+    });
+
+    it('a refused write is recorded as a refusal in the audit log', () => {
+      rvr('set', '--global', HANDOFF, 'fresh');
+      const rows = fs.readFileSync(path.join(dataDir, 'audit.jsonl'), 'utf8').trim().split('\n')
+        .map(l => JSON.parse(l) as { tool: string; key?: string; success: boolean; refusedReason?: string });
+      const last = rows[rows.length - 1];
+      expect(last).toMatchObject({ tool: 'reverie_set', key: HANDOFF, success: false, refusedReason: 'store_unreadable' });
+      // A failed read is an error, not a refusal.
+      rvr('get', HANDOFF);
+      const after = fs.readFileSync(path.join(dataDir, 'audit.jsonl'), 'utf8').trim().split('\n')
+        .map(l => JSON.parse(l) as { tool: string; refusedReason?: string });
+      expect(after[after.length - 1].tool).toBe('reverie_get');
+      expect(after[after.length - 1].refusedReason).toBeUndefined();
+    });
+
     it('rm of the conflicted key fails without deleting it', () => {
       const e = json('rm', '--global', HANDOFF);
       expect(e.ok).toBe(false);
@@ -257,6 +284,27 @@ describe('a store with git conflict markers in it (#215)', () => {
       expect(read('_aliases.json')).toBe(before);
     });
 
+    it('commands that also touch the alias map refuse BEFORE their first write', () => {
+      // Each of these writes the entry first and the alias map second. A
+      // refusal that arrives at the second write leaves the first one done.
+      const setBoth = rvr('set', '--global', 'arch.store', 'v2', '-a', 'zz');
+      expect(setBoth.status).toBe(1);
+      expect(setBoth.stderr).toContain('Refusing to write the alias map');
+      expect(setBoth.stdout).not.toContain('set successfully');
+
+      const renamed = rvr('rename', '--global', 'arch.store', 'arch.moved');
+      expect(renamed.status).toBe(1);
+      expect(renamed.stderr).toContain('Refusing to write the alias map');
+
+      const removed = rvr('rm', '--global', '--force', 'arch.store');
+      expect(removed.status).toBe(1);
+      expect(removed.stderr).toContain('Refusing to write the alias map');
+
+      expect(json('get', 'arch.store').result).toEqual({ 'arch.store': 'file per entry' });
+      expect(fs.existsSync(file('arch.moved.json'))).toBe(false);
+      expect(read('_aliases.json')).toBe(before);
+    });
+
     it('reads say no aliases are being read; entry writes still work', () => {
       const r = rvr('get', 'arch.store');
       expect(r.status).toBe(0);
@@ -286,6 +334,33 @@ describe('a store with git conflict markers in it (#215)', () => {
 
       // The explicit override still works.
       expect(rvr('run', '--global', '--yes', '--capture', 'commands.hello').stdout).toContain('hello');
+    });
+
+    it('set --confirm, rename and rm refuse BEFORE their first write', () => {
+      const setBoth = rvr('set', '--global', 'arch.store', 'v2', '--confirm');
+      expect(setBoth.status).toBe(1);
+      expect(setBoth.stderr).toContain('Refusing to write the confirmation list');
+      expect(setBoth.stdout).not.toContain('set successfully');
+
+      // rename asks "does the old key carry a flag to move?". That answer
+      // must not be the run gate's fail-closed "yes", and with the list
+      // unreadable there is no honest answer — so it refuses up front.
+      const renamed = rvr('rename', '--global', 'arch.store', 'arch.moved');
+      expect(renamed.status).toBe(1);
+      expect(renamed.stderr).toContain('Refusing to write the confirmation list');
+
+      expect(rvr('rm', '--global', '--force', 'arch.store').status).toBe(1);
+
+      expect(json('get', 'arch.store').result).toEqual({ 'arch.store': 'file per entry' });
+      expect(fs.existsSync(file('arch.moved.json'))).toBe(false);
+      expect(read('_confirm.json')).toBe(before);
+    });
+
+    it('a plain set and a copy do not involve the list and still work', () => {
+      expect(rvr('set', '--global', 'arch.store', 'v2').status).toBe(0);
+      expect(rvr('copy', '--global', 'arch.store', 'arch.copy').status).toBe(0);
+      expect(json('get', 'arch.copy').result).toEqual({ 'arch.copy': 'v2' });
+      expect(read('_confirm.json')).toBe(before);
     });
 
     it('confirm set is refused and the file is untouched', () => {

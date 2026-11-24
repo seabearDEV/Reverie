@@ -14,6 +14,7 @@ import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAli
 import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
+import { assertSidecarsWritable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
 import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
@@ -144,7 +145,10 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     // gate on any of them carrying confirm metadata.
     const confirmKeys = new Set<string>(resolvedKeys);
     for (const k of collectReferencedKeys(rawValue)) confirmKeys.add(k);
-    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k));
+    // #215: fail closed. An unreadable confirmation list loads as empty, so
+    // while one is unreadable every entry is gated. hasConfirm runs first —
+    // it does the scan the second check reads.
+    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || confirmListUnreadable();
 
     // SECURITY: produce the real shell command ONLY when actually executing —
     // this is the single place `$(key)` exec refs run. Callers invoke it past
@@ -297,6 +301,13 @@ async function handlePostSetConfirm(key: string, confirm: boolean | undefined, s
   } else if (confirm === false) {
     removeConfirm(key, scope);
   } else if (process.stdin.isTTY) {
+    // #215: with the confirmation list unreadable the answer could not be
+    // saved — the value is already written, so do not ask.
+    let confirmUnreadable = false;
+    try {
+      confirmUnreadable = listUnreadableFiles(resolveScopeForWrite(scope)).some(f => f.kind === 'confirm');
+    } catch { /* unresolvable scope: nothing was scanned, nothing to skip for */ }
+    if (confirmUnreadable) return;
     const answer = await askConfirmation('Require confirmation to run? [y/N] ');
     if (answer.toLowerCase() === 'y') {
       setConfirm(key, scope);
@@ -368,6 +379,14 @@ export async function setEntry(key: string, value: string | undefined, force = f
       if (encrypted === null) return;
       storedValue = encrypted;
     }
+
+    // #215: this command writes up to three files — the value, then the
+    // alias map, then the confirmation list. Check the sidecars it will touch
+    // before the value lands, so a refusal leaves nothing half-written.
+    const sidecars: ('aliases' | 'confirm')[] = [];
+    if (alias) sidecars.push('aliases');
+    if (confirm !== undefined) sidecars.push('confirm');
+    if (sidecars.length > 0) assertSidecarsWritable(() => resolveScopeForWrite(scope), sidecars);
 
     setValue(key, storedValue, scope);
     console.log(`Entry '${key}' set successfully.`);
@@ -752,6 +771,11 @@ export async function removeEntry(key: string, force = false, global?: boolean):
     }
   }
 
+  // #215: removal cascades to the alias map and the confirmation list. If
+  // either cannot be read the cascade cannot see what points at this key, so
+  // refuse before the entry is gone rather than leave them dangling.
+  assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
+
   removeValue(key, scope);
 
   // Cascade delete: remove any aliases pointing to this key or its children
@@ -844,6 +868,11 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     process.exitCode = 1;
     return;
   }
+
+  // #215: a rename moves the value, re-points aliases and moves the confirm
+  // flag. With either sidecar unreadable it cannot know what to carry over —
+  // refuse before the value moves.
+  assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
   // Move the value
   if (typeof value === 'string') {

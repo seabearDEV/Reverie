@@ -164,6 +164,20 @@ export function markUnreadableShown(files?: UnreadableFile[]): void {
   for (const f of files) shownPaths.add(f.path);
 }
 
+/** A refused write was rendered by a command's own error handling (the wrapper never saw the throw). */
+let writeRefused = false;
+
+export function noteWriteRefused(): void {
+  writeRefused = true;
+}
+
+/** Read and clear: did this command render a refused write? */
+export function takeWriteRefused(): boolean {
+  const was = writeRefused;
+  writeRefused = false;
+  return was;
+}
+
 /** Drop the files already shown, and reset the bookkeeping. */
 export function withoutShown(files: UnreadableFile[]): UnreadableFile[] {
   const rest = shownAll ? [] : files.filter(f => !shownPaths.has(f.path));
@@ -177,24 +191,34 @@ export function withoutShown(files: UnreadableFile[]): UnreadableFile[] {
 // here. Keeping the question out of store.ts means the many suites that mock
 // that module need no new export, and a mocked store simply reports nothing.
 
-const sources = new Map<string, () => UnreadableFile[]>();
+interface UnreadableSource {
+  list: () => UnreadableFile[];
+  /** Scan the store now, so `list` is current. */
+  refresh?: (() => void) | undefined;
+}
 
-/** Register (or replace) a named source of unreadable files. Listed in registration order. */
-export function registerUnreadableSource(id: string, source: () => UnreadableFile[]): void {
-  sources.set(id, source);
+const sources = new Map<string, UnreadableSource>();
+
+/**
+ * Register (or replace) a named source of unreadable files — store.ts uses
+ * the ids 'project' and 'global'. Listed in registration order.
+ */
+export function registerUnreadableSource(id: string, list: () => UnreadableFile[], refresh?: () => void): void {
+  sources.set(id, { list, refresh });
 }
 
 /**
  * Store files that exist but did not parse, across every store this process
- * has already scanned. Does no I/O: it reports what the command's own reads
- * turned up, and never fails.
+ * has already scanned — or only the store `sourceId` names. Does no I/O: it
+ * reports what the command's own reads turned up, and never fails.
  */
-export function listUnreadableFiles(): UnreadableFile[] {
+export function listUnreadableFiles(sourceId?: string): UnreadableFile[] {
   const files: UnreadableFile[] = [];
   const seen = new Set<string>();
-  for (const source of sources.values()) {
+  for (const [id, source] of sources) {
+    if (sourceId !== undefined && id !== sourceId) continue;
     try {
-      for (const f of source()) {
+      for (const f of source.list()) {
         if (seen.has(f.path)) continue;
         seen.add(f.path);
         files.push(f);
@@ -202,4 +226,44 @@ export function listUnreadableFiles(): UnreadableFile[] {
     } catch { /* a source that cannot answer has nothing to report */ }
   }
   return files;
+}
+
+/**
+ * Pre-flight for a command that writes more than one store file. save()
+ * refuses to rewrite an unreadable sidecar, but it is called once per file:
+ * `set k v -a alias` writes the value and only then meets the refusal on the
+ * alias map; `rename` moves the value before it reaches the flags. Checking
+ * every sidecar the command will touch before its first write keeps "nothing
+ * was written" true for the command, not just for one save.
+ *
+ * `target` resolves the store the command writes to ('project' | 'global').
+ * If it throws, the write has no resolvable target and will refuse on its own
+ * with the precise error (PROJECT_UNRESOLVED) — this check stays out of the
+ * way. Scans that store first. A no-op when no such store is registered (a
+ * mocked store).
+ */
+export function assertSidecarsWritable(target: () => string, kinds: ('aliases' | 'confirm')[]): void {
+  let sourceId: string;
+  try {
+    sourceId = target();
+  } catch {
+    return;
+  }
+  const source = sources.get(sourceId);
+  if (!source) return;
+  source.refresh?.();
+  const broken = source.list().filter(f => f.kind !== 'entry' && kinds.includes(f.kind));
+  if (broken.length > 0) throw new StoreUnreadableError(broken, 'write');
+}
+
+/**
+ * True while any scanned store's confirmation list is unreadable. The `run`
+ * gates OR this with the entry's own flag, so they fail closed: a conflicted
+ * `_confirm.json` loads as empty, and "no flag" would run entries that
+ * required confirmation. Call after the flag lookup, which does the scan.
+ * Kept apart from hasConfirm(), which must stay literal — rename uses it to
+ * decide whether there is a flag to move.
+ */
+export function confirmListUnreadable(): boolean {
+  return listUnreadableFiles().some(f => f.kind === 'confirm');
 }
