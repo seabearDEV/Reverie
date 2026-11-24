@@ -1542,6 +1542,32 @@ describe('MCP Server Tools', () => {
       expect(result.content[0].text).toContain('bootstrap_max_response_bytes');
     });
 
+    it('reverie_context narrows index gists before dropping lines and reports the width (#211)', async () => {
+      mockConfig.bootstrap_max_response_bytes = 4400;
+      const keyOf = (i: number): string => `topicNumber${String(i).padStart(3, '0')}`;
+      const context: Record<string, string> = {};
+      for (let i = 0; i < 40; i++) {
+        context[keyOf(i)] = `Entry ${i} headline: ${'word '.repeat(50).trim()}.\nSecond paragraph ${'x'.repeat(400)}`;
+      }
+      Object.assign(mockData, { project: { name: 'reverie' }, context });
+
+      const result = await toolHandlers['reverie_context']({});
+      const text = result.content[0].text as string;
+      // Every key is still on the front page — narrower, not dropped — and
+      // the response that was actually returned is within the budget.
+      for (let i = 0; i < 40; i++) expect(text).toContain(`context.${keyOf(i)}: `);
+      expect(text).not.toContain('[trimmed:');
+      expect(text).toContain('gists cut to 40 chars) — open an entry with reverie_get <key>');
+      expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(4400);
+
+      expect(logAuditMock).toHaveBeenCalledWith(
+        expect.objectContaining({ tool: 'reverie_context', degraded: true, gistChars: 40, shedNamespaces: [] })
+      );
+      expect(logToolCallMock).toHaveBeenCalledWith(
+        'reverie_context', undefined, 'mcp', expect.anything(), expect.objectContaining({ gistChars: 40 })
+      );
+    });
+
     it('reverie_context under budget produces no degraded signal', async () => {
       mockConfig.bootstrap_max_response_bytes = 50 * 1024;
       Object.assign(mockData, { project: { name: 'reverie' } });

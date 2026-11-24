@@ -8,6 +8,8 @@ import {
   formatIndexText,
   demoteToFitBudget,
   formatDemoteNotice,
+  shrinkIndexToFitBudget,
+  GIST_SHRINK_RUNGS,
 } from '../utils/contextBudget';
 
 const noTag = () => '';
@@ -292,5 +294,119 @@ describe('formatDemoteNotice', () => {
     const notice = formatDemoteNotice([{ label: 'project.*', keys: ['project.a', 'project.b'], bytesBefore: 2048, bytesAfter: 400 }], 'reverie_get <key>');
     expect(notice).toContain('[demoted to index: project.* (2 entries, 2.0K → 400B)');
     expect(notice).toContain('open entries with reverie_get <key>]');
+  });
+});
+
+describe('gistOf at cap 0 — the keys-only rung (#211)', () => {
+  it('returns an empty, truncated gist', () => {
+    expect(gistOf('Some headline sentence.', 0)).toEqual({ gist: '', truncated: true });
+  });
+
+  it('renders as the open-cost marker alone', () => {
+    expect(formatIndexText(indexEntryOf('Some headline sentence.', 0))).toBe('… [+23B]');
+  });
+
+  it('an empty value stays empty and untruncated', () => {
+    expect(gistOf('', 0)).toEqual({ gist: '', truncated: false });
+  });
+});
+
+describe('shrinkIndexToFitBudget (#211)', () => {
+  const noTag = () => '';
+  const line = (w: string) => `${w} `.repeat(60).trim(); // one ~360-char line
+  const values: Record<string, string> = {
+    'context.alpha': line('alpha'),
+    'context.bravo': line('bravo'),
+    'arch.charlie': line('charlie'),
+  };
+  const keys = Object.keys(values);
+  const entryAt = (k: string, chars: number) => indexEntryOf(values[k], chars);
+  const displayAt = (chars: number): Record<string, string> =>
+    Object.fromEntries(keys.map(k => [k, formatIndexText(entryAt(k, chars))]));
+  const sizeOf = (d: Record<string, string>, tag: (k: string) => string = noTag): number =>
+    Object.entries(d).reduce((sum, [k, v]) => sum + entryRenderBytes(k, v, tag(k)), 0);
+
+  it('tries 80, then 40, then keys only', () => {
+    expect([...GIST_SHRINK_RUNGS]).toEqual([80, 40, 0]);
+  });
+
+  it('does nothing under budget', () => {
+    const display = displayAt(160);
+    const r = shrinkIndexToFitBudget(display, keys, entryAt, noTag, 0, sizeOf(display), 160);
+    expect(r.gistChars).toBe(160);
+    expect(r.narrowed).toEqual({});
+    expect(r.display).toEqual(display);
+  });
+
+  it('stops at the widest rung that fits', () => {
+    const r = shrinkIndexToFitBudget(displayAt(160), keys, entryAt, noTag, 0, sizeOf(displayAt(80)), 160);
+    expect(r.gistChars).toBe(80);
+    expect(r.display).toEqual(displayAt(80));
+  });
+
+  it('steps down to 40 when 80 does not fit', () => {
+    const r = shrinkIndexToFitBudget(displayAt(160), keys, entryAt, noTag, 0, sizeOf(displayAt(80)) - 1, 160);
+    expect(r.gistChars).toBe(40);
+    expect(r.display).toEqual(displayAt(40));
+  });
+
+  it('ends at keys only: the key and the open-cost marker, no gist', () => {
+    const r = shrinkIndexToFitBudget(displayAt(160), keys, entryAt, noTag, 0, sizeOf(displayAt(40)) - 1, 160);
+    expect(r.gistChars).toBe(0);
+    for (const k of keys) expect(r.display[k]).toMatch(/^… \[\+\d+B\]$/);
+  });
+
+  it('reports keys only when even that does not fit — dropping is the caller\'s next step', () => {
+    const r = shrinkIndexToFitBudget(displayAt(160), keys, entryAt, noTag, 0, 1, 160);
+    expect(r.gistChars).toBe(0);
+    expect(Object.keys(r.display)).toEqual(keys);
+  });
+
+  it('returns the narrowed entries so the caller can write them back', () => {
+    const r = shrinkIndexToFitBudget(displayAt(160), keys, entryAt, noTag, 0, sizeOf(displayAt(80)), 160);
+    expect(Object.keys(r.narrowed).sort()).toEqual([...keys].sort());
+    for (const k of keys) {
+      expect(r.narrowed[k].gist.length).toBeLessThanOrEqual(80);
+      expect(formatIndexText(r.narrowed[k])).toBe(r.display[k]);
+    }
+  });
+
+  it('only uses rungs strictly below the starting width', () => {
+    // Configured cap 60: the 80 rung is skipped, 40 is the first step.
+    const r = shrinkIndexToFitBudget(displayAt(60), keys, entryAt, noTag, 0, sizeOf(displayAt(60)) - 1, 60);
+    expect(r.gistChars).toBe(40);
+    // Configured cap 80: the 80 rung is not a step either.
+    const r80 = shrinkIndexToFitBudget(displayAt(80), keys, entryAt, noTag, 0, sizeOf(displayAt(80)) - 1, 80);
+    expect(r80.gistChars).toBe(40);
+  });
+
+  it('never lengthens a line: a short value stays whole at every rung', () => {
+    const short: Record<string, string> = { ...values, 'deps.zod': 'zod ^4' };
+    const at = (k: string, chars: number) => indexEntryOf(short[k], chars);
+    const display = Object.fromEntries(Object.keys(short).map(k => [k, formatIndexText(at(k, 160))]));
+    const r = shrinkIndexToFitBudget(display, Object.keys(short), at, noTag, 0, 1, 160);
+    expect(r.gistChars).toBe(0);
+    expect(r.display['deps.zod']).toBe('zod ^4');
+    expect(r.narrowed['deps.zod']).toBeUndefined();
+  });
+
+  it('leaves the width alone when no line can get shorter', () => {
+    const tiny = { 'deps.a': 'a', 'deps.b': 'b' };
+    const r = shrinkIndexToFitBudget(tiny, Object.keys(tiny), (k, c) => indexEntryOf(tiny[k as 'deps.a'], c), noTag, 0, 1, 160);
+    expect(r.gistChars).toBe(160);
+    expect(r.display).toEqual(tiny);
+  });
+
+  it('touches index keys only — entries rendered in full keep their text', () => {
+    const display = { ...displayAt(160), 'project.full': 'p'.repeat(500) };
+    const r = shrinkIndexToFitBudget(display, keys, entryAt, noTag, 0, 1, 160);
+    expect(r.display['project.full']).toBe('p'.repeat(500));
+  });
+
+  it('counts age tags and fixed overhead in the projection', () => {
+    const tag = () => ' [120d]';
+    const fits = sizeOf(displayAt(160), tag) + 300;
+    expect(shrinkIndexToFitBudget(displayAt(160), keys, entryAt, tag, 300, fits, 160).gistChars).toBe(160);
+    expect(shrinkIndexToFitBudget(displayAt(160), keys, entryAt, tag, 300, fits - 1, 160).gistChars).toBe(80);
   });
 });

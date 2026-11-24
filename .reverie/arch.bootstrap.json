@@ -1,0 +1,7 @@
+{
+  "value": "Bootstrap = front page, ONE composer for both surfaces: composeContext() in src/commands/context.ts (partition by tier → gist → budget steps). showContext and the reverie_context handler only render its payload.\n\nBUDGET ORDER (pure functions in src/utils/contextBudget.ts): demoteToFitBudget (pinned namespaces → index lines, largest first) → shrinkIndexToFitBudget (#211: one shared gist width, rungs 80/40/0 strictly below bootstrap_gist_chars; 0 = keys only, open-cost marker kept; never lengthens a line) → shedToFitBudget (#100 drop order) → pathological notice. tier full bypasses all of it.\n\nGOTCHAS:\n- The budget is sized on a separate display map, but lines and JSON render from payload.full / payload.index. A step that changes text must write back into index, or it projects a fit and prints the old width.\n- estimateBootstrapOverheadBytes sizes the footer on its LONGEST form plus 512B for notices. Lengthen the footer → update that template.\n- Signals: contextSignals() → recordSignals (CLI) / emitGuardrailSignals (MCP), spread into telemetry + audit rows. A new field needs its type at six sites: context.ts, output.ts, telemetry.ts ×2, audit.ts, GuardrailSignals in mcp-server.ts.\n- The MCP instruction blob sits at 2022 of 2048 bytes behind a cap test (reverie_context description: 350). Do not add words there.\n\nDesign + measurements: docs/design-188-index-first-bootstrap.md (addendum for #211).",
+  "meta": {
+    "created": 1795540442651,
+    "updated": 1795540442651
+  }
+}

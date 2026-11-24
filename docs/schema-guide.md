@@ -328,28 +328,29 @@ The override travels with the repo (it is store content, not `config.json`) and 
 context.releaseTagStaleLocal: Release-tag hazard hit 2026-06-09 during v1.2.1: a STALE LOCAL tag v1.2.1 already existed… [+1.0K] [88d]
 ```
 
-The gist is the entry's first line, cut at a word boundary within `bootstrap_gist_chars` (default 160). `[+1.0K]` is what opening the entry costs; the age tag is the usual one. An entry that fits on one line renders whole, exactly as before. Open an entry with `reverie_get <key>` / `rvr get <key>`, or a whole namespace with `rvr get context -v`. The footer repeats the hint: `[tier: standard (89 entries: 24 in full, 65 indexed) — open an entry with rvr get <key>, or use --tier full for everything]`.
+The gist is the entry's first line, cut at a word boundary within `bootstrap_gist_chars` (default 160) — a maximum: the size budget can narrow it, see below. `[+1.0K]` is what opening the entry costs; the age tag is the usual one. An entry that fits on one line renders whole, exactly as before. Open an entry with `reverie_get <key>` / `rvr get <key>`, or a whole namespace with `rvr get context -v`. The footer repeats the hint: `[tier: standard (89 entries: 24 in full, 65 indexed) — open an entry with rvr get <key>, or use --tier full for everything]`.
 
 Write entries so the first sentence stands alone — it *is* the gist. `rvr lint --seed-quality` flags entries that don't.
 
-### Relationship to the size budget (#100, #188)
+### Relationship to the size budget (#100, #188, #211)
 
 When the projected response would exceed `bootstrap_max_response_bytes` (default 28KB):
 
 1. **Demote** — pinned namespaces fall back to index lines, largest first, never `context.next_session`. Notice: `[demoted to index: project.* (21 entries, 21.7K → 4.1K) — open entries with reverie_get <key>]`. Nothing is lost.
-2. **Drop** — the #100 order over what remains: `files.*` first, then `arch.*`, then large `context.*` largest-first. `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never dropped. Notice: `[trimmed: …]`.
-3. If the never-dropped namespaces still exceed the budget as index lines you get the `[warning: reverie_context payload still exceeds budget …]` notice — with ~200-byte index lines that takes hundreds of entries.
+2. **Narrow** — every index line's gist shrinks to one shared width, a step at a time: 80 characters, then 40, then keys only (`context.someKey: … [+1.6K] [88d]` — the key and what opening it costs). Only steps below `bootstrap_gist_chars` apply, and a line is never made longer, so a short value still renders whole. Every key stays on the front page. The footer names the width: `… 316 indexed, gists cut to 40 chars) — open an entry with rvr get <key> …` or `… keys only) …`.
+3. **Drop** — only when keys-only still does not fit: the #100 order over what remains, `files.*` first, then `arch.*`, then large `context.*` largest-first. `project.*`, `conventions.*`, `commands.*`, `deps.*`, and `context.next_session` are never dropped. Notice: `[trimmed: …]`.
+4. If the never-dropped namespaces still exceed the budget as keys-only lines you get the `[warning: reverie_context payload still exceeds budget …]` notice.
 
 Output order on both surfaces is handoff banner, entries, aliases, notices, tier footer (#212): the banner leads so a harness that truncates a large result to a short preview still shows it, and the notices sit beside the footer that carries the fetch hint. The default budget (28KB) is sized to the Claude Code Bash tool's 30,000-character inline limit — output past it is saved to a file and the model sees a 2KB preview.
 
-`tier: "full"` opts out of all of it. In JSON output the notices appear in `warnings[]` and as `result.degraded`, `result.demotedNamespaces`, `result.shedNamespaces`; `result.entries` holds the values rendered in full and `result.index` the gists (`{ gist, bytes, truncated }`).
+`tier: "full"` opts out of all of it. In JSON output the notices appear in `warnings[]` and as `result.degraded`, `result.demotedNamespaces`, `result.shedNamespaces`; `result.gistChars` is present when the gists were narrowed (0 = keys only); `result.entries` holds the values rendered in full and `result.index` the gists (`{ gist, bytes, truncated }`).
 
 ### Configuring the budget and gist length
 
 ```bash
 rvr config get bootstrap_max_response_bytes
 rvr config set bootstrap_max_response_bytes 102400   # hosts with larger tool-result limits
-rvr config set bootstrap_gist_chars 120              # shorter index lines
+rvr config set bootstrap_gist_chars 120              # shorter index lines (the maximum; the budget may narrow further)
 ```
 
 For test/integration workflows, `RVR_BOOTSTRAP_MAX_BYTES` and `RVR_BOOTSTRAP_GIST_CHARS` override the config.

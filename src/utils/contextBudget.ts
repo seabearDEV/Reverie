@@ -1,9 +1,10 @@
-// reverie_context size-budget (#100, #188). When the projected response
+// reverie_context size-budget (#100, #188, #211). When the projected response
 // exceeds the configured byte budget AND tier !== 'full': first demote pinned
-// namespaces from full values to index lines (#188, nothing lost), then drop
-// entries by priority (files.* → arch.* → large context.*) until under
-// budget. Never dropped: project.*, conventions.*, commands.*, deps.*,
-// context.next_session.
+// namespaces from full values to index lines (#188, nothing lost), then
+// narrow every index line's gist one rung at a time (#211, every key still
+// visible), and only then drop entries by priority (files.* → arch.* → large
+// context.*) until under budget. Never dropped: project.*, conventions.*,
+// commands.*, deps.*, context.next_session.
 
 import { HANDOFF_KEY } from './handoff';
 
@@ -291,4 +292,64 @@ export function formatDemoteNotice(segments: DemoteSegment[], getHint: string): 
   const parts = segments.map(s =>
     `${s.label} (${s.keys.length} ${s.keys.length === 1 ? 'entry' : 'entries'}, ${formatBytes(s.bytesBefore)} → ${formatBytes(s.bytesAfter)})`);
   return `[demoted to index: ${parts.join(', ')} — open entries with ${getHint}]`;
+}
+
+// ── Gist shrink (#211, budget step 2) ──────────────────────────────────
+// An index line costs ~225 B at the default 160-char gist, so a 300-entry
+// store cannot fit a channel-sized budget at full width and the drop order
+// would make most of it invisible again — the failure #188 set out to fix.
+// So between demotion and dropping, every index line narrows to one shared
+// width, a rung at a time, until the response fits. The configured
+// bootstrap_gist_chars is the maximum; only rungs below it apply. The last
+// rung keeps the key and the open-cost marker and no gist at all.
+
+/** Widths tried in order, strictly below the configured cap. 0 = keys only. */
+export const GIST_SHRINK_RUNGS: readonly number[] = [80, 40, 0];
+
+export interface ShrinkDecision {
+  /** Display map with narrowed keys replaced by their shorter index text. */
+  display: Record<string, string>;
+  /** Index entries that were narrowed — the caller writes these back so the
+   *  rendered lines and the JSON index match what was sized here. */
+  narrowed: Record<string, IndexEntry>;
+  /** Width in effect: `startChars` when nothing was narrowed; 0 = keys only. */
+  gistChars: number;
+}
+
+export function shrinkIndexToFitBudget(
+  display: Record<string, string>,
+  indexKeys: Iterable<string>,
+  entryAt: (k: string, chars: number) => IndexEntry,
+  ageTag: (k: string) => string,
+  fixedOverheadBytes: number,
+  budgetBytes: number,
+  startChars: number,
+): ShrinkDecision {
+  const next: Record<string, string> = { ...display };
+  let projected = fixedOverheadBytes;
+  for (const [k, v] of Object.entries(next)) projected += entryRenderBytes(k, v, ageTag(k));
+
+  const narrowed: Record<string, IndexEntry> = {};
+  let gistChars = startChars;
+  const keys = [...indexKeys].filter(k => k in next);
+
+  for (const rung of GIST_SHRINK_RUNGS) {
+    if (projected <= budgetBytes) break;
+    if (rung >= startChars) continue;
+    let changed = false;
+    for (const k of keys) {
+      const entry = entryAt(k, rung);
+      const text = formatIndexText(entry);
+      // Never lengthen a line: a short value rendered whole is cheaper than
+      // its own "… [+12B]" marker, and stays whole.
+      const saved = Buffer.byteLength(next[k], 'utf8') - Buffer.byteLength(text, 'utf8');
+      if (saved <= 0) continue;
+      next[k] = text;
+      narrowed[k] = entry;
+      projected -= saved;
+      changed = true;
+    }
+    if (changed) gistChars = rung;
+  }
+  return { display: next, narrowed, gistChars };
 }

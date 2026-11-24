@@ -144,6 +144,7 @@ interface GuardrailSignals {
   pinned?: number;
   indexed?: number;
   demotedNamespaces?: string[];
+  gistChars?: number;
   writeAmpWarning?: boolean;
   writeAmpCount?: number;
 }
