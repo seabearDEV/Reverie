@@ -1,113 +1,89 @@
 # Schema Guide
 
-How to structure the `.reverie/` store file — and why it's structured the way it is.
+How a `.reverie/` store is laid out — and why it's structured the way it is.
 
 ## The problem this solves
 
 Every time an AI agent opens a project, it faces the same question: *what do I need to know?* Without stored context, agents burn tokens re-exploring the codebase, re-reading README files, and re-discovering architectural decisions. Developers switching between projects face the same problem — they grep, they read, they forget.
 
-The `.reverie/` store solves this by giving every project a structured knowledge file that both humans and AI agents can read. But "structured" only works if the structure is consistent and intentional. This guide explains the design behind that structure.
+The `.reverie/` store solves this by giving every project a structured knowledge base that both humans and AI agents can read. But "structured" only works if the structure is consistent and intentional. This guide explains the design behind that structure.
 
-## File anatomy
+## Store anatomy
 
-The `.reverie/` store file has five top-level sections:
+A store is a directory. Every entry is its own file, named by its key, and a few `_`-prefixed sidecar files hold what is shared across entries:
 
-```json
-{
-  "_meta": { ... },
-  "_schema": { ... },
-  "aliases": { ... },
-  "confirm": { ... },
-  "entries": { ... }
-}
+```
+.reverie/
+├── project.name.json        one file per entry
+├── commands.build.json
+├── arch.api.json
+├── _aliases.json            short names for entries
+├── _confirm.json            entries that ask before they run
+├── _README.md               "do not hand-edit" note
+├── .gitignore               keeps _epoch.json out of git
+└── _epoch.json              per-clone write counter, not committed
 ```
 
-### `entries` — the knowledge base
+The project store lives in `.reverie/` at the project root and is meant to be committed. The global store has the same layout under `~/.reverie/store/`.
 
-This is the core of the file. All project knowledge lives here, organized into **namespaces** using dot notation:
+You never edit these files by hand — `rvr` and the MCP tools maintain them, along with the timestamps, alias integrity and audit log that hand edits would skip. This section describes the layout so that a diff or a merge makes sense when you see one.
+
+### Entries — one file per key
+
+All project knowledge lives in entries, addressed by dot notation: `project.name`, `commands.build`, `arch.api`. The first segment is the **namespace**. `rvr set arch.api "…"` writes `.reverie/arch.api.json`:
 
 ```json
 {
-  "entries": {
-    "project": {
-      "name": "myapp",
-      "description": "A web API for managing widgets"
-    },
-    "commands": {
-      "build": "npm run build",
-      "test": "npm test -- --coverage"
-    },
-    "arch": {
-      "api": "Express REST API with versioned routes under /api/v1"
-    }
+  "value": "Express REST API with versioned routes under /api/v1",
+  "meta": {
+    "created": 1775347230199,
+    "updated": 1775353132791
   }
 }
 ```
 
-Entries are nested objects, but tools access them via flat dot notation: `project.name`, `commands.build`, `arch.api`. The nesting is for readability; the dots are for addressing.
+The dots are for addressing; the tools present entries as a tree. `rvr get arch` returns everything under `arch.*`, and a key is either a leaf with a value or a parent of other keys, never both.
 
-### `_meta` — timestamps
+One file per entry is what makes a committed store workable for a team: two branches that add or change *different* entries merge without conflict. Two branches that write the *same* entry conflict in that entry's file, like any other file both sides edited.
 
-Every entry gets an automatic timestamp (Unix ms) when created or updated:
+### Timestamps
 
-```json
-{
-  "_meta": {
-    "project.name": 1775347230199,
-    "commands.build": 1775353132791
-  }
-}
-```
-
-You never edit `_meta` directly. It powers two features:
+Each entry file records when it was created and last updated (Unix ms). They are maintained for you and power two features:
 - **Staleness detection** — `rvr stale` surfaces entries not updated in N days
-- **Age tags** — `reverie_context` marks entries older than 30 days so agents know what might be outdated
+- **Age tags** — the bootstrap marks entries older than 30 days, so agents know what might be outdated
 
-### `aliases` — shortcuts for common lookups
+### `_aliases.json` — shortcuts for common lookups
 
-Aliases map short names to full dot-notation paths:
+Aliases map short names to full keys:
 
 ```json
 {
-  "aliases": {
-    "chk": "commands.check",
-    "dev": "context.devWorkflow",
-    "mcp": "arch.mcp"
-  }
+  "chk": "commands.check",
+  "dev": "context.devWorkflow",
+  "mcp": "arch.mcp"
 }
 ```
 
-When you run `rvr get mcp`, the alias resolves to `arch.mcp`. This works in the CLI, MCP tools, and interpolation references. Aliases save keystrokes for entries you access frequently.
+When you run `rvr get mcp`, the alias resolves to `arch.mcp`. This works in the CLI, MCP tools, and interpolation references. Aliases save keystrokes for entries you access frequently. An entry has at most one alias: giving it a second replaces the first.
 
 **Important:** aliases always win in key resolution. If you have both an alias `mcp -> arch.mcp` and an entry at `mcp.something`, the alias takes precedence. Avoid naming aliases the same as top-level namespaces.
 
-### `confirm` — safety for dangerous commands
+### `_confirm.json` — safety for dangerous commands
 
-Mark commands that should prompt before execution:
-
-```json
-{
-  "confirm": {
-    "commands.release": true
-  }
-}
-```
-
-When `rvr run commands.release` is called, the user gets a confirmation prompt before the command executes. This is useful for deploy scripts, destructive operations, or anything you don't want to fire accidentally.
-
-### `_schema` — custom namespace validation
-
-By default, `rvr lint` validates that all entries use one of the 8 recommended namespaces. If your project needs additional namespaces, declare them here:
+Marks commands that should prompt before execution:
 
 ```json
 {
-  "_schema": {
-    "namespaces": ["infra", "api", "frontend"]
-  }
+  "commands.release": true
 }
 ```
 
-Custom namespaces are merged with the defaults — they extend, not replace. If you don't need custom namespaces, omit `_schema` entirely (the Reverie project's own file doesn't use it).
+When `rvr run commands.release` is called, the user gets a confirmation prompt before the command executes. This is useful for deploy scripts, destructive operations, or anything you don't want to fire accidentally. Set the flag with `rvr set <key> <value> --confirm` or `rvr confirm set <key>`.
+
+### The other files
+
+- **`_epoch.json`** — a counter the store bumps on every write so that a reader can tell it overlapped a writer. It is per-clone state: the seeded `.gitignore` keeps it out of commits, and a fresh clone starts without one.
+- **`.gitignore`** and **`_README.md`** — written once when the store is created. Both are safe to extend.
 
 ## The namespace schema
 
@@ -238,8 +214,9 @@ Reserved for Reverie's own configuration, like custom LLM instructions.
 | Key | Purpose |
 |---|---|
 | `system.llm.instructions` | Custom instructions appended to the built-in MCP prompt |
+| `system.bootstrap.pinned` | Namespaces the bootstrap renders in full, overriding the default (see [Pinned namespaces](#pinned-namespaces)) |
 
-Most projects don't need entries here. The main use case is appending project-specific agent guidance beyond what the built-in instructions cover.
+Most projects don't need entries here. The main use cases are appending project-specific agent guidance beyond what the built-in instructions cover, and choosing which namespaces lead the bootstrap.
 
 ## What makes a good entry
 
@@ -270,29 +247,17 @@ If an entry needs multiple paragraphs, it's probably better as a doc file refere
 
 ## Putting it all together
 
-Here's a minimal `.reverie/` store for a new project:
+Here's a minimal `.reverie/` store for a new project, as the commands that create it:
 
-```json
-{
-  "entries": {
-    "project": {
-      "name": "myapp",
-      "description": "REST API for widget management"
-    },
-    "commands": {
-      "build": "npm run build",
-      "test": "npm test",
-      "check": "npm run build && npm run lint && npm test"
-    },
-    "conventions": {
-      "errors": "All API errors return { error: string, code: number }. Never throw raw strings."
-    },
-    "context": {
-      "auth": "Auth middleware reads JWT from Authorization header, not cookies. Mobile clients can't use cookies."
-    }
-  }
-}
+```bash
+rvr set project.name "myapp"
+rvr set project.description "REST API for widget management"
+rvr set commands.check "npm run build && npm run lint && npm test"
+rvr set conventions.errors "All API errors return { error: string, code: number }. Never throw raw strings."
+rvr set context.auth "Auth middleware reads JWT from Authorization header, not cookies. Mobile clients can't use cookies."
 ```
+
+That leaves five entry files in `.reverie/`, one per key.
 
 Four namespaces, five entries, and an agent already knows: what the project is, how to build and test it, how errors should look, and why auth works the way it does. That's enough to be useful on day one. Add `arch.*`, `files.*`, and `deps.*` entries as you discover things worth keeping.
 
@@ -387,4 +352,4 @@ rvr lint --json
 
 In JSON mode the lint payload (`issues`, `allowed`, optional `seedQuality`) is nested inside the standard envelope's `result` field — parse `.result.issues`, and branch on the top-level `ok` / exit code. See the README's [Structured JSON Output](../README.md#structured-json-output) for the full envelope contract and error codes.
 
-Lint warns but doesn't block — it's guidance, not a gate. If your project genuinely needs namespaces outside the defaults, add them via `_schema.namespaces` rather than ignoring the warnings.
+For namespaces, lint is guidance, not a gate: it lists entries outside the recommended set and still exits 0. Declaring extra namespaces is not supported for directory stores yet, so a project that genuinely needs one will see it listed — that is expected, not an error.

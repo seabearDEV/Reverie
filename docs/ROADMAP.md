@@ -12,30 +12,38 @@ Reverie 1.0.0 stable shipped 2026-05-07, following a rebrand from codexCLI. See 
 
 ## What's Next
 
-The next theme is soak-gated: it gets picked from usage telemetry per the soak-exit policy (day-7 checkpoint for the current cycle: 2026-06-15), not pre-committed. Leading candidates below.
+### In progress — v1.4.0 "Forum"
 
-### Smarter Knowledge Management
+Theme picked 2026-09-04 ([#186](https://github.com/seabearDEV/reverie/issues/186)). The store already behaves like a forum: its biggest entries are posts with dated replies grafted in, and the handoff is a note left for the next agent. That grafting is what bloats the bootstrap. The theme gives replies a place to live that never loads at bootstrap and makes the bootstrap the front page — pinned namespaces in full, one line for everything else. A committed store also has to hold up when more than one person writes to it. The agent-facing surface stays small: `context` is the front page, `get` opens a thread, one verb replies.
+
+The steps and their order are in #186; the work is tracked under the [v1.4.0 — Forum milestone](https://github.com/seabearDEV/reverie/milestone/17).
+
+### After that
+
+Later themes are soak-gated: each is picked from usage telemetry at the soak exit of the release before it, not pre-committed. The candidates, by area:
+
+#### Smarter Knowledge Management
 
 Make the knowledge base aware of the code it describes, and easier to navigate.
 
 - **Git-aware freshness** — link entries to source files, flag staleness on code changes ([#42](https://github.com/seabearDEV/reverie/issues/42))
 - **Entry health** — unified lifecycle, coldness, and staleness check ([#84](https://github.com/seabearDEV/reverie/issues/84))
-- **Fuzzy finder** — interactive search via fzf ([#13](https://github.com/seabearDEV/reverie/issues/13)) · leading next-theme candidate
-- **Boolean search** — AND, OR, NOT operators ([#43](https://github.com/seabearDEV/reverie/issues/43)) · leading next-theme candidate
+- **Fuzzy finder** — interactive search via fzf ([#13](https://github.com/seabearDEV/reverie/issues/13))
+- **Boolean search** — AND, OR, NOT operators ([#43](https://github.com/seabearDEV/reverie/issues/43))
 - **Richer data types** — lists, multi-line values, typed JSON ([#44](https://github.com/seabearDEV/reverie/issues/44))
 
-### Team & Collaboration
+#### Team & Collaboration
 
 Make the knowledge base useful for teams, not just solo developers.
 
 - **Entry attribution** — track who/what last modified each entry ([#45](https://github.com/seabearDEV/reverie/issues/45))
 - **`rvr diff`** — compare local vs committed entries ([#47](https://github.com/seabearDEV/reverie/issues/47))
 
-### Knowledge Reuse Across Projects
+#### Knowledge Reuse Across Projects
 
 - **`rvr pack install`** — share curated knowledge across projects via git URLs ([#115](https://github.com/seabearDEV/reverie/issues/115))
 
-### Platform & Distribution
+#### Platform & Distribution
 
 - **Fish/PowerShell completion** ([#6](https://github.com/seabearDEV/reverie/issues/6))
 - **Windows support** ([#49](https://github.com/seabearDEV/reverie/issues/49))
@@ -49,6 +57,9 @@ Make the knowledge base useful for teams, not just solo developers.
 ## Release History
 
 v1.0.0 and forward are Reverie. The v0.1.0 → v1.14.0 entries below are codexCLI-era, preserved here for continuity. (Those codexCLI git tags were retired during the v1.1.0 cut so Reverie's v1.x line is collision-free; the history lives on in this document and in `git log`.)
+
+### v1.3.0 — Trust
+"Trust the record." Scoped at the v1.2.x soak exit from the first cross-machine usage dataset (two machines, about ten weeks of telemetry), which showed the observability layer itself could not be trusted: more than half of one log was untagged test traffic, one repo counted as three projects across path renames, bulk store-population read as write indiscipline, and the stats tools were invisible to their own record. The release makes the measurement layer honest before the next soak reads it: test traffic tagged and excluded by default (#130); canonical project identity from the git origin (#141); bulk-population writes segmented out of organic stats (#142); `stats`/`audit` calls logged and self-excluded (#134); ambient agent attribution from harness fingerprints when `RVR_AGENT_NAME` is unset (#138); and `rvr audit --follow --json`, a watch mode that makes watcher agents a first-class pattern (#135). Also: security automation — Dependabot, a weekly `bun audit`, CodeQL (#131); a weekly perf regression run (#132); and a data-loss fix where a replace-all import over MCP wiped the sections the file omitted (#133). See [CHANGELOG](../CHANGELOG.md).
 
 ### v1.2.0 — Surface Token Diet & Agent-Surface Parity
 Data-picked 2026-06-09 from measured MCP/CLI token economics; closes the [#117](https://github.com/seabearDEV/reverie/issues/117) arc — MCP reaches token parity with the CLI, the CLI reaches statefulness parity with MCP. Six issues: quiet `reverie_set` confirmation, no value echo (#125); default bootstrap budget 50KB → 38KB, under MCP-client large-response warnings (#124); handshake diet — `DEFAULT_LLM_INSTRUCTIONS` 8.7KB → 1.9KB with a size regression test (#126); projection params — `context sizeOnly`/`--size-only`, `find keysOnly` (#127); CLI session-state parity via `RVR_SESSION` + on-disk session files — write-amp guard and miss-path tracking across invocations (#119, WS3); JSON envelope `result` derived from handler returns, with a command-sweep completeness guard (#120). Generated agent guidance softened from "prefer MCP" to "same store, either surface." Tests 1430 → 1460. See [CHANGELOG](../CHANGELOG.md).
