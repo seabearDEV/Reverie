@@ -6,7 +6,7 @@ import { loadAliases, resolveKey } from '../alias';
 import { sanitizeValue, sanitizeParams, logAudit } from './audit';
 import { logToolCall, classifyOp, TelemetryEntry, TelemetryExtras, extractNamespace, appendMissPath } from './telemetry';
 import { recordCliWrite, trackCliMissPath } from './sessionState';
-import { formatWriteAmpWarning, WriteAmpResult } from './writeAmp';
+import { formatWriteAmpWarning, writeAmpStore, WriteAmpResult } from './writeAmp';
 import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
 import { resolveAgentIdentity } from './agentIdentity';
@@ -341,7 +341,9 @@ export async function withCliInstrumentation<T>(
     let writeAmp: WriteAmpResult | null = null;
     if (ctx.tool === 'reverie_set' && success && ctx.key) {
       try {
-        writeAmp = recordCliWrite(ctx.key);
+        // Counted per store: the same key in another project, or in the
+        // global store, is another entry.
+        writeAmp = recordCliWrite(ctx.key, Date.now(), writeAmpStore(scope, findProjectFile()));
       } catch { /* guardrail bookkeeping must not break a set */ }
       if (writeAmp) {
         const message = formatWriteAmpWarning(writeAmp);

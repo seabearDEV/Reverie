@@ -284,6 +284,46 @@ describe('CLI JSON envelope (#117)', () => {
     expect(parse(run('--json get context.next_session').stdout).result).toEqual({ 'context.next_session': 'aliased note 3' });
   });
 
+  // ── The guard counts per store ───────────────────────────────────────
+  // An entry is a key in one store. `run` pins every write to the global
+  // store, so these spawn inside real project directories instead: no
+  // RVR_NO_PROJECT, no --global. Throws on a non-zero exit.
+
+  const runIn = (cwd: string, args: string, env: Record<string, string>) => {
+    const projectEnv: Record<string, string | undefined> = { ...baseEnv, ...env };
+    delete projectEnv.RVR_NO_PROJECT;
+    return execSync(`bun ${JSON.stringify(path.resolve('dist/index.js'))} ${args}`, {
+      cwd, env: projectEnv, stdio: ['pipe', 'pipe', 'pipe'],
+    }).toString();
+  };
+
+  it('the same key in two projects and the global store is three entries, each with its own count', () => {
+    const env = { RVR_SESSION: 'per-store' };
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-json-stores-'));
+    try {
+      const [projA, projB] = ['a', 'b'].map((name) => {
+        const dir = path.join(root, name);
+        fs.mkdirSync(dir);
+        runIn(dir, 'init', env);
+        expect(fs.existsSync(path.join(dir, '.reverie'))).toBe(true);
+        return dir;
+      });
+      expect(ampWarnings(runIn(projA, '--json set stores.k "a1"', env))).toBe(0);
+      expect(ampWarnings(runIn(projA, '--json set stores.k "a2"', env))).toBe(0);
+      // First write of the key in a second project, then in the global
+      // store: on the key name alone each was "written 3 times".
+      expect(ampWarnings(runIn(projB, '--json set stores.k "b1"', env))).toBe(0);
+      expect(ampWarnings(runIn(projB, '--json set --global stores.k "g1"', env))).toBe(0);
+      // The first project's own third write is the one that trips.
+      expect(ampWarnings(runIn(projA, '--json set stores.k "a3"', env))).toBe(1);
+      // Each landed where it was sent.
+      expect(parse(runIn(projA, '--json get stores.k', env)).result).toEqual({ 'stores.k': 'a3' });
+      expect(parse(runIn(projB, '--json get stores.k', env)).result).toEqual({ 'stores.k': 'b1' });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 15000);
+
   // ── #120 guard: no result-less ok envelopes, no stdout pollution ───────
   // Every successful JSON-mode command must carry a `result` (an ok envelope
   // with no result means the handler's output was silently dropped — the

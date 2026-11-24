@@ -179,3 +179,10 @@ After this lands, **#103** (tier semantics docs) becomes unblocked — both #100
 - **Checked in two places.** `recordWrite` covers the MCP server and the per-process CLI path. `recordCliWrite` checks again because a shared CLI session runs `pruneAndRecord` against the state file directly, and that function takes no key. The early return there also skips the guard's own locked update of the state file; the same invocation still updates the file once, for miss-path tracking.
 - **Resolved key.** Both call sites pass the alias-resolved key, so a handoff written through an alias is exempt too.
 - **Nothing is recorded.** An exempt write leaves no timestamps, so `writeAmpWarning` / `writeAmpCount` never appear on its telemetry or audit rows. The rewrite frequency of the handoff is still visible in the audit log, like any other write.
+
+## Addendum: what counts as a write (v1.4.0)
+
+Corrections to the counting, found while reviewing the exemption. The threshold and the window are unchanged.
+
+- **Per store.** The guard counts writes of an entry, and an entry is a key in one store. A window slot is the pair (store, key) — `writeAmpSlot`, where the store is the project root or `global` (`writeAmpStore`) — on both surfaces. Keyed on the name alone, `project.inFlight` written once in each of three projects read as one entry written three times. The exemption still tests the bare key. The state file stays at `v: 1`: rows written under the bare key are never matched again and age out with the window.
+- **Eviction on disk.** The CLI state file drops every slot with no write left in the window on the next counted `set`, as the in-memory map always did. Before, it kept each key a session had ever set.

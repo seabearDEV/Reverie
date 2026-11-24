@@ -1488,6 +1488,31 @@ describe('MCP Server Tools', () => {
       expect(audit.writeAmpWarning).toBeUndefined();
     });
 
+    it('the same key in another store has its own counter', async () => {
+      const storeModule = await import('../store');
+      const findProjectFileMock = storeModule.findProjectFile as ReturnType<typeof vi.fn>;
+      try {
+        findProjectFileMock.mockReturnValue('/proj/a/.reverie');
+        await toolHandlers['reverie_set']({ key: 'project.inFlight', value: 'a1' });
+        await toolHandlers['reverie_set']({ key: 'project.inFlight', value: 'a2' });
+
+        // First write of that key to another project, then to the global
+        // store: neither is the entry written twice above.
+        findProjectFileMock.mockReturnValue('/proj/b/.reverie');
+        const otherProject = await toolHandlers['reverie_set']({ key: 'project.inFlight', value: 'b1' });
+        expect(otherProject.content[0].text).not.toContain('warning:');
+        const globalStore = await toolHandlers['reverie_set']({ key: 'project.inFlight', value: 'g1', scope: 'global' });
+        expect(globalStore.content[0].text).not.toContain('warning:');
+
+        // Back in the first project, its third write is the one that trips.
+        findProjectFileMock.mockReturnValue('/proj/a/.reverie');
+        const third = await toolHandlers['reverie_set']({ key: 'project.inFlight', value: 'a3' });
+        expect(third.content[0].text).toContain('written 3 times');
+      } finally {
+        findProjectFileMock.mockReturnValue(null);
+      }
+    });
+
     it('the handoff key is exempt: repeated reverie_set never warns or signals', async () => {
       for (let i = 1; i <= 4; i++) {
         logAuditMock.mockClear();
