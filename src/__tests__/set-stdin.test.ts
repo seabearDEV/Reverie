@@ -107,4 +107,37 @@ describe('set reads its value from stdin', () => {
     expect(r.status).toBe(0);
     expect(stored('stdin.aliasonly')).toBe('kept');
   });
+
+  // The consequence of reading files: a value-less `set` carrying only -a /
+  // --confirm / --no-confirm takes a NON-empty file as the value, exactly as
+  // it always has for a pipe. Before the fix the file read as empty, so these
+  // were metadata-only updates. Pinned so the change stays a decision.
+  it('a value-less set with -a or --confirm takes a non-empty file as the value, like a pipe', () => {
+    for (const flags of [['-a', 'stdinvl'], ['--confirm'], ['--no-confirm']]) {
+      const tag = flags[0].replace(/^-+/, '');
+      for (const via of ['file', 'pipe'] as const) {
+        const key = `stdin.valueless.${tag}.${via}`;
+        const args = [key, ...flags.map(f => (f === 'stdinvl' ? `stdinvl${via}` : f))];
+        expect(setFrom({ input: 'original\n' }, [key]).status).toBe(0);
+        const r = via === 'file' ? setFromFile('replacement\n', args) : setFrom({ input: 'replacement\n' }, args);
+        expect(r.status).toBe(0);
+        expect(stored(key)).toBe('replacement');
+      }
+    }
+  });
+
+  it('`confirm set` and `alias set` never read stdin, so they are safe where stdin is inherited', () => {
+    expect(setFrom({ input: 'untouched\n' }, ['stdin.meta']).status).toBe(0);
+    const file = path.join(testDir, 'inherited.txt');
+    fs.writeFileSync(file, 'this must not become the value\n');
+    for (const args of [['confirm', 'set', 'stdin.meta', '--global'], ['alias', 'set', 'stdinmeta', 'stdin.meta', '--global']]) {
+      const fd = fs.openSync(file, 'r');
+      try {
+        expect(spawnSync('bun', ['dist/index.js', ...args], { env, stdio: [fd, 'pipe', 'pipe'] }).status).toBe(0);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+    expect(stored('stdin.meta')).toBe('untouched');
+  });
 });

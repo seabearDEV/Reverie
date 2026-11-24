@@ -136,7 +136,10 @@ reverie
           process.exitCode = 1;
           return;
         }
-        // value stays undefined — intentional for alias-only or confirm-only updates
+        // value stays undefined — intentional for alias-only or confirm-only updates.
+        // Non-empty stdin wins over that, for a file as for a pipe: `set k -a x`
+        // inside a `while read … done < file` loop takes the rest of the file
+        // as k's value. `alias set` / `confirm set` never read stdin.
       } else if (!options.alias && options.confirm === undefined) {
         // Allow no value when -a or --confirm/--no-confirm is provided (metadata-only update)
         printError('Missing value. Provide a value or use --prompt (-p) to enter it interactively.');
