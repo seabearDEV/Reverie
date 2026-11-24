@@ -368,7 +368,7 @@ With a shared id (1 or 2), every invocation counts as one session, with state pe
 - **Write-amplification warnings** (#101): the 3rd+ write of the same key within 30 minutes adds a `WRITE_AMP` warning to the envelope's `warnings[]` (with `count`) and to stderr in human mode.
 - **Miss-path tracking**: read misses open exploration windows that close on writeback/hit across invocations, feeding the same `reverie_stats` calibration as MCP sessions.
 
-The warning is advisory and never fails the write. Writes are counted per entry: the same key in another project, or in the global store, has its own count. One key is exempt on both surfaces: the handoff, `context.next_session`, is never counted. It is rewritten as a session progresses by design, so the guard's question — has this entry stabilized? — does not apply to it. The exemption is that exact key, including when it is written through an alias; nothing else under `context.*` is exempt, and there is no setting to add keys.
+The warning is advisory and never fails the write. Writes are counted per entry: the same key in another project, or in the global store, has its own count. Only a stored value counts: `rvr set <key> --confirm`, `--no-confirm` or `-a <alias>` without a value updates metadata and is not a write. One key is exempt on both surfaces: the handoff, `context.next_session`, is never counted. It is rewritten as a session progresses by design, so the guard's question — has this entry stabilized? — does not apply to it. The exemption is that exact key, including when it is written through an alias; nothing else under `context.*` is exempt, and there is no setting to add keys.
 
 ## Validation
 

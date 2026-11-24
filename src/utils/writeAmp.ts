@@ -144,7 +144,29 @@ function formatMsAgo(ms: number): string {
   return `${minutes}m`;
 }
 
+// The CLI's `reverie_set` invocations do not all store a value: `set <key>
+// --confirm`, `--no-confirm` and `-a <alias>` on their own update metadata, a
+// declined overwrite prompt and an `edit` closed without changes write
+// nothing. Each used to take a slot in the window, so an entry written once
+// could warn. The handler marks the store, right after setValue; the
+// instrumentation wrapper takes the mark before it counts. The MCP handler
+// needs none — it records only after its own setValue.
+let valueStored = false;
+
+/** Called by a CLI handler once it has stored an entry value. */
+export function markValueStored(): void {
+  valueStored = true;
+}
+
+/** Whether a value was stored since the last take; clears the mark. */
+export function takeValueStored(): boolean {
+  const stored = valueStored;
+  valueStored = false;
+  return stored;
+}
+
 /** Reset all in-memory write-amp state. Used by tests and on server restart. */
 export function clearWriteAmpState(): void {
   sessionWrites.clear();
+  valueStored = false;
 }

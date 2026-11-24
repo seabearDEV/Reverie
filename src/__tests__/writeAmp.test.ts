@@ -1,5 +1,8 @@
 import path from 'path';
-import { recordWrite, formatWriteAmpWarning, clearWriteAmpState, isWriteAmpExempt, writeAmpSlot, writeAmpStore } from '../utils/writeAmp';
+import {
+  recordWrite, formatWriteAmpWarning, clearWriteAmpState, isWriteAmpExempt,
+  writeAmpSlot, writeAmpStore, markValueStored, takeValueStored,
+} from '../utils/writeAmp';
 import { HANDOFF_KEY } from '../utils/handoff';
 
 beforeEach(() => {
@@ -153,6 +156,22 @@ describe('per-store counting', () => {
       writeAmpSlot('["global","k"]', ''),
     ];
     expect(new Set(slots).size).toBe(slots.length);
+  });
+});
+
+describe('value-stored mark', () => {
+  // The CLI wrapper counts a `set` only when the handler stored a value.
+  it('is unset until a handler marks it, and a take clears it', () => {
+    expect(takeValueStored()).toBe(false);
+    markValueStored();
+    expect(takeValueStored()).toBe(true);
+    expect(takeValueStored()).toBe(false);
+  });
+
+  it('does not survive clearWriteAmpState', () => {
+    markValueStored();
+    clearWriteAmpState();
+    expect(takeValueStored()).toBe(false);
   });
 });
 

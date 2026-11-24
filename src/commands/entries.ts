@@ -21,6 +21,7 @@ import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
 import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
 import { isJsonMode, setResult, failJson } from '../utils/output';
+import { markValueStored } from '../utils/writeAmp';
 
 function toScope(global?: boolean  ): Scope | undefined {
   return global ? 'global' : undefined;
@@ -371,6 +372,7 @@ export async function setEntry(key: string, value: string | undefined, force = f
 
     setValue(key, storedValue, scope);
     console.log(`Entry '${key}' set successfully.`);
+    markValueStored();
 
     if (alias) {
       setAlias(alias, key, scope);
@@ -725,6 +727,7 @@ export async function editEntry(key: string, options: { decrypt?: boolean, globa
 
       setValue(key, storedValue, scope);
       printSuccess(`Entry '${key}' updated successfully.`);
+      markValueStored();
     } finally {
       try { fs.unlinkSync(tmpFile); } catch { /* ignore cleanup errors */ }
       try { fs.rmdirSync(tmpDir); } catch { /* ignore cleanup errors */ }
