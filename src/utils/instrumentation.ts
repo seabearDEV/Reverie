@@ -6,7 +6,7 @@ import { loadAliases, resolveKey } from '../alias';
 import { sanitizeValue, sanitizeParams, logAudit } from './audit';
 import { logToolCall, classifyOp, TelemetryEntry, TelemetryExtras, extractNamespace, appendMissPath } from './telemetry';
 import { recordCliWrite, trackCliMissPath } from './sessionState';
-import { formatWriteAmpWarning, WriteAmpResult } from './writeAmp';
+import { formatWriteAmpWarning, takeValueStored, writeAmpStore, WriteAmpResult } from './writeAmp';
 import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
 import { resolveAgentIdentity } from './agentIdentity';
@@ -338,10 +338,16 @@ export async function withCliInstrumentation<T>(
     // invocations; in-memory (never trips for a one-shot process) otherwise. The write itself already succeeded —
     // the warning is advisory and must never fail the command, so the
     // whole block is best-effort.
+    // Only a stored value counts. The handler marks it (markValueStored), so
+    // a metadata-only `set`, a declined overwrite and an unchanged `edit` do
+    // not take a slot. Taken on every invocation so a mark never outlives it.
+    const valueStored = takeValueStored();
     let writeAmp: WriteAmpResult | null = null;
-    if (ctx.tool === 'reverie_set' && success && ctx.key) {
+    if (ctx.tool === 'reverie_set' && success && ctx.key && valueStored) {
       try {
-        writeAmp = recordCliWrite(ctx.key);
+        // Counted per store: the same key in another project, or in the
+        // global store, is another entry.
+        writeAmp = recordCliWrite(ctx.key, Date.now(), writeAmpStore(scope, findProjectFile()));
       } catch { /* guardrail bookkeeping must not break a set */ }
       if (writeAmp) {
         const message = formatWriteAmpWarning(writeAmp);

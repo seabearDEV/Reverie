@@ -246,6 +246,126 @@ describe('CLI JSON envelope (#117)', () => {
     expect(rows[0].sessionDetected).toBeUndefined();
   });
 
+  // ── The handoff is exempt from the write-amp guard ───────────────────
+  // context.next_session is rewritten as a session progresses, by design.
+  // Once sessions were detected (#207) the convention tripped the guard on
+  // every third rewrite, with advice ("has the entry stabilized?") that does
+  // not apply to it.
+
+  const ampWarnings = (stdout: string) =>
+    ((parse(stdout).warnings ?? []) as { code: string }[]).filter(w => w.code === 'WRITE_AMP').length;
+
+  it('the handoff never trips WRITE_AMP, under an explicit or a detected session', () => {
+    for (const env of [
+      { RVR_SESSION: 'handoff-exempt' } as Record<string, string>,
+      { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: '7a1d9c3e-aaaa-4bbb-8ccc-ddddeeeeffff' } as Record<string, string>,
+    ]) {
+      for (let i = 1; i <= 4; i++) {
+        const r = run(`--json set context.next_session "note ${i}"`, env);
+        expect(parse(r.stdout).ok).toBe(true);
+        expect(ampWarnings(r.stdout)).toBe(0);
+      }
+      // Same session, an ordinary key: the guard is still live.
+      run('--json set handoff.control "v1"', env);
+      run('--json set handoff.control "v2"', env);
+      expect(ampWarnings(run('--json set handoff.control "v3"', env).stdout)).toBe(1);
+    }
+  });
+
+  it('a handoff written through an alias is exempt too (the guard sees the resolved key)', () => {
+    const env = { RVR_SESSION: 'handoff-alias' };
+    run('set context.next_session "seed"', env);
+    run('alias set ho context.next_session', env);
+    for (let i = 1; i <= 3; i++) {
+      const r = run(`--json set ho "aliased note ${i}"`, env);
+      expect(parse(r.stdout).ok).toBe(true);
+      expect(ampWarnings(r.stdout)).toBe(0);
+    }
+    expect(parse(run('--json get context.next_session').stdout).result).toEqual({ 'context.next_session': 'aliased note 3' });
+  });
+
+  // ── The guard counts per store ───────────────────────────────────────
+  // An entry is a key in one store. `run` pins every write to the global
+  // store, so these spawn inside real project directories instead: no
+  // RVR_NO_PROJECT, no --global. Throws on a non-zero exit.
+
+  const runIn = (cwd: string, args: string, env: Record<string, string>) => {
+    const projectEnv: Record<string, string | undefined> = { ...baseEnv, ...env };
+    delete projectEnv.RVR_NO_PROJECT;
+    return execSync(`bun ${JSON.stringify(path.resolve('dist/index.js'))} ${args}`, {
+      cwd, env: projectEnv, stdio: ['pipe', 'pipe', 'pipe'],
+    }).toString();
+  };
+
+  it('the same key in two projects and the global store is three entries, each with its own count', () => {
+    const env = { RVR_SESSION: 'per-store' };
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-json-stores-'));
+    try {
+      const [projA, projB] = ['a', 'b'].map((name) => {
+        const dir = path.join(root, name);
+        fs.mkdirSync(dir);
+        runIn(dir, 'init', env);
+        expect(fs.existsSync(path.join(dir, '.reverie'))).toBe(true);
+        return dir;
+      });
+      expect(ampWarnings(runIn(projA, '--json set stores.k "a1"', env))).toBe(0);
+      expect(ampWarnings(runIn(projA, '--json set stores.k "a2"', env))).toBe(0);
+      // First write of the key in a second project, then in the global
+      // store: on the key name alone each was "written 3 times".
+      expect(ampWarnings(runIn(projB, '--json set stores.k "b1"', env))).toBe(0);
+      expect(ampWarnings(runIn(projB, '--json set --global stores.k "g1"', env))).toBe(0);
+      // The first project's own third write is the one that trips.
+      expect(ampWarnings(runIn(projA, '--json set stores.k "a3"', env))).toBe(1);
+      // Each landed where it was sent.
+      expect(parse(runIn(projA, '--json get stores.k', env)).result).toEqual({ 'stores.k': 'a3' });
+      expect(parse(runIn(projB, '--json get stores.k', env)).result).toEqual({ 'stores.k': 'b1' });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  // ── The guard counts only writes that stored a value ─────────────────
+  // `set <key> --confirm`, `--no-confirm` and `-a <alias>` update metadata;
+  // `edit` closed without changes writes nothing. Each used to take a slot
+  // in the window, so an entry written once could warn.
+
+  const ampCount = (stdout: string) =>
+    ((parse(stdout).warnings ?? []) as { code: string; count?: number }[]).find(w => w.code === 'WRITE_AMP')?.count;
+
+  it('a set that stores no value does not count as a write', () => {
+    const env = { RVR_SESSION: 'meta-only' };
+    run('--json set meta.k "v1"', env);
+    for (const flags of ['--confirm', '--no-confirm', '-a metak', '--confirm', '--no-confirm']) {
+      const r = run(`--json set meta.k ${flags}`, env);
+      expect(parse(r.stdout).ok).toBe(true);
+      expect(ampWarnings(r.stdout)).toBe(0);
+    }
+    // One value write so far: the second is quiet and the third trips, at 3.
+    expect(ampWarnings(run('--json set meta.k "v2"', env).stdout)).toBe(0);
+    expect(ampCount(run('--json set meta.k "v3"', env).stdout)).toBe(3);
+  }, 15000);
+
+  it('edit counts only when it saves a change', () => {
+    const env = { RVR_SESSION: 'edit-count' };
+    // $VISUAL wins over $EDITOR, so both are set: the suite must not open
+    // whatever editor the developer's shell names.
+    const unchanged = { ...env, VISUAL: 'true', EDITOR: 'true' };
+    const script = path.join(testDir, 'append-editor.sh');
+    fs.writeFileSync(script, '#!/bin/sh\nprintf x >> "$1"\n', { mode: 0o755 });
+    const appends = { ...env, VISUAL: script, EDITOR: script };
+
+    run('--json set edit.k "v1"', env);
+    for (let i = 0; i < 3; i++) {
+      const r = run('--json edit --global edit.k', unchanged);
+      expect(r.status).toBe(0);
+      expect(ampWarnings(r.stdout)).toBe(0);
+    }
+    // A saved change is a write: with the set above, the second trips at 3.
+    expect(ampWarnings(run('--json edit --global edit.k', appends).stdout)).toBe(0);
+    expect(ampCount(run('--json edit --global edit.k', appends).stdout)).toBe(3);
+    expect(parse(run('--json get edit.k').stdout).result).toEqual({ 'edit.k': 'v1xx' });
+  }, 15000);
+
   // ── #120 guard: no result-less ok envelopes, no stdout pollution ───────
   // Every successful JSON-mode command must carry a `result` (an ok envelope
   // with no result means the handler's output was silently dropped — the

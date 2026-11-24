@@ -5,14 +5,49 @@
 // window math against the on-disk session state file (#119, sessionState.ts)
 // via pruneAndRecord below.
 
+import path from 'path';
+import type { Scope } from '../store';
+import { HANDOFF_KEY } from './handoff';
+
 const WINDOW_MS = 30 * 60 * 1000;
 const THRESHOLD = 3;
 
-// sessionId → key → timestamps[] (ms epoch). Per-MCP-server-process state,
-// cleared on server restart. Keys are lazily evicted when their most recent
+// Keys the guard never counts. The warning asks whether an entry has
+// stabilized, and the handoff is the one entry rewritten by convention as a
+// session progresses — it is replaced, not accumulated, so the question does
+// not apply. Once CLI sessions were detected (#207) every third handoff
+// rewrite warned. Exact keys only: no prefixes, no config knob.
+const EXEMPT_KEYS: ReadonlySet<string> = new Set([HANDOFF_KEY]);
+
+/** True for keys the write-amp guard neither counts nor warns about. */
+export function isWriteAmpExempt(key: string): boolean {
+  return EXEMPT_KEYS.has(key);
+}
+
+/**
+ * Identity of the store a write landed in: the project root for a project
+ * write, 'global' otherwise. The guard counts writes per entry, and an entry
+ * is a key in one store — counted on the key name alone, a key written once
+ * in each of three projects read as one entry written three times.
+ */
+export function writeAmpStore(scope: Scope, projectFile: string | null): string {
+  const landed = scope === 'auto' ? (projectFile ? 'project' : 'global') : scope;
+  return landed === 'project' && projectFile ? path.dirname(projectFile) : landed;
+}
+
+/**
+ * The window slot for one entry. JSON keeps the (store, key) pair unambiguous
+ * whatever characters either holds.
+ */
+export function writeAmpSlot(key: string, store: string): string {
+  return JSON.stringify([store, key]);
+}
+
+// sessionId → slot → timestamps[] (ms epoch). Per-MCP-server-process state,
+// cleared on server restart. Slots are lazily evicted when their most recent
 // timestamp slides outside the 30-min window; sessions are evicted when all
-// their keys have been swept. Memory is proportional to
-// active-session count × live-keys-per-session (keys with any in-window write).
+// their slots have been swept. Memory is proportional to
+// active-session count × live-entries-per-session (any in-window write).
 const sessionWrites = new Map<string, Map<string, number[]>>();
 
 export interface WriteAmpResult {
@@ -36,15 +71,33 @@ export function pruneAndRecord(prior: number[], now: number): { timestamps: numb
 }
 
 /**
- * Record a successful reverie_set on (sessionId, key) and return a warning
- * descriptor when the threshold trips, or null when no warning is warranted.
+ * True while `timestamps` still holds a write inside the 30-min window. The
+ * on-disk guard evicts every key this is false for; an empty list (a damaged
+ * file whose leaves were all discarded) is not live either.
+ */
+export function hasLiveWrite(timestamps: number[], now: number): boolean {
+  const cutoff = now - WINDOW_MS;
+  return timestamps.some(ts => ts > cutoff);
+}
+
+/**
+ * Record a successful reverie_set on (sessionId, store, key) and return a
+ * warning descriptor when the threshold trips, or null when no warning is
+ * warranted.
  *
  * The threshold trips on the 3rd+ write within the same session and the
- * 30-min sliding window. Different sessions get fresh counters.
+ * 30-min sliding window. Different sessions get fresh counters, and so does
+ * the same key in a different store. Exempt keys (see isWriteAmpExempt) are
+ * not recorded at all.
  *
- * `now` is injected for testability (default: Date.now()).
+ * `now` is injected for testability (default: Date.now()). `store` is where
+ * the write landed (writeAmpStore); both call sites pass it, and the default
+ * only serves tests of the window math.
  */
-export function recordWrite(sessionId: string, key: string, now = Date.now()): WriteAmpResult | null {
+export function recordWrite(sessionId: string, key: string, now = Date.now(), store = ''): WriteAmpResult | null {
+  if (isWriteAmpExempt(key)) return null;
+  const slot = writeAmpSlot(key, store);
+
   let perSession = sessionWrites.get(sessionId);
   if (!perSession) {
     perSession = new Map();
@@ -53,13 +106,13 @@ export function recordWrite(sessionId: string, key: string, now = Date.now()): W
 
   const cutoff = now - WINDOW_MS;
 
-  // Lazy eviction: remove keys in this session whose most recent timestamp has
+  // Lazy eviction: remove slots in this session whose most recent timestamp has
   // slid outside the 30-min window. Since timestamps are appended in order,
   // the last element is the most recent — if it's expired, all are expired.
-  // We skip `key` here because its current write hasn't been recorded yet;
+  // We skip `slot` here because its current write hasn't been recorded yet;
   // it will be evaluated naturally on the next call.
   for (const [k, timestamps] of perSession) {
-    if (k !== key && timestamps[timestamps.length - 1] <= cutoff) {
+    if (k !== slot && timestamps[timestamps.length - 1] <= cutoff) {
       perSession.delete(k);
     }
   }
@@ -70,8 +123,8 @@ export function recordWrite(sessionId: string, key: string, now = Date.now()): W
     }
   }
 
-  const { timestamps, result } = pruneAndRecord(perSession.get(key) ?? [], now);
-  perSession.set(key, timestamps);
+  const { timestamps, result } = pruneAndRecord(perSession.get(slot) ?? [], now);
+  perSession.set(slot, timestamps);
   return result;
 }
 
@@ -91,7 +144,29 @@ function formatMsAgo(ms: number): string {
   return `${minutes}m`;
 }
 
+// The CLI's `reverie_set` invocations do not all store a value: `set <key>
+// --confirm`, `--no-confirm` and `-a <alias>` on their own update metadata, a
+// declined overwrite prompt and an `edit` closed without changes write
+// nothing. Each used to take a slot in the window, so an entry written once
+// could warn. The handler marks the store, right after setValue; the
+// instrumentation wrapper takes the mark before it counts. The MCP handler
+// needs none — it records only after its own setValue.
+let valueStored = false;
+
+/** Called by a CLI handler once it has stored an entry value. */
+export function markValueStored(): void {
+  valueStored = true;
+}
+
+/** Whether a value was stored since the last take; clears the mark. */
+export function takeValueStored(): boolean {
+  const stored = valueStored;
+  valueStored = false;
+  return stored;
+}
+
 /** Reset all in-memory write-amp state. Used by tests and on server restart. */
 export function clearWriteAmpState(): void {
   sessionWrites.clear();
+  valueStored = false;
 }

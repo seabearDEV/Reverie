@@ -7,7 +7,12 @@ import path from 'path';
 import { clearDataDirectoryCache } from '../utils/paths';
 import { loadSessionState, pruneStaleSessions, recordCliWrite, trackCliMissPath } from '../utils/sessionState';
 import { resetSessionIdForTests, getSessionId, isSharedSession, isSessionDetected, deriveSession } from '../utils/session';
-import { clearWriteAmpState } from '../utils/writeAmp';
+import { clearWriteAmpState, writeAmpSlot } from '../utils/writeAmp';
+import { HANDOFF_KEY } from '../utils/handoff';
+
+// The state file keys its window by (store, key). These tests mostly leave
+// the store unnamed, which is its own slot.
+const slot = (key: string, store = '') => writeAmpSlot(key, store);
 
 let dataDir: string;
 const originalDataDir = process.env.RVR_DATA_DIR;
@@ -105,6 +110,98 @@ describe('recordCliWrite (#119/#101)', () => {
     expect(recordCliWrite('files.a', t0 + 31 * 60 * 1000)).toBeNull();
   });
 
+  it('evicts keys whose writes have all left the window, and keeps the live ones', () => {
+    // The file used to keep every key the session ever set: only the key
+    // being written was pruned.
+    process.env.RVR_SESSION = 'sess-evict';
+    resetSessionIdForTests();
+    const t0 = Date.now();
+    recordCliWrite('files.old1', t0);
+    recordCliWrite('files.old2', t0 + 1000);
+    recordCliWrite('files.live', t0 + 20 * 60 * 1000);
+    expect(Object.keys(loadSessionState('sess-evict').writes).sort())
+      .toEqual(['files.live', 'files.old1', 'files.old2'].map(k => slot(k)));
+
+    // 31 minutes after the first two, 11 after the third.
+    recordCliWrite('files.new', t0 + 31 * 60 * 1000);
+    const { writes } = loadSessionState('sess-evict');
+    expect(Object.keys(writes).sort()).toEqual(['files.live', 'files.new'].map(k => slot(k)));
+    expect(writes[slot('files.live')]).toEqual([t0 + 20 * 60 * 1000]);
+  });
+
+  it('evicts keys a damaged file left with no usable timestamps', () => {
+    process.env.RVR_SESSION = 'sess-evict-empty';
+    resetSessionIdForTests();
+    fs.mkdirSync(sessionsDir(), { recursive: true });
+    const t0 = Date.now();
+    fs.writeFileSync(path.join(sessionsDir(), 'sess-evict-empty.json'), JSON.stringify({
+      v: 1, updatedAt: t0, writes: { 'files.a': [null, 'abc'], 'files.b': [] }, missWindows: [],
+    }));
+    recordCliWrite('files.c', t0);
+    expect(Object.keys(loadSessionState('sess-evict-empty').writes)).toEqual([slot('files.c')]);
+  });
+
+  it('counts per store: the same key in another project or in the global store is another entry', () => {
+    process.env.RVR_SESSION = 'sess-stores';
+    resetSessionIdForTests();
+    const t0 = Date.now();
+    expect(recordCliWrite('project.inFlight', t0, '/proj/a')).toBeNull();
+    expect(recordCliWrite('project.inFlight', t0 + 1000, '/proj/a')).toBeNull();
+    // Each of these would have been "written 3 times" on the key name alone.
+    expect(recordCliWrite('project.inFlight', t0 + 2000, '/proj/b')).toBeNull();
+    expect(recordCliWrite('project.inFlight', t0 + 3000, 'global')).toBeNull();
+    expect(recordCliWrite('project.inFlight', t0 + 4000, '/proj/a')?.count).toBe(3);
+    expect(Object.keys(loadSessionState('sess-stores').writes).sort())
+      .toEqual(['/proj/a', '/proj/b', 'global'].map(s => slot('project.inFlight', s)).sort());
+  });
+
+  it('counts per store without a shared session too', () => {
+    const t0 = Date.now();
+    expect(recordCliWrite('files.a', t0, '/proj/a')).toBeNull();
+    expect(recordCliWrite('files.a', t0 + 1000, '/proj/a')).toBeNull();
+    expect(recordCliWrite('files.a', t0 + 2000, '/proj/b')).toBeNull();
+    expect(recordCliWrite('files.a', t0 + 3000, '/proj/a')?.count).toBe(3);
+  });
+
+  it('a row keyed by the bare key (written before per-store counting) is not matched, and ages out', () => {
+    process.env.RVR_SESSION = 'sess-legacy';
+    resetSessionIdForTests();
+    fs.mkdirSync(sessionsDir(), { recursive: true });
+    const t0 = Date.now();
+    fs.writeFileSync(path.join(sessionsDir(), 'sess-legacy.json'), JSON.stringify({
+      v: 1, updatedAt: t0, writes: { 'files.a': [t0, t0 + 1000] }, missWindows: [],
+    }));
+    // The count restarts once across the upgrade rather than misattributing.
+    expect(recordCliWrite('files.a', t0 + 2000, '/proj/a')).toBeNull();
+    expect(Object.keys(loadSessionState('sess-legacy').writes).sort()).toEqual(['files.a', slot('files.a', '/proj/a')].sort());
+
+    recordCliWrite('files.b', t0 + 31 * 60 * 1000, '/proj/a');
+    expect(loadSessionState('sess-legacy').writes['files.a']).toBeUndefined();
+  });
+
+  it('the handoff is exempt in a shared session: no warning, nothing recorded, no state file', () => {
+    // The shared-session path does its own window math against the state
+    // file, so the exemption in recordWrite alone would not reach it.
+    process.env.RVR_SESSION = 'sess-handoff';
+    resetSessionIdForTests();
+    const t0 = Date.now();
+    for (let i = 0; i < 5; i++) expect(recordCliWrite(HANDOFF_KEY, t0 + i * 1000)).toBeNull();
+    expect(fs.existsSync(path.join(sessionsDir(), 'sess-handoff.json'))).toBe(false);
+
+    // An ordinary key in the same session still trips, and the handoff is
+    // absent from the persisted window.
+    expect(recordCliWrite('files.a', t0 + 6000)).toBeNull();
+    expect(recordCliWrite(HANDOFF_KEY, t0 + 6500)).toBeNull();
+    expect(recordCliWrite('files.a', t0 + 7000)).toBeNull();
+    expect(recordCliWrite('files.a', t0 + 8000)?.count).toBe(3);
+    expect(Object.keys(loadSessionState('sess-handoff').writes)).toEqual([slot('files.a')]);
+  });
+
+  it('the handoff is exempt without a shared session too', () => {
+    const t0 = Date.now();
+    for (let i = 0; i < 5; i++) expect(recordCliWrite(HANDOFF_KEY, t0 + i * 1000)).toBeNull();
+  });
+
   it('treats a corrupt session file as empty instead of crashing', () => {
     process.env.RVR_SESSION = 'sess4';
     resetSessionIdForTests();
@@ -112,7 +209,7 @@ describe('recordCliWrite (#119/#101)', () => {
     fs.writeFileSync(path.join(sessionsDir(), 'sess4.json'), '{nope');
     expect(recordCliWrite('files.a')).toBeNull();
     const state = loadSessionState('sess4');
-    expect(state.writes['files.a']).toHaveLength(1);
+    expect(state.writes[slot('files.a')]).toHaveLength(1);
   });
 
   it('drops non-number timestamps from a structurally-valid file', () => {
@@ -294,10 +391,16 @@ describe('a detected harness session drives the CLI guardrails (#207)', () => {
 
   it('trips the write-amp threshold on the 3rd write, in a state file named by the harness id', () => {
     const t0 = Date.now();
-    expect(recordCliWrite('context.next_session', t0)).toBeNull();
-    expect(recordCliWrite('context.next_session', t0 + 1000)).toBeNull();
-    expect(recordCliWrite('context.next_session', t0 + 2000)?.count).toBe(3);
+    expect(recordCliWrite('project.inFlight', t0)).toBeNull();
+    expect(recordCliWrite('project.inFlight', t0 + 1000)).toBeNull();
+    expect(recordCliWrite('project.inFlight', t0 + 2000)?.count).toBe(3);
     expect(fs.existsSync(path.join(sessionsDir(), `${HARNESS_ID}.json`))).toBe(true);
+  });
+
+  it('the handoff does not trip under a detected session', () => {
+    const t0 = Date.now();
+    for (let i = 0; i < 5; i++) expect(recordCliWrite(HANDOFF_KEY, t0 + i * 1000)).toBeNull();
+    expect(fs.existsSync(path.join(sessionsDir(), `${HARNESS_ID}.json`))).toBe(false);
   });
 
   it('miss-path tracking is live: a read miss leaves an open window', () => {

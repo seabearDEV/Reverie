@@ -170,3 +170,20 @@ These ship in one PR because they share the telemetry/audit field extension surf
 8. **LLM_INSTRUCTIONS** update — point at both new behaviors so agents understand the warning surface and the trimmed-payload notice. (Mirrors what #99 did for refusal.)
 
 After this lands, **#103** (tier semantics docs) becomes unblocked — both #100's budget contract and the unchanged `tier: "full"` semantics are documented, and the docs can describe the relationship between tiers, the budget knob, and the write-amp warning.
+
+## Addendum: the handoff is exempt (v1.4.0)
+
+`context.next_session` is not counted and never warns. The guard exists to catch a seed being used as scratch space; the handoff is ephemeral state that is replaced, not accumulated, and `conventions.seedDensity` — the entry the warning points at — already carves it out (#91). The case stayed rare while only MCP sessions carried a window. Session detection (#207) put every Claude Code CLI session behind the guard, and a session that keeps its handoff current rewrites it more than twice in 30 minutes.
+
+- **One key, exact match.** `isWriteAmpExempt` in `src/utils/writeAmp.ts` holds `HANDOFF_KEY` and nothing else: no prefix match, no `context.*`, no config knob. A second exempt key needs the same argument the handoff has.
+- **Checked in two places.** `recordWrite` covers the MCP server and the per-process CLI path. `recordCliWrite` checks again because a shared CLI session runs `pruneAndRecord` against the state file directly, and that function takes no key. The early return there also skips the guard's own locked update of the state file; the same invocation still updates the file once, for miss-path tracking.
+- **Resolved key.** Both call sites pass the alias-resolved key, so a handoff written through an alias is exempt too.
+- **Nothing is recorded.** An exempt write leaves no timestamps, so `writeAmpWarning` / `writeAmpCount` never appear on its telemetry or audit rows. The rewrite frequency of the handoff is still visible in the audit log, like any other write.
+
+## Addendum: what counts as a write (v1.4.0)
+
+Corrections to the counting, found while reviewing the exemption. The threshold and the window are unchanged.
+
+- **Per store.** The guard counts writes of an entry, and an entry is a key in one store. A window slot is the pair (store, key) — `writeAmpSlot`, where the store is the project root or `global` (`writeAmpStore`) — on both surfaces. Keyed on the name alone, `project.inFlight` written once in each of three projects read as one entry written three times. The exemption still tests the bare key. The state file stays at `v: 1`: rows written under the bare key are never matched again and age out with the window.
+- **Only stored values.** On the CLI a `reverie_set` invocation is not always a write: `set <key> --confirm`, `--no-confirm` and `-a <alias>` update metadata, and a declined overwrite prompt or an `edit` closed without changes stores nothing. The handler marks the store (`markValueStored`, after `setValue`) and the instrumentation wrapper counts only a marked invocation. A new CLI path that stores a value under `reverie_set` has to mark it, or the guard never counts it. Same-value rewrites still count, as the edge-case table says. The MCP handler needs no mark: it records only after its own `setValue`.
+- **Eviction on disk.** The CLI state file drops every slot with no write left in the window on the next counted `set`, as the in-memory map always did. Before, it kept each key a session had ever set.

@@ -1,4 +1,9 @@
-import { recordWrite, formatWriteAmpWarning, clearWriteAmpState } from '../utils/writeAmp';
+import path from 'path';
+import {
+  recordWrite, formatWriteAmpWarning, clearWriteAmpState, isWriteAmpExempt,
+  writeAmpSlot, writeAmpStore, markValueStored, takeValueStored,
+} from '../utils/writeAmp';
+import { HANDOFF_KEY } from '../utils/handoff';
 
 beforeEach(() => {
   clearWriteAmpState();
@@ -80,6 +85,93 @@ describe('recordWrite', () => {
     clearWriteAmpState();
     const r = recordWrite('s1', 'k', 1_002_000);
     expect(r).toBeNull();
+  });
+});
+
+describe('exempt keys', () => {
+  it('the handoff never trips, however often it is rewritten', () => {
+    for (let i = 0; i < 6; i++) {
+      expect(recordWrite('s1', HANDOFF_KEY, 1_000_000 + i * 1_000)).toBeNull();
+    }
+  });
+
+  it('the exemption is the exact key, not a prefix or a namespace', () => {
+    expect(isWriteAmpExempt(HANDOFF_KEY)).toBe(true);
+    for (const key of ['context.next_sessionX', 'context.next_session.draft', 'context', 'context.handoff', 'next_session']) {
+      expect(isWriteAmpExempt(key)).toBe(false);
+      clearWriteAmpState();
+      recordWrite('s1', key, 1_000_000);
+      recordWrite('s1', key, 1_001_000);
+      expect(recordWrite('s1', key, 1_002_000)?.count).toBe(3);
+    }
+  });
+
+  it('handoff writes do not disturb the counters of other keys in the session', () => {
+    recordWrite('s1', 'files.x', 1_000_000);
+    recordWrite('s1', HANDOFF_KEY, 1_000_500);
+    recordWrite('s1', 'files.x', 1_001_000);
+    recordWrite('s1', HANDOFF_KEY, 1_001_500);
+    expect(recordWrite('s1', 'files.x', 1_002_000)?.count).toBe(3);
+  });
+
+  it('the handoff is exempt whichever store it is written to', () => {
+    for (let i = 0; i < 4; i++) {
+      expect(recordWrite('s1', HANDOFF_KEY, 1_000_000 + i * 1_000, '/proj/a')).toBeNull();
+    }
+  });
+});
+
+describe('per-store counting', () => {
+  // An entry is a key in one store. Counted on the key name alone, a key
+  // written once in each of three projects read as one entry written three
+  // times.
+  it('the same key in two stores keeps two counters', () => {
+    expect(recordWrite('s1', 'project.inFlight', 1_000_000, '/proj/a')).toBeNull();
+    expect(recordWrite('s1', 'project.inFlight', 1_001_000, '/proj/a')).toBeNull();
+    expect(recordWrite('s1', 'project.inFlight', 1_002_000, '/proj/b')).toBeNull();
+    expect(recordWrite('s1', 'project.inFlight', 1_003_000, 'global')).toBeNull();
+    // The third write to the first store is the one that trips.
+    expect(recordWrite('s1', 'project.inFlight', 1_004_000, '/proj/a')?.count).toBe(3);
+  });
+
+  it('writeAmpStore names where the write landed', () => {
+    const projectFile = path.join(path.sep, 'proj', 'a', '.reverie');
+    const root = path.join(path.sep, 'proj', 'a');
+    expect(writeAmpStore('auto', projectFile)).toBe(root);
+    expect(writeAmpStore('project', projectFile)).toBe(root);
+    expect(writeAmpStore('global', projectFile)).toBe('global');
+    expect(writeAmpStore('auto', null)).toBe('global');
+    // Two projects are two stores.
+    expect(writeAmpStore('auto', path.join(path.sep, 'proj', 'b', '.reverie'))).not.toBe(root);
+  });
+
+  it('slots do not collide when a store or key holds the other half\'s characters', () => {
+    const slots = [
+      writeAmpSlot('k', '/proj/a'),
+      writeAmpSlot('a.k', '/proj'),
+      writeAmpSlot('k', '/proj/a@global'),
+      writeAmpSlot('k@global', '/proj/a'),
+      writeAmpSlot('k', 'global'),
+      writeAmpSlot('k', ''),
+      writeAmpSlot('["global","k"]', ''),
+    ];
+    expect(new Set(slots).size).toBe(slots.length);
+  });
+});
+
+describe('value-stored mark', () => {
+  // The CLI wrapper counts a `set` only when the handler stored a value.
+  it('is unset until a handler marks it, and a take clears it', () => {
+    expect(takeValueStored()).toBe(false);
+    markValueStored();
+    expect(takeValueStored()).toBe(true);
+    expect(takeValueStored()).toBe(false);
+  });
+
+  it('does not survive clearWriteAmpState', () => {
+    markValueStored();
+    clearWriteAmpState();
+    expect(takeValueStored()).toBe(false);
   });
 });
 

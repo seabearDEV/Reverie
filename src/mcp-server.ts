@@ -48,7 +48,7 @@ import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolutio
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
-import { recordWrite, formatWriteAmpWarning } from "./utils/writeAmp";
+import { recordWrite, formatWriteAmpWarning, writeAmpStore } from "./utils/writeAmp";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 function toScope(scopeParam?: string): Scope {
@@ -418,8 +418,9 @@ server.tool(
 
       // Write-amp guard (#101) — warn when the same key has been written
       // 3+ times in this session within a 30-min window. Informational
-      // only; the write itself succeeded.
-      const ampResult = recordWrite(getSessionId(), resolved);
+      // only; the write itself succeeded. Counted per store: the same key
+      // in another project, or in the global store, is another entry.
+      const ampResult = recordWrite(getSessionId(), resolved, Date.now(), writeAmpStore(wroteTo, projectFile));
       if (ampResult) {
         lines.push(`warning: ${formatWriteAmpWarning(ampResult)}`);
         emitGuardrailSignals({ writeAmpWarning: true, writeAmpCount: ampResult.count });
