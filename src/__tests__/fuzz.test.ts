@@ -112,10 +112,13 @@ describe('fuzz: objectPath set→get→remove invariant', () => {
   it('set preserves sibling keys (50 trials)', () => {
     for (let trial = 0; trial < 50; trial++) {
       const obj: Record<string, unknown> = {};
-      // Create a few siblings
+      // Create a few siblings. Distinct first characters: two fully random
+      // 3-character names collide once in 36^3 draws, and a collision makes
+      // the second set overwrite the first — the test then fails on its own
+      // input (about one full-suite run in a thousand).
       const parent = randomString(4);
-      const sibling1 = `${parent}.${randomString(3)}`;
-      const sibling2 = `${parent}.${randomString(3)}`;
+      const sibling1 = `${parent}.a${randomString(2)}`;
+      const sibling2 = `${parent}.b${randomString(2)}`;
       const val1 = randomValue();
       const val2 = randomValue();
 
