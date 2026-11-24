@@ -116,7 +116,8 @@ function updateSessionState<T>(
 
 /**
  * TTL prune: delete session files whose mtime is older than 24h. Called
- * opportunistically — on a session's first touch and on every `set`; the dir
+ * opportunistically — on a session's first touch and on every `set` the
+ * write-amp guard counts (an exempt write returns before the sweep); the dir
  * holds one small file per active agent session, so a readdir sweep is cheap.
  */
 export function pruneStaleSessions(now = Date.now()): void {
@@ -145,8 +146,9 @@ export function pruneStaleSessions(now = Date.now()): void {
  * otherwise the in-memory per-process guard (never trips for a one-shot CLI
  * process, preserving pre-#119 behavior). An exempt key (the handoff) is
  * checked here as well as in recordWrite: the shared-session path goes
- * straight to pruneAndRecord, which is key-agnostic, and an exempt write
- * should not cost a locked read-modify-write of the state file.
+ * straight to pruneAndRecord, which is key-agnostic. Returning early also
+ * skips this function's own locked update of the state file; the invocation
+ * still updates the file once, for miss-path tracking.
  */
 export function recordCliWrite(key: string, now = Date.now()): WriteAmpResult | null {
   if (isWriteAmpExempt(key)) return null;
