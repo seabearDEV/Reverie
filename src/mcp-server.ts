@@ -45,6 +45,7 @@ import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
+import { StoreUnreadableError, bootstrapUnreadableLines, listUnreadableFiles, unreadableWarning } from "./utils/unreadable";
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
@@ -60,6 +61,32 @@ function textResponse(text: string) {
 }
 function errorResponse(text: string) {
   return { content: [{ type: "text" as const, text }], isError: true };
+}
+
+/**
+ * Tools whose output already carries the unreadable-file report, or that
+ * never read the store — the server is long-lived, so a tool that ran no scan
+ * would only repeat what an earlier call saw.
+ */
+const NO_UNREADABLE_WARNING_TOOLS = new Set([
+  'reverie_context', 'reverie_config_get', 'reverie_config_set', 'reverie_stats', 'reverie_audit',
+]);
+
+/**
+ * MCP has no stderr, so the unreadable-file warning (#215) rides the tool
+ * result as an extra text block: one line per file this call's own reads
+ * turned up, minus any the error above already named. No extra scan.
+ */
+function appendUnreadableWarnings(tool: string, result: unknown, named: Set<string>): void {
+  if (NO_UNREADABLE_WARNING_TOOLS.has(tool)) return;
+  try {
+    const content = (result as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const file of listUnreadableFiles()) {
+      if (named.has(file.path)) continue;
+      content.push({ type: 'text', text: `warning: ${unreadableWarning(file)}` });
+    }
+  } catch { /* reporting must not break the tool call */ }
 }
 
 /**
@@ -256,6 +283,7 @@ server.tool = ((...args: any[]) => {
     let errorMsg: string | undefined;
     let refusedReason: string | undefined;
     const guardrailSignals: GuardrailSignals = {};
+    const unreadableNamed = new Set<string>();
     try {
       result = await guardrailStorage.run(guardrailSignals, () => origHandler(params, extra));
       if (result && typeof result === 'object' && 'isError' in result && (result as { isError: boolean }).isError) {
@@ -274,10 +302,18 @@ server.tool = ((...args: any[]) => {
       if (err instanceof ProjectResolutionError) {
         result = projectResolutionErrorResponse(err);
         refusedReason = 'project_unresolved';
+      } else if (err instanceof StoreUnreadableError) {
+        // #215: the message is complete on its own — what, why, how to fix.
+        // A refused write is recorded as a refusal; a failed read is an error.
+        result = errorResponse(err.message);
+        if (err.attempted === 'write') refusedReason = 'store_unreadable';
+        for (const f of err.files) unreadableNamed.add(f.path);
       } else {
         throw err;
       }
     } finally {
+      appendUnreadableWarnings(name, result, unreadableNamed);
+
       const duration = Date.now() - startTime;
 
       // Capture after-value for writes: shared with the CLI wrapper via
@@ -427,7 +463,7 @@ server.tool(
 
       return textResponse(lines.join('\n'));
     } catch (err) {
-      if (err instanceof ProjectResolutionError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error setting entry: ${String(err)}`);
     }
   }
@@ -577,6 +613,7 @@ server.tool(
       }
       return textResponse(Object.keys(flat).join("\n"));
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error retrieving entry: ${String(err)}`);
     }
   }
@@ -614,7 +651,7 @@ server.tool(
       removeConfirmForKey(resolvedKey, scope);
       return textResponse(`Removed: ${resolvedKey}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error removing entry: ${String(err)}`);
     }
   }
@@ -663,7 +700,7 @@ server.tool(
 
       return textResponse(`Copied: ${resolvedSource} -> ${dest}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error copying entry: ${String(err)}`);
     }
   }
@@ -763,7 +800,7 @@ server.tool(
 
       return textResponse(`Renamed: ${resolvedOld} -> ${newKey}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error renaming entry: ${String(err)}`);
     }
   }
@@ -834,6 +871,7 @@ server.tool(
       }
       return textResponse(results.join("\n"));
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error searching: ${String(err)}`);
     }
   }
@@ -854,7 +892,7 @@ server.tool(
       setAlias(alias, key, scope);
       return textResponse(`Alias set: ${alias} -> ${key}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error setting alias: ${String(err)}`);
     }
   }
@@ -874,7 +912,7 @@ server.tool(
       }
       return textResponse(`Alias removed: ${alias}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error removing alias: ${String(err)}`);
     }
   }
@@ -896,6 +934,7 @@ server.tool(
       const lines = entries.map(([a, t]) => `${a} -> ${t}`);
       return textResponse(lines.join("\n"));
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error listing aliases: ${String(err)}`);
     }
   }
@@ -1058,6 +1097,7 @@ server.tool(
       }
       return textResponse(`${key}: ${value}`);
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error getting config: ${String(err)}`);
     }
   }
@@ -1083,6 +1123,7 @@ server.tool(
       resetColorCache();
       return textResponse(`Config set: ${key} = ${value}`);
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error setting config: ${String(err)}`);
     }
   }
@@ -1119,6 +1160,7 @@ server.tool(
       });
       return textResponse(JSON.stringify(wrapped, null, indent));
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error exporting: ${String(err)}`);
     }
   }
@@ -1336,7 +1378,7 @@ server.tool(
         `${warningPrefix}${TYPE_LABELS[type]} ${merge ? "merged" : "imported"} successfully.`
       );
     } catch (err) {
-      if (err instanceof ProjectResolutionError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error importing: ${String(err)}`);
     }
   }
@@ -1374,7 +1416,7 @@ server.tool(
         `${TYPE_LABELS[type]} reset to empty state.`
       );
     } catch (err) {
-      if (err instanceof ProjectResolutionError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error resetting: ${String(err)}`);
     }
   }
@@ -1423,7 +1465,12 @@ server.tool(
       // without rendering.
       if (sizeOnly) {
         const header = hasProject ? `[project: ${projectFile}]` : '[project: NONE]';
-        return textResponse(`${header}\n\n${formatContextSizeReport(computeContextSizeReport(flat, effectiveTier, effectiveScope, MCP_HINTS))}`);
+        // #215: the size report renders no entries, but a store with files
+        // it cannot read must still say so (reverie_context is exempt from
+        // the wrapper's generic warning block because the bootstrap shows it).
+        const unreadableBlock = bootstrapUnreadableLines(listUnreadableFiles());
+        const report = formatContextSizeReport(computeContextSizeReport(flat, effectiveTier, effectiveScope, MCP_HINTS));
+        return textResponse([header, '', ...(unreadableBlock.length > 0 ? [...unreadableBlock, ''] : []), report].join('\n'));
       }
 
       const aliases = loadAliases(effectiveScope);
@@ -1440,15 +1487,23 @@ server.tool(
         gistChars: resolveGistChars(),
         hints: MCP_HINTS,
         extraOverheadBytes: Buffer.byteLength(`${headerLine}\n\n`, 'utf8'),
+        // The loads above scanned the store(s); this reports what they found.
+        unreadable: listUnreadableFiles(),
       });
 
-      if (!payload.handoff && payload.order.length === 0 && Object.keys(aliases).length === 0) {
+      if (!payload.handoff && payload.order.length === 0 && Object.keys(aliases).length === 0 && payload.unreadable.length === 0) {
         return textResponse(`${headerLine}\n\nNo entries stored. Use reverie_set to add project knowledge.`);
       }
 
       emitGuardrailSignals(contextSignals(payload));
 
       const lines: string[] = [headerLine, ''];
+
+      // Unreadable store files lead (#215): the usual casualty is the handoff
+      // itself, and what is said first is what survives a 2 KB preview.
+      if (payload.unreadableLines.length > 0) {
+        lines.push(...payload.unreadableLines, '');
+      }
 
       // Banner first (#212): a persisted result reaches the agent as a 2 KB
       // preview — the handoff must be in it. Shape notices go at the end.
@@ -1488,6 +1543,7 @@ server.tool(
 
       return textResponse(lines.join("\n"));
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error loading context: ${String(err)}`);
     }
   }
@@ -1528,6 +1584,7 @@ server.tool(
       });
       return textResponse(`${stale.length} entries not updated in ${threshold}+ days:\n${lines.join('\n')}`);
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error checking staleness: ${String(err)}`);
     }
   }
@@ -1553,6 +1610,7 @@ server.tool(
       const lines = formatStatsReport(stats, { detailed: Boolean(detailed) });
       return textResponse(lines.join('\n'));
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error computing stats: ${String(err)}`);
     }
   }
@@ -1617,6 +1675,7 @@ server.tool(
 
       return textResponse(lines.join('\n'));
     } catch (err) {
+      if (err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error querying audit log: ${String(err)}`);
     }
   }

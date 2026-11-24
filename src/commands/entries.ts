@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadData, handleError, getValue, setValue, removeValue, Scope } from '../storage';
+import { loadData, handleError, getValue, getValueForWrite, setValue, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
@@ -349,7 +349,7 @@ export async function setEntry(key: string, value: string | undefined, force = f
       return { key, alias };
     }
 
-    const existing = getValue(key, scope);
+    const existing = getValueForWrite(key, scope);
     if (existing !== undefined && !force && process.stdin.isTTY) {
       const displayVal = typeof existing === 'object'
         ? JSON.stringify(existing)
@@ -775,7 +775,7 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
       return;
     }
 
-    const existing = getValue(destKey, scope);
+    const existing = getValueForWrite(destKey, scope);
     if (existing !== undefined && !force && process.stdin.isTTY) {
       const displayVal = typeof existing === 'object'
         ? JSON.stringify(existing)
@@ -838,7 +838,7 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     return;
   }
 
-  const existing = getValue(newKey, scope);
+  const existing = getValueForWrite(newKey, scope);
   if (existing !== undefined) {
     printError(`Entry '${newKey}' already exists. Remove it first or choose a different key.`, 'INVALID_INPUT');
     process.exitCode = 1;

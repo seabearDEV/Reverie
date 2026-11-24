@@ -370,6 +370,27 @@ With a shared id (1 or 2), every invocation counts as one session, with state pe
 
 The write-amplification guard has no exempt keys: a handoff (`context.next_session`) rewritten three times inside 30 minutes warns like any other entry. The warning is advisory and never fails the write.
 
+## When a store file cannot be read (merge conflicts)
+
+`.reverie/` is committed, so two people who write the **same** key on parallel branches get a git conflict in that entry's file at the next merge (different keys merge cleanly). The keys every session rewrites — the handoff above all — are where this happens. A file with conflict markers in it is not valid JSON.
+
+Reverie treats a store file that exists but does not parse as an error, never as a missing entry ([#215](https://github.com/seabearDEV/reverie/issues/215)):
+
+- **Reading it fails** with error code `STORE_UNREADABLE` (not `NOT_FOUND`), naming the file and the reason.
+- **Writing over it is refused** — `set`, `copy`, `rename`, `import`, and for the sidecars `alias set` / `confirm set`. Nothing is written. Other keys stay writable.
+- **The bootstrap opens with the list** of unreadable files, ahead of the handoff banner; `--json` adds `result.unreadable`. Other commands warn (`warnings[]` code `STORE_UNREADABLE`, stderr in text mode).
+- **`rvr lint` fails** and lists each file.
+- **`rvr run` fails closed**: while `_confirm.json` is unreadable every entry requires confirmation.
+
+To resolve, keep one side of the file whole, then mark it resolved:
+
+```bash
+git checkout --ours -- .reverie/context.next_session.json     # or --theirs
+git add .reverie/context.next_session.json
+```
+
+Which side to keep is a human decision — an agent that picks one to unblock itself discards the other committer's entry. Combining the two sides by editing the JSON is not supported (see `_README.md` in the store). If you are an agent and hit `STORE_UNREADABLE`: do not write a replacement entry under another key and do not resolve the conflict yourself; report it.
+
 ## Validation
 
 Run `rvr lint` to check that all entries follow the namespace schema:

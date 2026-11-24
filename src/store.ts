@@ -18,6 +18,7 @@ import { saveJsonSorted } from './utils/saveJsonSorted';
 import { createDirectoryStore, migrateFileToDirectory } from './utils/directoryStore';
 import { flattenObject } from './utils/objectPath';
 import { debug } from './utils/debug';
+import { registerUnreadableSource, type UnreadableFile } from './utils/unreadable';
 import { resolveScopeForWrite } from './projectResolution';
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -53,6 +54,11 @@ export interface ScopedStore {
    * the full `save()` path in that case.
    */
   setOne(key: string, value: CodexValue, updated: number): boolean;
+  /**
+   * Store files that exist but did not parse, as of the last scan this
+   * instance ran (#215). No I/O.
+   */
+  unreadable(): UnreadableFile[];
 }
 
 // ── Global store singleton ─────────────────────────────────────────────
@@ -334,6 +340,14 @@ export function loadConfirmMapMerged(): Record<string, true> {
 
   return { ...global.load().confirm, ...project.load().confirm };
 }
+
+// ── Unreadable files (#215) ─────────────────────────────────────────────
+// Project first, then global. The sources read the singletons lazily and
+// never instantiate one: listUnreadableFiles() (utils/unreadable.ts) reports
+// what this process's own reads turned up, nothing more.
+
+registerUnreadableSource('project', () => projectStore?.unreadable() ?? []);
+registerUnreadableSource('global', () => globalStore?.unreadable() ?? []);
 
 // ── Cache management ───────────────────────────────────────────────────
 

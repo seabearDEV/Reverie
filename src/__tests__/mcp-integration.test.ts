@@ -383,4 +383,96 @@ describe('MCP Integration (real I/O)', () => {
       }
     });
   });
+
+  // ── #215: a store file that does not parse is an error, not an absence ──
+  describe('a store with git conflict markers in it (#215)', () => {
+    const HANDOFF = 'context.next_session';
+    const storeFile = (name: string) => path.join(tmpDir, 'store', name);
+    const conflictedEntry = [
+      '{', '<<<<<<< HEAD', '  "value": "our handoff",', '  "meta": {', '    "created": 1000,', '    "updated": 3000',
+      '=======', '  "value": "their handoff",', '  "meta": {', '    "created": 1000,', '    "updated": 2000',
+      '>>>>>>> theirs', '  }', '}', '',
+    ].join('\n');
+    const conflictedSidecar = (ours: string, theirs: string) =>
+      ['{', '<<<<<<< HEAD', `  ${ours}`, '=======', `  ${theirs}`, '>>>>>>> theirs', '}', ''].join('\n');
+    const texts = (r: { content: { text: string }[] }) => r.content.map(c => c.text);
+
+    beforeEach(() => {
+      callMcpTool('reverie_set', { key: 'arch.store', value: 'file per entry' });
+      callMcpTool('reverie_set', { key: 'commands.hello', value: 'echo hello' });
+      fs.writeFileSync(storeFile(`${HANDOFF}.json`), conflictedEntry);
+    });
+
+    it('reverie_get: an error naming the conflict, not "not found"', () => {
+      const r = callMcpTool('reverie_get', { key: HANDOFF });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/^Cannot read entry 'context\.next_session'/);
+      expect(r.content[0].text).toContain('unresolved git conflict markers');
+      expect(r.content[0].text).toContain('git checkout --ours --');
+    });
+
+    it('reverie_set: refused, the file untouched, and logged as a refusal', () => {
+      const r = callMcpTool('reverie_set', { key: HANDOFF, value: 'a fresh handoff' });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/^Refusing to write entry 'context\.next_session'/);
+      expect(r.content[0].text).toContain('Nothing was written');
+      expect(fs.readFileSync(storeFile(`${HANDOFF}.json`), 'utf8')).toBe(conflictedEntry);
+
+      const audit = fs.readFileSync(path.join(tmpDir, 'audit.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+      const refused = audit.find((e: any) => e.tool === 'reverie_set' && e.key === HANDOFF);
+      expect(refused.success).toBe(false);
+      expect(refused.refusedReason).toBe('store_unreadable');
+    });
+
+    it('reverie_context: the report comes right after the header, ahead of the entries', () => {
+      const r = callMcpTool('reverie_context', {});
+      expect(r.isError).toBeFalsy();
+      const lines = r.content[0].text.split('\n');
+      expect(lines[2]).toBe('!! 1 store file cannot be read. It is NOT shown below and NOT missing — do not write over it:');
+      expect(lines[3]).toContain(`${HANDOFF} — `);
+      expect(r.content[0].text.indexOf('cannot be read')).toBeLessThan(r.content[0].text.indexOf('arch.store'));
+      // The report is in the body; no second copy as a trailing block.
+      expect(r.content).toHaveLength(1);
+    });
+
+    it('reverie_context sizeOnly still reports it', () => {
+      const r = callMcpTool('reverie_context', { sizeOnly: true });
+      expect(r.content).toHaveLength(1);
+      expect(r.content[0].text).toContain('!! 1 store file cannot be read');
+      expect(r.content[0].text).toContain('Context size');
+    });
+
+    it('other tools still answer, with the warning as an extra block', () => {
+      const r = callMcpTool('reverie_get', { key: 'arch.store' });
+      expect(r.isError).toBeFalsy();
+      expect(r.content[0].text).toContain('file per entry');
+      expect(texts(r).slice(1)).toEqual([
+        expect.stringMatching(/^warning: .*context\.next_session\.json has unresolved git conflict markers — entry 'context\.next_session' is not being read\./),
+      ]);
+    });
+
+    it('reverie_alias_set over a conflicted alias map is refused', () => {
+      const aliases = conflictedSidecar('"hand": "context.next_session",', '"ho": "context.next_session",');
+      fs.writeFileSync(storeFile('_aliases.json'), aliases);
+      const r = callMcpTool('reverie_alias_set', { alias: 'zz', key: 'arch.store' });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/^Refusing to write the alias map/);
+      expect(fs.readFileSync(storeFile('_aliases.json'), 'utf8')).toBe(aliases);
+    });
+
+    it('reverie_run fails closed when the confirmation list is conflicted', () => {
+      fs.writeFileSync(storeFile('_confirm.json'), conflictedSidecar('"commands.deploy": true,', '"commands.wipe": true,'));
+      const r = callMcpTool('reverie_run', { key: 'commands.hello' });
+      // An entry with no flag of its own must not simply execute.
+      expect(texts(r).join('\n')).not.toMatch(/^hello$/m);
+      expect(texts(r).join('\n')).toMatch(/confirm/i);
+      expect(texts(r).join('\n')).toContain('every entry is treated as requiring confirmation to run');
+    });
+
+    it('a healthy store gets no extra block', () => {
+      fs.rmSync(storeFile(`${HANDOFF}.json`));
+      const r = callMcpTool('reverie_get', { key: 'arch.store' });
+      expect(r.content).toHaveLength(1);
+    });
+  });
 });

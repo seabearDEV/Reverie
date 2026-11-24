@@ -5,6 +5,7 @@ import { debug } from './utils/debug';
 import { Scope, loadEntries, saveEntries, loadEntriesMerged, findProjectFile, saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta, getEntryFast, setEntryFast } from './store';
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, ProjectResolutionError } from './projectResolution';
+import { StoreUnreadableError, markUnreadableShown } from './utils/unreadable';
 import { isJsonMode, failJson } from './utils/output';
 
 export type { Scope } from './store';
@@ -30,11 +31,27 @@ export function handleError(message: string, error: unknown, context?: string): 
   // trace gated on DEBUG.
   const errorText = error instanceof Error ? error.message : String(error);
 
+  // #215: the refusal's own message is complete — what, why, and how to fix
+  // it. Prefixing "Failed to set entry:" only buries that, and the code must
+  // be STORE_UNREADABLE, never RUNTIME or NOT_FOUND.
+  if (error instanceof StoreUnreadableError) {
+    markUnreadableShown(error.files);
+    if (isJsonMode()) {
+      failJson('STORE_UNREADABLE', errorText);
+    } else {
+      console.error(`${color.red('✗ ')}${errorText}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   // In JSON mode, route the failure into the structured envelope (#117 WS1)
   // instead of writing a human line to stderr. Project-resolution refusals
   // map to the dedicated code so agents can branch on them.
   if (isJsonMode()) {
-    const code = error instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED' : 'RUNTIME';
+    const code = error instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
+      : error instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
+      : 'RUNTIME';
     failJson(code, `${contextPrefix}${message} ${errorText}`.trim()); // failJson sets exitCode=1
     return;
   }
@@ -105,6 +122,11 @@ export function getValue(key: string, scope?: Scope  ): CodexValue | undefined {
         if (v !== undefined) return v;
       }
     } catch (err) {
+      // #215: an entry file that exists but does not parse is not a miss.
+      // It must not degrade to the slow path (which would report "not
+      // found"), nor — in auto scope — fall through from a broken project
+      // entry to the global value of the same key.
+      if (err instanceof StoreUnreadableError) throw err;
       debug(`getValue fast-path failed, falling through: ${String(err)}`);
     }
   }
@@ -120,6 +142,23 @@ export function getValue(key: string, scope?: Scope  ): CodexValue | undefined {
     return getNestedValue(loadEntries('global'), key);
   }
   return getNestedValue(loadEntries(scope), key);
+}
+
+/**
+ * Existence pre-read for a key that is about to be written (the overwrite
+ * prompt, a copy/rename destination). An entry file that does not parse makes
+ * getValue throw a *read* error; here the caller is writing, so re-word it as
+ * the refused write it is (#215).
+ */
+export function getValueForWrite(key: string, scope?: Scope): CodexValue | undefined {
+  try {
+    return getValue(key, scope);
+  } catch (err) {
+    if (err instanceof StoreUnreadableError && err.attempted === 'read') {
+      throw new StoreUnreadableError(err.files, 'write');
+    }
+    throw err;
+  }
 }
 
 /**
@@ -150,6 +189,10 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
   try {
     if (setEntryFast(key, value, effectiveScope)) return;
   } catch (err) {
+    // #215: a refusal to replace an unparseable file must stay a refusal.
+    // Falling through would hand the write to save(), which guards too, but
+    // the fast path's error is the precise one.
+    if (err instanceof StoreUnreadableError) throw err;
     debug(`setValue fast-path failed, falling through: ${String(err)}`);
   }
   const data = loadEntries(effectiveScope);

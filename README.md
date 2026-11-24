@@ -871,7 +871,7 @@ rvr --json get missing.key
 # { "reverie": "1", "ok": false, "command": "get", "error": { "code": "NOT_FOUND", "message": "Entry 'missing.key' not found" } }
 ```
 
-Error codes: `PROJECT_UNRESOLVED`, `NOT_FOUND`, `INVALID_INPUT`, `REQUIRES_CONFIRMATION`, `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, `COMMAND_FAILED`, `INPUT_REQUIRED`, `IO`, `RUNTIME`. (Note: `--json` on reads nests the value under `result` — a deliberate break from the pre-1.1.0 bare-value shape.) Non-fatal notices (e.g. context `[trimmed]`) appear in `warnings[]`; `run` on a `--confirm` entry without `--yes` returns `REQUIRES_CONFIRMATION` with the resolved command in `error.preview`.
+Error codes: `PROJECT_UNRESOLVED`, `NOT_FOUND`, `INVALID_INPUT`, `REQUIRES_CONFIRMATION`, `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, `COMMAND_FAILED`, `INPUT_REQUIRED`, `IO`, `STORE_UNREADABLE`, `RUNTIME`. (Note: `--json` on reads nests the value under `result` — a deliberate break from the pre-1.1.0 bare-value shape.) Non-fatal notices (e.g. context `[trimmed]`) appear in `warnings[]`; `run` on a `--confirm` entry without `--yes` returns `REQUIRES_CONFIRMATION` with the resolved command in `error.preview`.
 
 ### Debugging
 

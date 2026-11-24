@@ -11,6 +11,8 @@ import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
 import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
+import { color } from '../formatting';
+import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
 import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError, takeSignals } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
@@ -259,6 +261,11 @@ export async function withCliInstrumentation<T>(
     errorMsg = String(err);
     if (err instanceof ProjectResolutionError) {
       refusedReason = 'project_unresolved';
+    } else if (err instanceof StoreUnreadableError) {
+      // #215: a write refused because its target does not parse. A read of
+      // such a file is an error, not a refusal.
+      if (err.attempted === 'write') refusedReason = 'store_unreadable';
+      markUnreadableShown(err.files);
     }
     // In JSON mode an uncaught throw must still surface as a structured
     // envelope rather than crashing the process with a non-envelope stack
@@ -266,8 +273,14 @@ export async function withCliInstrumentation<T>(
     // catch internally via handleError; this covers direct-call handlers
     // like the inline alias/confirm actions.)
     if (jsonMode) {
-      const code = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED' : 'RUNTIME';
+      const code = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
+        : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
+        : 'RUNTIME';
       failJson(code, err instanceof Error ? err.message : String(err));
+    } else if (err instanceof StoreUnreadableError) {
+      // An expected, self-explaining failure: one line, not a stack trace.
+      originalConsoleError.call(console, `${color.red('✗ ')}${err.message}`);
+      process.exitCode = 1;
     } else {
       throw err;
     }
@@ -332,6 +345,22 @@ export async function withCliInstrumentation<T>(
       const r = result as { dataCount?: number; aliasCount?: number };
       entryCount = (r.dataCount ?? 0) + (r.aliasCount ?? 0);
     }
+
+    // Unreadable store files (#215). Whatever this command's own reads
+    // turned up — no extra scan — is reported: warnings[] in JSON mode,
+    // stderr otherwise, minus any file the command's own output or its
+    // error already named.
+    try {
+      const unreadable = listUnreadableFiles();
+      const unshown = withoutShown(unreadable);
+      if (jsonMode) {
+        // warnings[] is the machine channel: every file, whatever the result
+        // or error already says.
+        for (const file of unreadable) addWarning(unreadableWarning(file), 'STORE_UNREADABLE');
+      } else {
+        for (const line of unreadableWarningBlock(unshown)) console.error(line);
+      }
+    } catch { /* reporting must not break the command */ }
 
     // Write-amp guard on CLI set (#119/#101). Disk-backed when a shared
     // session (RVR_SESSION, or one detected from the harness — #207) bridges

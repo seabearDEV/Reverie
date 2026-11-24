@@ -23,6 +23,7 @@ import { atomicWriteFileSync } from './atomicWrite';
 import { withFileLock } from './fileLock';
 import { flattenObject, expandFlatKeys } from './objectPath';
 import { debug } from './debug';
+import { StoreUnreadableError, UnreadableFile, classifyUnparseable } from './unreadable';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -53,6 +54,14 @@ interface CachedEntry {
  */
 interface CachedSidecar<T> {
   data: T;
+  mtimeMs: number;
+  /** Set when the file exists but does not parse (#215). `data` is then `{}`. */
+  unreadable?: UnreadableFile;
+}
+
+/** An entry file that exists but does not parse, as of `mtimeMs` (#215). */
+interface UnreadableEntry {
+  file: UnreadableFile;
   mtimeMs: number;
 }
 
@@ -101,6 +110,12 @@ signals. The wrapper format \`{ value, meta }\` assumes only the official
 tools touch it.
 
 If you need to bulk-import or restructure, do it through the CLI.
+
+**If git leaves conflict markers in a file here** (two branches wrote the
+same entry), Reverie will not read that file and refuses to write over it.
+Keep one side whole — \`git checkout --ours -- <file>\` or
+\`git checkout --theirs -- <file>\` — then \`git add <file>\`.
+\`rvr lint\` lists every file in this state.
 `;
 
 /**
@@ -232,17 +247,49 @@ function readStoreFile(filePath: string): string {
   return fs.readFileSync(filePath, 'utf8');
 }
 
-/** Reads a sidecar file, returning an empty object on ENOENT or parse failure. */
-function readSidecar<T>(filePath: string): T {
+/**
+ * Reads a sidecar file. A missing or empty file is an empty map. A file that
+ * does not parse to an object is ALSO returned as an empty map, but flagged
+ * `unreadable` (#215): callers must not mistake it for "no aliases" / "no
+ * confirmation flags", and save() must not rewrite it.
+ */
+function readSidecar<T>(filePath: string, kind: 'aliases' | 'confirm'): { data: T; unreadable?: UnreadableFile } {
+  let raw: string;
   try {
-    const raw = readStoreFile(filePath);
-    return (raw?.trim() ? JSON.parse(raw) : {}) as T;
+    raw = readStoreFile(filePath);
   } catch (err) {
     if (!isENOENT(err)) {
       debug(`Failed to read sidecar ${filePath}: ${String(err)}`);
     }
-    return {} as T;
+    return { data: {} as T };
   }
+  if (!raw.trim()) return { data: {} as T };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return { data: parsed as T };
+    }
+  } catch { /* classified below */ }
+  debug(`Unparseable sidecar: ${filePath}`);
+  return { data: {} as T, unreadable: { kind, path: filePath, reason: classifyUnparseable(raw) } };
+}
+
+/**
+ * Fresh read of one entry file, for the write guards (#215): returns the
+ * unreadable descriptor when the file exists and does not parse, undefined
+ * when it parses or is absent. Other read failures (a symlink, EACCES) are
+ * not this guard's business — the callers' existing handling applies.
+ */
+function probeEntryFile(filePath: string, key: string): UnreadableFile | undefined {
+  let raw: string;
+  try {
+    raw = readStoreFile(filePath);
+  } catch {
+    return undefined;
+  }
+  return parseEntryWrapper(raw)
+    ? undefined
+    : { kind: 'entry', path: filePath, key, reason: classifyUnparseable(raw) };
 }
 
 function isENOENT(err: unknown): boolean {
@@ -384,6 +431,10 @@ export function createDirectoryStore(
   // Per-entry cache, keyed by dotted key. Each entry records its file mtime
   // so we can detect external writes between load() calls.
   const entryCache = new Map<string, CachedEntry>();
+  // Entry files that exist but do not parse (#215), keyed like entryCache and
+  // mtime-tracked the same way so an unchanged broken file is not re-read on
+  // every scan. A key is in at most one of the two maps.
+  const unreadableEntries = new Map<string, UnreadableEntry>();
   // Sidecar caches — mtime-tracked so scanAndSync() can skip the re-read when
   // nothing changed. A cached sentinel mtime of `-1` means "observed as
   // missing"; any real fs.stat mtime compares unequal, so we'll pick up a
@@ -400,6 +451,7 @@ export function createDirectoryStore(
 
   function clear(): void {
     entryCache.clear();
+    unreadableEntries.clear();
     aliasesCache = null;
     confirmCache = null;
     dirMtimeMs = -1;
@@ -413,6 +465,7 @@ export function createDirectoryStore(
    */
   function refreshSidecar<T extends Record<string, unknown>>(
     filePath: string,
+    kind: 'aliases' | 'confirm',
     cached: CachedSidecar<T> | null
   ): CachedSidecar<T> {
     let stat: fs.Stats;
@@ -429,8 +482,8 @@ export function createDirectoryStore(
     if (cached?.mtimeMs === stat.mtimeMs) {
       return cached;
     }
-    const data = readSidecar<T>(filePath);
-    return { data, mtimeMs: stat.mtimeMs };
+    const { data, unreadable } = readSidecar<T>(filePath, kind);
+    return unreadable ? { data, mtimeMs: stat.mtimeMs, unreadable } : { data, mtimeMs: stat.mtimeMs };
   }
 
   /**
@@ -457,6 +510,7 @@ export function createDirectoryStore(
     } catch (err) {
       if (isENOENT(err)) {
         entryCache.clear();
+        unreadableEntries.clear();
         aliasesCache = { data: {}, mtimeMs: -1 };
         confirmCache = { data: {}, mtimeMs: -1 };
         dirMtimeMs = -1;
@@ -471,6 +525,7 @@ export function createDirectoryStore(
     } catch (err) {
       if (isENOENT(err)) {
         entryCache.clear();
+        unreadableEntries.clear();
         aliasesCache = { data: {}, mtimeMs: -1 };
         confirmCache = { data: {}, mtimeMs: -1 };
         dirMtimeMs = -1;
@@ -497,13 +552,23 @@ export function createDirectoryStore(
       seen.add(key);
       const cached = entryCache.get(key);
       if (cached?.mtimeMs === mtimeMs) continue;
+      if (unreadableEntries.get(key)?.mtimeMs === mtimeMs) continue;
       try {
         const raw = readStoreFile(filePath);
         const wrapper = parseEntryWrapper(raw);
         if (wrapper) {
           entryCache.set(key, { wrapper, mtimeMs });
+          unreadableEntries.delete(key);
         } else {
-          debug(`Skipping unparseable entry file: ${filePath}`);
+          // #215: the file exists and does not parse. Record it instead of
+          // skipping it — and drop any copy parsed before it broke, which a
+          // long-lived process would otherwise keep serving as current.
+          debug(`Unparseable entry file: ${filePath}`);
+          entryCache.delete(key);
+          unreadableEntries.set(key, {
+            file: { kind: 'entry', path: filePath, key, reason: classifyUnparseable(raw) },
+            mtimeMs,
+          });
         }
       } catch (err) {
         debug(`Failed to read entry file ${filePath}: ${String(err)}`);
@@ -514,18 +579,35 @@ export function createDirectoryStore(
     for (const key of [...entryCache.keys()]) {
       if (!seen.has(key)) entryCache.delete(key);
     }
+    for (const key of [...unreadableEntries.keys()]) {
+      if (!seen.has(key)) unreadableEntries.delete(key);
+    }
 
     // Refresh sidecar caches. refreshSidecar stats first and re-parses only
     // if the mtime changed, so an unchanged sidecar costs a single stat()
     // instead of a stat + read + JSON.parse.
     aliasesCache = refreshSidecar<Record<string, string>>(
       path.join(dir, ALIASES_FILE),
+      'aliases',
       aliasesCache
     );
     confirmCache = refreshSidecar<Record<string, true>>(
       path.join(dir, CONFIRM_FILE),
+      'confirm',
       confirmCache
     );
+  }
+
+  /**
+   * Store files that exist but did not parse, as of the last scan this
+   * instance ran (#215). Does no I/O: a command that never scanned reports
+   * nothing, and a single-key read finds out about its own file in getOne().
+   */
+  function unreadable(): UnreadableFile[] {
+    const files = [...unreadableEntries.values()].map(e => e.file);
+    if (aliasesCache?.unreadable) files.push(aliasesCache.unreadable);
+    if (confirmCache?.unreadable) files.push(confirmCache.unreadable);
+    return files.sort((a, b) => a.path.localeCompare(b.path));
   }
 
   function load(): UnifiedData {
@@ -635,6 +717,36 @@ export function createDirectoryStore(
           current.wrapper.meta?.updated === newUpdated;
         if (!unchanged) toWrite.push([key, value, newUpdated]);
       }
+      const aliasPath = path.join(dir, ALIASES_FILE);
+      const confirmPath = path.join(dir, CONFIRM_FILE);
+      const rewriteAliases = !aliasesCache || aliasesCache.mtimeMs === -1 || !shallowEquals(aliasesCache.data, data.aliases);
+      const rewriteConfirm = !confirmCache || confirmCache.mtimeMs === -1 || !shallowEquals(confirmCache.data, data.confirm);
+
+      // 3b. Refuse to replace a file that does not parse (#215). An
+      //     unreadable entry is absent from entryCache, so a write to its key
+      //     lands in toWrite looking like a new entry; an unreadable sidecar
+      //     loaded as {}, so any change to it looks like a rewrite from
+      //     empty. Either write would discard both sides of a git conflict.
+      //     Decided from a fresh read of each target, not from the scan.
+      //     All-or-nothing: checked before any delta is applied. The epoch
+      //     goes back to even first — nothing here has touched an entry.
+      const refused: UnreadableFile[] = [];
+      for (const [key] of toWrite) {
+        const broken = probeEntryFile(entryFilePath(dir, key), key);
+        if (broken) refused.push(broken);
+      }
+      if (rewriteAliases) {
+        const broken = readSidecar(aliasPath, 'aliases').unreadable;
+        if (broken) refused.push(broken);
+      }
+      if (rewriteConfirm) {
+        const broken = readSidecar(confirmPath, 'confirm').unreadable;
+        if (broken) refused.push(broken);
+      }
+      if (refused.length > 0) {
+        writeEpoch(dir, inProgressEpoch + 1);
+        throw new StoreUnreadableError(refused, 'write');
+      }
 
       // 4. Apply deltas. Each atomicWriteFileSync is individually atomic;
       //    concurrent readers detect mid-commit state via the odd epoch we
@@ -665,13 +777,11 @@ export function createDirectoryStore(
 
       // 5. Sidecars — rewrite only if changed. After a write, pick up the
       //    new mtime from statSync so future scans can skip the re-read.
-      if (!aliasesCache || aliasesCache.mtimeMs === -1 || !shallowEquals(aliasesCache.data, data.aliases)) {
-        const aliasPath = path.join(dir, ALIASES_FILE);
+      if (rewriteAliases) {
         atomicWriteFileSync(aliasPath, serializeSidecar(data.aliases));
         aliasesCache = { data: { ...data.aliases }, mtimeMs: fs.statSync(aliasPath).mtimeMs };
       }
-      if (!confirmCache || confirmCache.mtimeMs === -1 || !shallowEquals(confirmCache.data, data.confirm)) {
-        const confirmPath = path.join(dir, CONFIRM_FILE);
+      if (rewriteConfirm) {
         atomicWriteFileSync(confirmPath, serializeSidecar(data.confirm));
         confirmCache = { data: { ...data.confirm }, mtimeMs: fs.statSync(confirmPath).mtimeMs };
       }
@@ -699,7 +809,9 @@ export function createDirectoryStore(
    *
    * Returns `undefined` on ENOENT (no entry, or `key` is a parent of multiple
    * stored leaves — the slow path via `load()` is required to materialize a
-   * subtree).
+   * subtree). Throws StoreUnreadableError when the file exists but does not
+   * parse (#215): that is not a miss, and reporting it as one is what sends a
+   * caller off to write a fresh entry over a git conflict.
    */
   function getOne(key: string): CodexValue | undefined {
     if (!isValidEntryKey(key)) return undefined;
@@ -710,16 +822,23 @@ export function createDirectoryStore(
     } catch {
       return undefined;
     }
+    let raw: string;
     try {
-      const raw = readStoreFile(filePath);
-      const wrapper = parseEntryWrapper(raw);
-      return wrapper?.value;
+      raw = readStoreFile(filePath);
     } catch (err) {
       if (!isENOENT(err)) {
         debug(`getOne(${key}) failed: ${String(err)}`);
       }
       return undefined;
     }
+    const wrapper = parseEntryWrapper(raw);
+    if (!wrapper) {
+      throw new StoreUnreadableError(
+        [{ kind: 'entry', path: filePath, key, reason: classifyUnparseable(raw) }],
+        'read',
+      );
+    }
+    return wrapper.value;
   }
 
   /**
@@ -790,6 +909,36 @@ export function createDirectoryStore(
         }
       }
 
+      // Read the existing entry before anything is touched: to preserve
+      // `meta.created`, and to refuse the write when the file is there but
+      // does not parse (#215) — replacing it would discard both sides of a
+      // git conflict and reset `created`. Refusing here, ahead of the epoch
+      // bump, leaves the store byte-for-byte as it was.
+      const filePath = entryFilePath(dir, key);
+      let existingCreated: number | undefined;
+      let existingRaw: string | undefined;
+      try {
+        // #159: reject a symlinked existing entry file rather than reading
+        // its target. The atomicWriteFileSync below renames a tmp file over
+        // filePath, replacing the symlink with a real file, so the write
+        // still lands safely inside the (verified real) store dir.
+        existingRaw = readStoreFile(filePath);
+      } catch (err) {
+        if (!isENOENT(err)) {
+          debug(`setOne(${key}) read-existing failed: ${String(err)}`);
+        }
+      }
+      if (existingRaw !== undefined) {
+        const existing = parseEntryWrapper(existingRaw);
+        if (!existing) {
+          throw new StoreUnreadableError(
+            [{ kind: 'entry', path: filePath, key, reason: classifyUnparseable(existingRaw) }],
+            'write',
+          );
+        }
+        existingCreated = existing.meta?.created;
+      }
+
       // 0. Begin commit: bump epoch odd. Mirrors save()'s seqlock contract so
       //    concurrent readers see the in-progress state and retry their scan.
       const startEpoch = readEpoch(dir);
@@ -797,23 +946,6 @@ export function createDirectoryStore(
       writeEpoch(dir, inProgressEpoch);
 
       try {
-        const filePath = entryFilePath(dir, key);
-
-        // Preserve `meta.created` if the entry already exists.
-        let existingCreated: number | undefined;
-        try {
-          // #159: reject a symlinked existing entry file rather than reading
-          // its target. The atomicWriteFileSync below renames a tmp file over
-          // filePath, replacing the symlink with a real file, so the write
-          // still lands safely inside the (verified real) store dir.
-          const existingRaw = readStoreFile(filePath);
-          existingCreated = parseEntryWrapper(existingRaw)?.meta?.created;
-        } catch (err) {
-          if (!isENOENT(err)) {
-            debug(`setOne(${key}) read-existing failed: ${String(err)}`);
-          }
-        }
-
         const wrapper: EntryWrapper = {
           value,
           meta: { created: existingCreated ?? updated, updated },
@@ -846,7 +978,7 @@ export function createDirectoryStore(
     });
   }
 
-  return { load, save, clear, getOne, setOne };
+  return { load, save, clear, getOne, setOne, unreadable };
 }
 
 // ── Migration ──────────────────────────────────────────────────────────

@@ -21,7 +21,8 @@
 > schema version), MCP-parity `error.code` names with **no `E_` prefix**
 > (`PROJECT_UNRESOLVED`, `NOT_FOUND`, `INVALID_INPUT`, `REQUIRES_CONFIRMATION`,
 > `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, `COMMAND_FAILED`, `INPUT_REQUIRED`,
-> `IO`, `RUNTIME`), `warnings[]` as `{code,message}` objects, and the confirm
+> `IO`, `RUNTIME`; `STORE_UNREADABLE` added in v1.4.0 for #215 — adding a code
+> is a minor change), `warnings[]` as `{code,message}` objects, and the confirm
 > preview in `error.preview` (D9). Code: `src/utils/output.ts` (envelope +
 > frozen `ERROR_CODES`), `src/commands/manifest.ts` (D7), surface-aware
 > `getEffectiveInstructions('cli'|'mcp')` (D5), AGENTS.md from `init` (D6).

@@ -2,7 +2,8 @@ import { getEntriesFlat, Scope } from '../storage';
 import { color } from '../formatting';
 import { findProjectFile } from '../store';
 import { interpolate } from '../utils/interpolate';
-import { isJsonMode, setResult } from '../utils/output';
+import { isJsonMode, setResult, failJson } from '../utils/output';
+import { describeUnreadable, displayPath, listUnreadableFiles, markUnreadableShown, resolutionHint } from '../utils/unreadable';
 import fs from 'fs';
 import path from 'path';
 
@@ -172,14 +173,43 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
 
   const seedIssues = options.seedQuality ? checkSeedQuality(flat) : [];
 
+  // #215: files that exist but do not parse. Everything else lint reports is
+  // advice; this is a broken store, and the one finding that fails the
+  // command. getEntriesFlat above scanned the store(s) — no extra read.
+  const unreadable = listUnreadableFiles();
+
   if (isJsonMode()) {
     const payload: Record<string, unknown> = {
       issues: namespaceIssues,
       allowed: allowedNamespaces,
     };
     if (options.seedQuality) payload.seedQuality = seedIssues;
+    if (unreadable.length > 0) {
+      payload.unreadable = unreadable.map(f => ({
+        kind: f.kind,
+        ...(f.key !== undefined && { key: f.key }),
+        file: displayPath(f.path),
+        reason: f.reason,
+        fix: resolutionHint(f),
+      }));
+    }
     setResult(payload);
+    if (unreadable.length > 0) {
+      failJson('STORE_UNREADABLE', `${unreadable.length} store file${unreadable.length === 1 ? '' : 's'} cannot be read: ${unreadable.map(describeUnreadable).join('; ')}.`);
+    }
     return;
+  }
+
+  if (unreadable.length > 0) {
+    console.log(color.red(color.bold(`\n${unreadable.length} store file${unreadable.length === 1 ? '' : 's'} cannot be read:\n`)));
+    for (const f of unreadable) {
+      console.log(`  ${color.red(describeUnreadable(f))}`);
+      console.log(`    ${color.gray(resolutionHint(f))}`);
+    }
+    console.log('');
+    // Listed here, so the wrapper need not repeat them on stderr.
+    markUnreadableShown();
+    process.exitCode = 1;
   }
 
   // Namespace section

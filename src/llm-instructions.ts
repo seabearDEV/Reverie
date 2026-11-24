@@ -75,6 +75,7 @@ EXECUTION:
 DO NOT HAND-EDIT THE STORE:
 - Always interact with Reverie via \`rvr\` (or the MCP tools when available), never by reading or writing .reverie/*.json directly.
 - Direct file reads/writes bypass audit logging, alias resolution, interpolation, and scope fallthrough, and desync per-entry staleness metadata.
+- Error code STORE_UNREADABLE means a store file exists but does not parse — usually git conflict markers after a merge. The entry is NOT missing: do not write a replacement, and do not pick a side yourself. Tell the user; the error names the file and the \`git checkout --ours|--theirs\` fix.
 
 EFFECTIVE USAGE:
 - Run \`rvr context\` as your FIRST step to bootstrap session knowledge.
