@@ -106,6 +106,36 @@ describe('recordCliWrite (#119/#101)', () => {
     expect(recordCliWrite('files.a', t0 + 31 * 60 * 1000)).toBeNull();
   });
 
+  it('evicts keys whose writes have all left the window, and keeps the live ones', () => {
+    // The file used to keep every key the session ever set: only the key
+    // being written was pruned.
+    process.env.RVR_SESSION = 'sess-evict';
+    resetSessionIdForTests();
+    const t0 = Date.now();
+    recordCliWrite('files.old1', t0);
+    recordCliWrite('files.old2', t0 + 1000);
+    recordCliWrite('files.live', t0 + 20 * 60 * 1000);
+    expect(Object.keys(loadSessionState('sess-evict').writes).sort()).toEqual(['files.live', 'files.old1', 'files.old2']);
+
+    // 31 minutes after the first two, 11 after the third.
+    recordCliWrite('files.new', t0 + 31 * 60 * 1000);
+    const { writes } = loadSessionState('sess-evict');
+    expect(Object.keys(writes).sort()).toEqual(['files.live', 'files.new']);
+    expect(writes['files.live']).toEqual([t0 + 20 * 60 * 1000]);
+  });
+
+  it('evicts keys a damaged file left with no usable timestamps', () => {
+    process.env.RVR_SESSION = 'sess-evict-empty';
+    resetSessionIdForTests();
+    fs.mkdirSync(sessionsDir(), { recursive: true });
+    const t0 = Date.now();
+    fs.writeFileSync(path.join(sessionsDir(), 'sess-evict-empty.json'), JSON.stringify({
+      v: 1, updatedAt: t0, writes: { 'files.a': [null, 'abc'], 'files.b': [] }, missWindows: [],
+    }));
+    recordCliWrite('files.c', t0);
+    expect(Object.keys(loadSessionState('sess-evict-empty').writes)).toEqual(['files.c']);
+  });
+
   it('the handoff is exempt in a shared session: no warning, nothing recorded, no state file', () => {
     // The shared-session path does its own window math against the state
     // file, so the exemption in recordWrite alone would not reach it.

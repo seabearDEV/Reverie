@@ -50,6 +50,16 @@ export function pruneAndRecord(prior: number[], now: number): { timestamps: numb
 }
 
 /**
+ * True while `timestamps` still holds a write inside the 30-min window. The
+ * on-disk guard evicts every key this is false for; an empty list (a damaged
+ * file whose leaves were all discarded) is not live either.
+ */
+export function hasLiveWrite(timestamps: number[], now: number): boolean {
+  const cutoff = now - WINDOW_MS;
+  return timestamps.some(ts => ts > cutoff);
+}
+
+/**
  * Record a successful reverie_set on (sessionId, key) and return a warning
  * descriptor when the threshold trips, or null when no warning is warranted.
  *

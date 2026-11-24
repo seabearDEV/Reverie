@@ -15,7 +15,7 @@ import { getDataDirectory } from './paths';
 import { getSessionId, isSharedSession } from './session';
 import { atomicWriteFileSync } from './atomicWrite';
 import { withFileLock } from './fileLock';
-import { recordWrite, pruneAndRecord, isWriteAmpExempt, WriteAmpResult } from './writeAmp';
+import { recordWrite, pruneAndRecord, hasLiveWrite, isWriteAmpExempt, WriteAmpResult } from './writeAmp';
 import { MissWindowTracker, MissPath, OpenMissWindow } from './telemetry';
 import { debug } from './debug';
 
@@ -157,6 +157,13 @@ export function recordCliWrite(key: string, now = Date.now()): WriteAmpResult | 
   }
   pruneStaleSessions(now);
   const result = updateSessionState(getSessionId(), now, (state) => {
+    // Evict keys with no write left in the window, as the in-memory guard
+    // does. Otherwise the file keeps every key the session ever set, and each
+    // later invocation parses and rewrites all of them — which also keeps the
+    // mtime fresh, so the 24h prune never reaches a long-lived session id.
+    for (const k of Object.keys(state.writes)) {
+      if (!hasLiveWrite(state.writes[k], now)) delete state.writes[k];
+    }
     const { timestamps, result: amp } = pruneAndRecord(state.writes[key] ?? [], now);
     state.writes[key] = timestamps;
     return amp;
