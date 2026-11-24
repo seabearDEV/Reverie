@@ -305,6 +305,34 @@ describe('a detected harness session drives the CLI guardrails (#207)', () => {
     expect(loadSessionState(HARNESS_ID).missWindows).toHaveLength(1);
   });
 
+  it('a session that only reads still sweeps expired state files, on its first touch', () => {
+    // Every detected session writes a state file on its first read, so the
+    // TTL sweep cannot depend on some session eventually calling `set`.
+    fs.mkdirSync(sessionsDir(), { recursive: true });
+    const expired = path.join(sessionsDir(), 'expired-session.json');
+    fs.writeFileSync(expired, '{}');
+    const old = (Date.now() - 25 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(expired, old, old);
+
+    trackCliMissPath({ tool: 'reverie_get', namespace: 'arch', key: 'arch.store', op: 'read', hit: true, responseSize: 10 });
+    expect(fs.existsSync(expired)).toBe(false);
+    expect(fs.existsSync(path.join(sessionsDir(), `${HARNESS_ID}.json`))).toBe(true);
+  });
+
+  it('later reads in the same session do not sweep again', () => {
+    trackCliMissPath({ tool: 'reverie_get', namespace: 'arch', key: 'arch.store', op: 'read', hit: true, responseSize: 10 });
+    const expired = path.join(sessionsDir(), 'expired-later.json');
+    fs.writeFileSync(expired, '{}');
+    const old = (Date.now() - 25 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(expired, old, old);
+
+    trackCliMissPath({ tool: 'reverie_get', namespace: 'arch', key: 'arch.store', op: 'read', hit: true, responseSize: 10 });
+    expect(fs.existsSync(expired)).toBe(true);
+    // …until the next write, which sweeps as it always has.
+    recordCliWrite('files.x');
+    expect(fs.existsSync(expired)).toBe(false);
+  });
+
   it('explicit RVR_SESSION still wins and is not reported as detected', () => {
     process.env.RVR_SESSION = 'explicit-wins';
     resetSessionIdForTests();

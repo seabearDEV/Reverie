@@ -97,6 +97,11 @@ function updateSessionState<T>(
 ): T | undefined {
   try {
     fs.mkdirSync(sessionsDir(), { recursive: true, mode: 0o700 });
+    // First touch of this session: sweep expired files. Miss-path tracking
+    // writes a state file on a session's first read, so with detected
+    // harness sessions (#207) a session that never calls `set` leaves one
+    // too — the sweep cannot wait for recordCliWrite to trigger it.
+    if (!fs.existsSync(sessionFilePath(id))) pruneStaleSessions(now);
     return withFileLock(sessionFilePath(id), () => {
       const state = loadSessionState(id, now);
       const out = fn(state);
@@ -111,8 +116,8 @@ function updateSessionState<T>(
 
 /**
  * TTL prune: delete session files whose mtime is older than 24h. Called
- * opportunistically from the write paths; the dir holds one small file per
- * active agent session, so a readdir sweep is cheap.
+ * opportunistically — on a session's first touch and on every `set`; the dir
+ * holds one small file per active agent session, so a readdir sweep is cheap.
  */
 export function pruneStaleSessions(now = Date.now()): void {
   try {
