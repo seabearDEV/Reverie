@@ -29,7 +29,7 @@ The store is already a forum, informally: the largest entries are posts with dat
 | **D2** | **Pinned set.** Default `project.*`, `commands.*`, `conventions.*` — identical to the old `essential` set, so `essential` keeps its meaning and small stores render byte-for-byte as before. Per-store override via a `system.bootstrap.pinned` entry holding comma-separated namespaces (e.g. `conventions,commands`), following the `system.llm.instructions` precedent: it is project knowledge about how to bootstrap this store, it travels with the repo, and it is edited through `rvr set`. Not a `config.json` key — that is per machine. |
 | **D3** | **Gist rule.** The gist is the value's first line, cut at the last word boundary within `bootstrap_gist_chars` (default 160, config key, `RVR_BOOTSTRAP_GIST_CHARS` env override for tests) with `…` appended when anything was cut. A value that fits in one line under the cap is shown whole — no marker, no change from today. Encrypted values render `[encrypted]`. No summary generation: the key is already the title, and the entries this store has accumulated already lead with a headline sentence. Quality is enforced by convention (`rvr lint --seed-quality`), not by a generator. |
 | **D4** | **Index line format.** `key: gist… [+2.1K] [86d]` — the `[+N]` marker carries the bytes the agent would get by opening the entry, using the same `K` formatting as the `[trimmed: …]` notice; the age tag is the existing one. Plain and colored output share the shape. |
-| **D5** | **Budget order.** Over budget at `standard`/`essential`: (1) **demote** pinned namespaces to index lines, largest namespace first, never `context.next_session`; (2) then the existing #100 **drop** order over what remains (`files.*` → `arch.*` → large `context.*`, never-shed list unchanged); (3) then the pathological notice. Demotion is reported as `[demoted to index: project.* (21 entries, 21.7K → 4.1K) — open entries with reverie_get <key>]`. With index lines at ~200 B each, step 3 is unreachable for any realistic store. |
+| **D5** | **Budget order.** Over budget at `standard`/`essential`: (1) **demote** pinned namespaces to index lines, largest namespace first, never `context.next_session`; (2) **narrow** every index gist to one shared width — 80, then 40, then keys only — stopping at the widest that fits (added by #211, see the addendum); (3) then the existing #100 **drop** order over what remains (`files.*` → `arch.*` → large `context.*`, never-shed list unchanged); (4) then the pathological notice. Demotion is reported as `[demoted to index: project.* (21 entries, 21.7K → 4.1K) — open entries with reverie_get <key>]`. |
 | **D6** | **Footer carries the fetch hint.** `[tier: standard — 24 in full, 65 indexed; open an entry with rvr get <key>, or --tier full]` (MCP: `reverie_get <key>` / `tier:"full"`). When nothing is indexed the old footer renders unchanged. This is the in-band instruction: an agent that reads the bootstrap learns how to open a thread without a word added to AGENTS.md. |
 | **D7** | **JSON shape.** `result.entries` keeps `key → value` for entries rendered in full. New `result.index` = `key → { gist, bytes, truncated }` for index lines. Additive; `--tier full` output is unchanged. `result.demotedNamespaces` joins `degraded` / `shedNamespaces`. |
 | **D8** | **Telemetry.** `reverie_context` rows (telemetry + audit, both surfaces) gain `tier`, `pinned` (entries in full), `indexed`, and `demotedNamespaces`. CLI rows never carried `degraded` (only MCP rows did) — the CLI wrapper now consumes the same signals through a per-invocation channel in `output.ts`. |
@@ -56,9 +56,13 @@ compose(flat, tier, pinnedPrefixes, gistChars, budget, fixedOverhead):
           if projected <= budget: break
           for k in ns: display[k] = gistLine(value[k]); move k full → index
           record demoted segment (entries, bytes before → after)
-      // D5 step 2 — #100 drop order, unchanged rules
+      // D5 step 2 (#211) — one shared gist width, a rung at a time
+      for width in [80, 40, 0] below gistChars:
+          if projected <= budget: break
+          for k in index: narrow display[k] to width unless that would lengthen it
+      // D5 step 3 — #100 drop order, unchanged rules
       shedToFitBudget(display, …)        // never-shed prefixes still protected
-      // D5 step 3 — pathological notice if still over
+      // D5 step 4 — pathological notice if still over
 
   render: [project header (MCP)] [demoted notice] [trimmed notice] [pathological notice]
           [handoff banner] [entry lines in store order] [aliases] [footer]
@@ -132,6 +136,24 @@ Post-deploy questions:
 - **Demand:** `reverie_get` / `rvr get` calls per session after a context call — the first per-entry read signal. Feeds #84 coldness and the tier-promotion idea in `project.seedRoadmap` L3.
 - **Gist quality:** entries opened often after bootstrap are working gists; keys that show up in `miss-paths.jsonl` while present in the index are gists that failed to land (#140 territory).
 - **Cap calibration:** if demotion fires on >5% of standard bootstraps in stores with a default pinned set, the pinned default is too wide; if `[+N]` markers rarely exceed 1 KB, the cap can shrink.
+
+## Addendum: narrow gists before dropping lines (#211, 2026-11-24)
+
+D5 as first shipped went from demotion straight to the drop order. An index line is ~225 B at 160 characters with 40–70 character keys, so 326 lines are ~73 KB — above any budget that fits the harness channel (#212). On a synthetic store shaped like the 2026-10-30 external report (326 entries, 677 KB, 242 `context.*`), the drop order hid most of the store again, the failure this design set out to fix:
+
+| Budget | Before #211 | After #211 |
+|---|---|---|
+| 28 KB (default) | 131 visible; dropped `files.*` 17, `arch.*` 15, `context.*` 163 | 326 visible, keys only, 26.1 KB rendered |
+| 38 KB | 176 visible; dropped `files.*` 17, `arch.*` 15, `context.*` 118 | 326 visible, 40-char gists, 37.4 KB rendered |
+
+Decisions:
+
+- **One shared width, stepped** (160 → 80 → 40 → keys only), not a width per namespace. Deterministic, one number to report, and no per-namespace policy to tune before there is data on which gists get opened. Per-namespace widths stay open as a follow-up if the soak shows `files.*` and `context.*` want different treatment.
+- **`bootstrap_gist_chars` is the maximum.** Only rungs strictly below it apply.
+- **Keys only keeps the open-cost marker** (`key: … [+1.6K] [88d]`). Measured on the fixture, the separator and marker cost 4.1 KB across 316 lines and the whole store still fits 28 KB, so the marker stays: it is what tells an agent whether opening the entry is cheap.
+- **A rung never lengthens a line.** A short value rendered whole is cheaper than its own marker and stays whole.
+- **Drop only after the last rung.** Lines that survive a drop keep the narrowed width.
+- **Reporting.** The footer names the width; JSON carries `result.gistChars`; telemetry and audit rows carry `gistChars` (0 = keys only), and a narrowed bootstrap counts as `degraded`. No separate notice line — no key was lost.
 
 ## Out of scope
 

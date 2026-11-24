@@ -14,6 +14,8 @@ import {
   formatIndexText,
   demoteToFitBudget,
   formatDemoteNotice,
+  shrinkIndexToFitBudget,
+  entryRenderBytes,
   namespaceOf,
   IndexEntry,
   ShedSegment,
@@ -130,6 +132,12 @@ export function cliHints(): SurfaceHints {
 
 export const MCP_HINTS: SurfaceHints = { get: 'reverie_get <key>', full: 'pass tier:"full"' };
 
+/** Footer note naming the gist width when the budget narrowed it (#211). */
+function gistNote(gistChars: number): string {
+  return gistChars === 0 ? ', keys only' : `, gists cut to ${gistChars} chars`;
+}
+const GIST_NOTE_LONGEST = gistNote(80);
+
 // ── Bootstrap overhead estimate (shared by shed + size projection) ───
 // Non-entry bytes of a rendered bootstrap: handoff banner, aliases
 // section, tier footer, and a conservative allowance for the notice lines.
@@ -153,10 +161,11 @@ export function estimateBootstrapOverheadBytes(
       bytes += Buffer.byteLength(`  ${a} -> ${t}\n`, 'utf8');
     }
   }
-  // Tier footer (present whenever tier !== 'full'); sized on its longer,
-  // indexed form with the pre-shed entry count as an upper bound.
+  // Tier footer (present whenever tier !== 'full'); sized on its longest
+  // form — indexed, with the #211 gist-width note — and the pre-shed entry
+  // count as an upper bound.
   bytes += Buffer.byteLength(
-    `\n[tier: ${tier} (${entryCount} entries: ${entryCount} in full, ${entryCount} indexed) — open an entry with ${hints.get}, or ${hints.full} for everything]\n`,
+    `\n[tier: ${tier} (${entryCount} entries: ${entryCount} in full, ${entryCount} indexed${GIST_NOTE_LONGEST}) — open an entry with ${hints.get}, or ${hints.full} for everything]\n`,
     'utf8');
   // Allowance for the demote + trimmed notice lines (emitted only when the
   // budget bites, but reserving it keeps the notices themselves from
@@ -194,7 +203,13 @@ export interface ContextPayload {
   demoted: DemoteSegment[];
   shed: ShedSegment[];
   pathologicalOverflow: boolean;
-  /** True when the budget changed the shape (demoted, shed, or overflow). */
+  /** Gist width in effect for index lines, in characters. Equals the
+   *  configured cap unless the budget narrowed it (#211); 0 = keys only. */
+  gistChars: number;
+  /** True when the budget narrowed the gists below the configured cap. */
+  gistShrunk: boolean;
+  /** True when the budget changed the shape: demoted, gists narrowed, shed,
+   *  or overflow. */
   degraded: boolean;
 }
 
@@ -214,9 +229,10 @@ export function composeContext(flat: Record<string, string>, opts: ComposeOption
   const { full: fullRaw, rest } = partitionByTier(entries, opts.tier, pinned.prefixes);
 
   const displayOf = (v: string): string => (isEncrypted(v) ? ENCRYPTED_DISPLAY : v);
-  const indexOf = (v: string): IndexEntry => (isEncrypted(v)
+  const indexAt = (v: string, chars: number): IndexEntry => (isEncrypted(v)
     ? { gist: ENCRYPTED_DISPLAY, bytes: Buffer.byteLength(ENCRYPTED_DISPLAY, 'utf8'), truncated: false }
-    : indexEntryOf(v, opts.gistChars));
+    : indexEntryOf(v, chars));
+  const indexOf = (v: string): IndexEntry => indexAt(v, opts.gistChars);
 
   const full: Record<string, string> = {};
   for (const [k, v] of Object.entries(fullRaw)) full[k] = displayOf(v);
@@ -226,10 +242,12 @@ export function composeContext(flat: Record<string, string>, opts: ComposeOption
   let demoted: DemoteSegment[] = [];
   let shed: ShedSegment[] = [];
   let pathologicalOverflow = false;
+  let gistChars = opts.gistChars;
 
-  // Size budget (#100/#188): tier "full" bypasses entirely. Otherwise demote
-  // pinned namespaces to index lines first (nothing lost), then drop by the
-  // #100 priority order.
+  // Size budget (#100/#188/#211): tier "full" bypasses entirely. Otherwise
+  // demote pinned namespaces to index lines first (nothing lost), then narrow
+  // every index line's gist (every key still visible), then drop by the #100
+  // priority order.
   if (opts.tier !== 'full') {
     const ageTag = (k: string): string => getStalenessTag(k, opts.meta);
     const display: Record<string, string> = {};
@@ -248,8 +266,23 @@ export function composeContext(flat: Record<string, string>, opts: ComposeOption
     }
     demoted = demotion.segments;
 
-    const drop = shedToFitBudget(demotion.display, ageTag, overhead, opts.budgetBytes);
-    for (const k of Object.keys(demotion.display)) {
+    // Narrowed entries are written back into `index`: the lines and the JSON
+    // index render from it, not from the sizing map.
+    const shrink = shrinkIndexToFitBudget(
+      demotion.display, Object.keys(index), (k, chars) => indexAt(entries[k], chars), ageTag, overhead, opts.budgetBytes, opts.gistChars);
+    Object.assign(index, shrink.narrowed);
+    gistChars = shrink.gistChars;
+    if (gistChars !== opts.gistChars) {
+      // The demote notice reports what the namespace costs now, not what it
+      // cost at full gist width.
+      demoted = demoted.map(s => ({
+        ...s,
+        bytesAfter: s.keys.reduce((sum, k) => sum + entryRenderBytes(k, shrink.display[k], ageTag(k)), 0),
+      }));
+    }
+
+    const drop = shedToFitBudget(shrink.display, ageTag, overhead, opts.budgetBytes);
+    for (const k of Object.keys(shrink.display)) {
       if (!(k in drop.kept)) {
         delete full[k];
         delete index[k];
@@ -260,6 +293,7 @@ export function composeContext(flat: Record<string, string>, opts: ComposeOption
   }
 
   const order = Object.keys(entries).filter(k => k in full || k in index);
+  const gistShrunk = gistChars !== opts.gistChars;
   return {
     tier: opts.tier,
     handoff,
@@ -273,7 +307,9 @@ export function composeContext(flat: Record<string, string>, opts: ComposeOption
     demoted,
     shed,
     pathologicalOverflow,
-    degraded: demoted.length > 0 || shed.length > 0 || pathologicalOverflow,
+    gistChars,
+    gistShrunk,
+    degraded: demoted.length > 0 || gistShrunk || shed.length > 0 || pathologicalOverflow,
   };
 }
 
@@ -309,7 +345,8 @@ export function formatContextFooter(payload: ContextPayload, hints: SurfaceHints
   if (nIndex === 0) {
     return `[tier: ${payload.tier} (${nFull} entries) — ${hints.full} for complete context]`;
   }
-  return `[tier: ${payload.tier} (${nFull + nIndex} entries: ${nFull} in full, ${nIndex} indexed) — open an entry with ${hints.get}, or ${hints.full} for everything]`;
+  const width = payload.gistShrunk ? gistNote(payload.gistChars) : '';
+  return `[tier: ${payload.tier} (${nFull + nIndex} entries: ${nFull} in full, ${nIndex} indexed${width}) — open an entry with ${hints.get}, or ${hints.full} for everything]`;
 }
 
 /** Per-call guardrail/telemetry signals for a composed payload (#100/#188). */
@@ -320,6 +357,7 @@ export function contextSignals(payload: ContextPayload): {
   degraded?: boolean;
   shedNamespaces?: string[];
   demotedNamespaces?: string[];
+  gistChars?: number;
 } {
   return {
     tier: payload.tier,
@@ -329,6 +367,7 @@ export function contextSignals(payload: ContextPayload): {
       degraded: true,
       shedNamespaces: payload.shed.map(s => s.label),
       ...(payload.demoted.length > 0 && { demotedNamespaces: payload.demoted.map(s => s.label) }),
+      ...(payload.gistShrunk && { gistChars: payload.gistChars }),
     }),
   };
 }
@@ -352,6 +391,7 @@ export function contextJsonResult(payload: ContextPayload): Record<string, unkno
     result.degraded = true;
     result.shedNamespaces = payload.shed.map(s => s.label);
     if (payload.demoted.length > 0) result.demotedNamespaces = payload.demoted.map(s => s.label);
+    if (payload.gistShrunk) result.gistChars = payload.gistChars;
   }
   if (payload.pathologicalOverflow) result.pathologicalOverflow = true;
   return result;
@@ -419,7 +459,7 @@ export function computeContextSizes(
  * Build the size report the way the real bootstrap accounts for itself:
  * handoff banner bytes move from the entry list to the overhead estimate
  * (mirroring the HANDOFF_KEY drop in composeContext), and `fitsBudget`
- * answers "would a bootstrap at this tier demote or shed?" — the same
+ * answers "would a bootstrap at this tier demote, shorten gists, or shed?" — the same
  * `entries + fixed overhead <= budget` check the budget step runs.
  */
 export function computeContextSizeReport(
@@ -453,7 +493,7 @@ export function formatContextSizeReport(report: ContextSizeReport): string {
   }
   lines.push(report.tier === 'full'
     ? `Budget: ${report.budgetBytes}B (tier "full" bypasses the budget)`
-    : `Budget: ${report.budgetBytes}B — entries + ~${report.overheadBytes}B overhead ${report.fitsBudget ? 'fit' : 'EXCEED the budget; a bootstrap at this tier will demote or shed'}`);
+    : `Budget: ${report.budgetBytes}B — entries + ~${report.overheadBytes}B overhead ${report.fitsBudget ? 'fit' : 'EXCEED the budget; a bootstrap at this tier will demote, shorten gists, or shed'}`);
   return lines.join('\n');
 }
 

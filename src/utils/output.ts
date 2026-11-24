@@ -90,6 +90,7 @@ export interface InvocationSignals {
   degraded?: boolean | undefined;
   shedNamespaces?: string[] | undefined;
   demotedNamespaces?: string[] | undefined;
+  gistChars?: number | undefined;
 }
 let signals: InvocationSignals = {};
 

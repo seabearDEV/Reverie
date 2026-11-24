@@ -51,6 +51,8 @@ export interface TelemetryEntry {
   pinned?: number | undefined;
   indexed?: number | undefined;
   demotedNamespaces?: string[] | undefined;
+  /** Gist width the budget narrowed index lines to (#211); 0 = keys only. Absent when not narrowed. */
+  gistChars?: number | undefined;
   /** reverie_set only: true when the same key was written ≥3 times in this
    *  session within a 30-min window (#101). */
   writeAmpWarning?: boolean | undefined;
@@ -358,6 +360,8 @@ export interface TelemetryExtras {
   pinned?: number | undefined;
   indexed?: number | undefined;
   demotedNamespaces?: string[] | undefined;
+  /** Gist width the budget narrowed index lines to (#211); 0 = keys only. Absent when not narrowed. */
+  gistChars?: number | undefined;
   writeAmpWarning?: boolean | undefined;
   writeAmpCount?: number | undefined;
   selfRef?: boolean | undefined;

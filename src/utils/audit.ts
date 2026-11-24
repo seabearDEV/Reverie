@@ -45,6 +45,8 @@ export interface AuditEntry {
   pinned?: number | undefined;
   indexed?: number | undefined;
   demotedNamespaces?: string[] | undefined;
+  /** Gist width the budget narrowed index lines to (#211); 0 = keys only. Absent when not narrowed. */
+  gistChars?: number | undefined;
   // reverie_set write-amp guard (#101)
   writeAmpWarning?: boolean | undefined;
   writeAmpCount?: number | undefined;

@@ -42,7 +42,7 @@ import type { Mock } from 'bun:test';
 import { getEntriesFlat } from '../storage';
 import { loadConfig } from '../config';
 import { buildHandoffBanner } from '../utils/handoff';
-import { configureOutput, buildEnvelope } from '../utils/output';
+import { configureOutput, buildEnvelope, takeSignals } from '../utils/output';
 
 const mockGetEntriesFlat = getEntriesFlat as Mock<typeof getEntriesFlat>;
 const mockLoadConfig = loadConfig as Mock<typeof loadConfig>;
@@ -386,5 +386,158 @@ describe('showContext channel fit (#212) and handoff in JSON (#205)', () => {
       expect(parsed.handoff).toEqual({ value: 'pick up with the soak eval', ageDays: 1, stale: false });
       expect(parsed.entries?.['context.next_session']).toBeUndefined();
     }
+  });
+});
+
+// ── Gist shrink before drop (#211) ───────────────────────────────────
+// Between demotion and dropping, every index line narrows to one shared
+// width (80 → 40 → keys only) until the response fits. These run the real
+// composer and renderer; only the store and config are mocked.
+
+describe('showContext narrows index gists before dropping lines (#211)', () => {
+  const N = 40;
+  const keyOf = (i: number): string => `context.topicNumber${String(i).padStart(3, '0')}`;
+  const bigStore = (): Record<string, string> => {
+    const flat: Record<string, string> = { 'project.name': 'reverie', 'deps.zod': 'zod ^4' };
+    for (let i = 0; i < N; i++) {
+      flat[keyOf(i)] = `Entry ${i} headline: ${'word '.repeat(50).trim()}.\nSecond paragraph ${'x'.repeat(400)}`;
+    }
+    return flat;
+  };
+  const budget = (bytes: number): void => {
+    mockLoadConfig.mockReturnValue({ bootstrap_max_response_bytes: bytes } as ReturnType<typeof loadConfig>);
+  };
+  const rendered = (): string => logged.join('\n') + '\n';
+  const visibleKeys = (output: string): number =>
+    Array.from({ length: N }, (_, i) => keyOf(i)).filter(k => output.includes(`${k}: `)).length;
+
+  beforeEach(() => {
+    mockGetEntriesFlat.mockReturnValue(bigStore());
+  });
+
+  it('an under-budget store is untouched: full-width gists, no width note', () => {
+    showContext({ plain: true });
+    const output = rendered();
+    expect(visibleKeys(output)).toBe(N);
+    expect(output).not.toContain('gists cut to');
+    expect(output).not.toContain('keys only');
+    const parsed = contextJson();
+    expect(parsed.gistChars).toBeUndefined();
+    expect(parsed.degraded).toBeUndefined();
+  });
+
+  it('narrows to 80 chars instead of dropping, and the footer names the width', () => {
+    budget(6500);
+    showContext({ plain: true });
+    const output = rendered();
+    expect(visibleKeys(output)).toBe(N);
+    expect(output).not.toContain('[trimmed:');
+    expect(output).toContain(`indexed, gists cut to 80 chars) — open an entry with rvr get <key>`);
+    expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(6500);
+  });
+
+  it('writes the narrowed gists back: JSON index and width agree with what was sized', () => {
+    budget(6500);
+    const parsed = contextJson();
+    expect(parsed.gistChars).toBe(80);
+    expect(parsed.degraded).toBe(true);
+    expect(parsed.shedNamespaces).toEqual([]);
+    expect(Object.keys(parsed.index).filter(k => k.startsWith('context.'))).toHaveLength(N);
+    for (let i = 0; i < N; i++) {
+      expect(parsed.index[keyOf(i)].gist.length).toBeLessThanOrEqual(80);
+      expect(parsed.index[keyOf(i)].truncated).toBe(true);
+    }
+  });
+
+  it('steps to 40 chars when 80 does not fit', () => {
+    budget(4400);
+    showContext({ plain: true });
+    const output = rendered();
+    expect(visibleKeys(output)).toBe(N);
+    expect(output).not.toContain('[trimmed:');
+    expect(output).toContain('gists cut to 40 chars)');
+    expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(4400);
+  });
+
+  it('ends at keys only — every key still visible with its open cost', () => {
+    budget(2800);
+    showContext({ plain: true });
+    const output = rendered();
+    expect(visibleKeys(output)).toBe(N);
+    expect(output).not.toContain('[trimmed:');
+    expect(output).toContain('indexed, keys only) — open an entry with rvr get <key>');
+    expect(output).toMatch(/^context\.topicNumber000: … \[\+\d+B\]$/m);
+    expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(2800);
+    expect(contextJson().gistChars).toBe(0);
+  });
+
+  it('a short value is never lengthened into a marker', () => {
+    budget(2800);
+    showContext({ plain: true });
+    expect(rendered()).toMatch(/^deps\.zod: zod \^4$/m);
+  });
+
+  it('drops lines only once keys-only does not fit', () => {
+    budget(1500);
+    showContext({ plain: true });
+    const output = rendered();
+    expect(output).toContain('[trimmed: context.*');
+    expect(output).toContain('keys only)');
+    expect(visibleKeys(output)).toBeLessThan(N);
+    expect(visibleKeys(output)).toBeGreaterThan(0);
+    const parsed = contextJson();
+    expect(parsed.gistChars).toBe(0);
+    expect(parsed.shedNamespaces).toEqual(['context.*']);
+  });
+
+  it('nothing is trimmed at any budget a narrower rung satisfies', () => {
+    for (const bytes of [8000, 6500, 5400, 4400, 3700, 2800, 2200]) {
+      logged = [];
+      budget(bytes);
+      showContext({ plain: true });
+      const output = rendered();
+      expect(output).not.toContain('[trimmed:');
+      expect(visibleKeys(output)).toBe(N);
+      expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(bytes);
+    }
+  });
+
+  it('essential over budget: demoted lines narrow too, and the notice reports the narrowed size', () => {
+    const flat: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) {
+      flat[`project.decisionRecord${String(i).padStart(2, '0')}`] = `Decision ${i}: ${'word '.repeat(50).trim()}.\n${'y'.repeat(1500)}`;
+    }
+    mockGetEntriesFlat.mockReturnValue(flat);
+    budget(4500);
+    showContext({ plain: true, tier: 'essential' });
+    const output = rendered();
+    expect(output).toContain('gists cut to 80 chars)');
+    expect(output).not.toContain('[trimmed:');
+    expect(output).not.toContain('still exceeds budget');
+    for (let i = 0; i < 30; i++) expect(output).toContain(`project.decisionRecord${String(i).padStart(2, '0')}: Decision ${i}:`);
+    const after = /\[demoted to index: project\.\* \(30 entries, [\d.]+K → ([\d.]+)K\)/.exec(output);
+    expect(after).not.toBeNull();
+    expect(Number(after![1]) * 1024).toBeLessThanOrEqual(4500);
+    expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(4500);
+  });
+
+  it('tier "full" is untouched at any budget', () => {
+    budget(500);
+    showContext({ plain: true, tier: 'full' });
+    const output = rendered();
+    expect(output).toContain('x'.repeat(400));
+    expect(output).not.toContain('gists cut to');
+    expect(output).not.toContain('[tier:');
+    expect(contextJson({ tier: 'full' }).gistChars).toBeUndefined();
+  });
+
+  it('records the width for telemetry and audit rows', () => {
+    budget(6500);
+    showContext({ plain: true });
+    expect(takeSignals()).toMatchObject({ degraded: true, gistChars: 80, shedNamespaces: [] });
+    logged = [];
+    budget(50 * 1024);
+    showContext({ plain: true });
+    expect(takeSignals().gistChars).toBeUndefined();
   });
 });
