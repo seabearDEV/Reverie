@@ -1,9 +1,10 @@
 // #119 (WS3): on-disk per-session state bridging the MCP server's
-// session-scoped guardrails to the per-invocation CLI. When RVR_SESSION is
-// set, every CLI invocation with the same id reads/updates one state file —
-// the write-amp window (#101) and miss-path tracking work across processes
-// exactly as they do across calls inside one MCP server process. When
-// RVR_SESSION is unset there is nothing to bridge: write-amp falls back to
+// session-scoped guardrails to the per-invocation CLI. When a shared session
+// id is in effect — RVR_SESSION, or a harness session detected from the env
+// (#207, see session.ts) — every CLI invocation with the same id
+// reads/updates one state file: the write-amp window (#101) and miss-path
+// tracking work across processes exactly as they do across calls inside one
+// MCP server process. Without one there is nothing to bridge: write-amp falls back to
 // the in-memory per-process guard (which a one-shot CLI process never
 // trips — today's behavior) and miss-path tracking is skipped (a window
 // that dies with the process would log pure noise).
@@ -156,7 +157,7 @@ export function recordCliWrite(key: string, now = Date.now()): WriteAmpResult | 
  * Miss-path tracking for CLI reads (#119). Rehydrates the tracker from the
  * session file, feeds it this call, persists the surviving windows, and
  * returns any closed paths for the caller to append to miss-paths.jsonl.
- * No-op without a shared session.
+ * No-op without a shared session (explicit or detected).
  */
 export function trackCliMissPath(call: {
   tool: string;

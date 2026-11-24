@@ -213,6 +213,39 @@ describe('CLI JSON envelope (#117)', () => {
     expect(((third.warnings ?? []) as { code: string }[]).filter(w => w.code === 'WRITE_AMP')).toHaveLength(0);
   });
 
+  // ── #207: harness session fallback ──────────────────────────────────
+  // _setup.ts scrubs the harness session variable, so the suite's own
+  // spawns are per-process whether or not it runs inside Claude Code; these
+  // set the harness env explicitly.
+
+  const HARNESS_ID = '0b7c2f0e-1111-4222-8333-444455556666';
+  const telemetryRows = () => fs.readFileSync(path.join(testDir, 'telemetry.jsonl'), 'utf8').trim().split('\n')
+    .map(l => JSON.parse(l) as { tool: string; key?: string; ns?: string; session: string; sessionDetected?: boolean });
+
+  it('adopts the Claude Code session id when RVR_SESSION is unset: the guard trips and rows are tagged', () => {
+    const harness = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: HARNESS_ID };
+    const first = parse(run('--json set h207.k "v1"', harness).stdout);
+    expect(first.warnings ?? []).toHaveLength(0);
+    parse(run('--json set h207.k "v2"', harness).stdout);
+    const third = parse(run('--json set h207.k "v3"', harness).stdout);
+    expect(third.ok).toBe(true);
+    const amp = (third.warnings as { code: string; count?: number }[]).find(w => w.code === 'WRITE_AMP');
+    expect(amp?.count).toBe(3);
+
+    const rows = telemetryRows().filter(r => r.session === HARNESS_ID);
+    expect(rows).toHaveLength(3);
+    expect(rows.every(r => r.sessionDetected === true)).toBe(true);
+    expect(fs.existsSync(path.join(testDir, 'sessions', `${HARNESS_ID}.json`))).toBe(true);
+  });
+
+  it('explicit RVR_SESSION wins over the harness id and is not tagged detected', () => {
+    const env = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: HARNESS_ID, RVR_SESSION: 'h207-explicit' };
+    parse(run('--json set h207.explicit "v"', env).stdout);
+    const rows = telemetryRows().filter(r => r.session === 'h207-explicit');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sessionDetected).toBeUndefined();
+  });
+
   // ── #120 guard: no result-less ok envelopes, no stdout pollution ───────
   // Every successful JSON-mode command must carry a `result` (an ok envelope
   // with no result means the handler's output was silently dropped — the

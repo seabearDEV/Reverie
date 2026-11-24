@@ -1,6 +1,6 @@
 import path from 'path';
 import { getDataDirectory, findProjectFile } from './paths';
-import { getSessionId } from './session';
+import { getSessionId, isSessionDetected } from './session';
 import { createJsonlLog } from './jsonl';
 import { isTestRun } from './testTraffic';
 import { getProjectId } from './projectId';
@@ -27,6 +27,9 @@ export interface TelemetryEntry {
   /** True when agent came from env fingerprinting rather than an explicit
    *  RVR_AGENT_NAME (#138) — a confidence signal, not an identity change. */
   agentDetected?: boolean | undefined;
+  /** True when `session` came from the harness's own session variable rather
+   *  than an explicit RVR_SESSION (#207). Absent on per-process sessions. */
+  sessionDetected?: boolean | undefined;
   /** Whether the operation succeeded. Optional for backward compat with
    *  pre-v1.11.x telemetry that didn't carry this field. */
   success?: boolean | undefined;
@@ -381,6 +384,7 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     ts: Date.now(),
     tool,
     session: getSessionId(),
+    ...(isSessionDetected() && { sessionDetected: true }),
     op: classifyOp(tool),
     ns: extractNamespace(key),
     src: source,
