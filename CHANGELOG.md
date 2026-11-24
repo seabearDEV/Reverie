@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **`_epoch.json` no longer commits with the store** ([#187](https://github.com/seabearDEV/reverie/issues/187)). The seqlock counter is per-clone state bumped on every write; committing it made every merge between two writers conflict on the counter before any entry did. Stores now seed a `.reverie/.gitignore` alongside `_README.md`; repos created earlier untrack it once with `git rm --cached .reverie/_epoch.json`. Side effect: `git status` stops reporting the store dirty after every agent write.
 - `rvr context --json --tier full` dropped the handoff text — `result.handoff.value` was missing and `context.next_session` absent from `result.entries` ([#205](https://github.com/seabearDEV/reverie/issues/205)). The full-tier filter returned the source map itself, so removing the banner's key from the entry list removed it from the source too. Regression test added.
 - `rvr context --tier <bogus>` was silently treated as `standard` while the footer echoed the bogus name; it now fails with `INVALID_INPUT`.
 

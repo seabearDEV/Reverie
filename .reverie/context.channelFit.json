@@ -1,0 +1,7 @@
+{
+  "value": "Bootstrap delivery is bounded by the harness, not the model. Claude Code's Bash tool inlines ≤30,000 chars (bashOutputMaxChars default); larger output is saved to a file and the model sees a 2KB preview + path — MCP tool results get the same above an unmeasured threshold (bracketed 19–50KB). In the 2026-10-30 external dataset (one 322-entry 1.3.0 store, 18 Claude Code transcripts, 4,868 audit rows) every standard-tier bootstrap was persisted and 17/18 sessions paid 1–3 read-back calls; the 2KB preview opened with [trimmed:] and cut the handoff. Measured 2.35 chars/token on that identifier-heavy store — stats assume 4 (#204).\nFIX (#212, commit bd06b93 on the #191 branch): default budget 28KB, handoff before notices on both surfaces.\nGOTCHA: config.json has persisted every default since the first release, so default changes never reached existing installs — 1.2.0's 50→38KB never applied (#213). #212 remaps 51200/38912 to unset; choosing either explicitly now warns.\nINDEX MATH (#211): an index line ≈225B, so 326 entries ≈73KB — no channel-sized budget holds a full index; at 28KB the #191 build trims 200 of 326. Shrink gists before dropping lines.\nSOURCE: ~/Downloads/reverie-feedback/2026-10-30 (private; audit_summary.json carries the employer hostname — redact before anything enters the repo). Issues #202–#213.",
+  "meta": {
+    "created": 1793387293904,
+    "updated": 1793387293904
+  }
+}
