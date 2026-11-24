@@ -249,7 +249,7 @@ vi.mock('../formatting', () => ({
 
 // Mock config
 vi.mock('../config', () => ({
-  DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES: 38 * 1024,
+  DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES: 28 * 1024,
   loadConfig: vi.fn(() => ({ ...mockConfig })),
   getConfigSetting: vi.fn((key: string) => {
     if (key === 'colors' || key === 'theme') return mockConfig[key];
@@ -1071,7 +1071,7 @@ describe('MCP Server Tools', () => {
       expect(text).toContain('[tier: essential');
     });
 
-    it('defaults to standard tier excluding arch', async () => {
+    it('defaults to standard tier — arch.* present as index lines (#188)', async () => {
       Object.assign(mockData, {
         project: { name: 'test' },
         arch: { pattern: 'MVC' },
@@ -1081,8 +1081,9 @@ describe('MCP Server Tools', () => {
       const text = result.content[0].text;
       expect(text).toContain('project.name: test');
       expect(text).toContain('context.note: important');
-      expect(text).not.toContain('arch.pattern');
-      expect(text).toContain('[tier: standard');
+      expect(text).toContain('arch.pattern: MVC');
+      expect(text).toContain('[tier: standard (3 entries: 1 in full, 2 indexed)');
+      expect(text).toContain('reverie_get <key>');
     });
 
     it('full tier includes everything', async () => {
@@ -1132,7 +1133,7 @@ describe('MCP Server Tools', () => {
       const result = await toolHandlers['reverie_context']({});
       const text = result.content[0].text;
       expect(text).toContain('myteam.workflow: agile');
-      expect(text).not.toContain('arch.pattern');
+      expect(text).toContain('arch.pattern: MVC');
     });
 
     it('includes aliases regardless of tier', async () => {
@@ -1498,6 +1499,10 @@ describe('MCP Server Tools', () => {
       const result = await toolHandlers['reverie_context']({});
       expect(result.content[0].text).toContain('[trimmed:');
       expect(result.content[0].text).toContain('files.*');
+      // #212: entries lead, notices sit at the end ahead of the tier footer.
+      const text = result.content[0].text as string;
+      expect(text.indexOf('[trimmed:')).toBeGreaterThan(text.indexOf('project.name: reverie'));
+      expect(text.indexOf('[trimmed:')).toBeLessThan(text.indexOf('[tier:'));
 
       expect(logAuditMock).toHaveBeenCalledWith(
         expect.objectContaining({

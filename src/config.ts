@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { getConfigFilePath, ensureDataDirectoryExists } from './utils/paths';
 import { atomicWriteFileSync } from './utils/atomicWrite';
+import { DEFAULT_BOOTSTRAP_GIST_CHARS } from './utils/contextBudget';
 
 // Define the type for configuration
 interface Config {
@@ -9,23 +10,50 @@ interface Config {
   max_backups: number;
   import_max_bytes: number;
   bootstrap_max_response_bytes: number;
+  bootstrap_gist_chars: number;
 }
 
 const VALID_THEMES = ['default', 'dark', 'light'] as const;
-export const VALID_CONFIG_KEYS = ['colors', 'theme', 'max_backups', 'import_max_bytes', 'bootstrap_max_response_bytes'] as const;
+export const VALID_CONFIG_KEYS = ['colors', 'theme', 'max_backups', 'import_max_bytes', 'bootstrap_max_response_bytes', 'bootstrap_gist_chars'] as const;
 
 // 50 MB — a generous ceiling for any realistic Reverie store. Real stores
 // are KB-scale; this catches pathological inputs (misplaced heap dump,
 // adversarial payload) before they OOM the process.
 const DEFAULT_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 
-// 38 KB — reverie_context payload cap before tier degradation kicks in
-// (#100). Sized to keep a budget-filling bootstrap under the ~10k-token
-// threshold where MCP clients warn about large responses (#124): at the
-// observed ~4 bytes/token, 38KB ≈ 9.5k tokens with headroom for the
-// next_session banner and instruction block. tier:"full" bypasses the
+// 28 KB — reverie_context payload cap before demotion/shedding kicks in
+// (#100, #212). Sized to the delivery channel, not the model: Claude Code's
+// Bash tool inlines at most 30,000 characters of output (bashOutputMaxChars
+// default) and saves anything larger to a file the model sees as a 2 KB
+// preview — a bootstrap over that limit is persisted, not read. Bytes ≥
+// chars, so 28 KB stays under the limit with headroom for the overhead
+// estimate's slack. Token cost depends on content density: ~2.35 chars per
+// token measured on an identifier-heavy store, ~4 on prose, so 28 KB ≈
+// 7–12k tokens. The MCP persistence threshold is bracketed (19–50 KB), not
+// measured; lower again if it lands under this. tier:"full" bypasses the
 // cap; users opted in.
-export const DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES = 38 * 1024;
+export const DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES = 28 * 1024;
+
+// Index-line gist length (#188): characters of an entry's first line shown
+// on the bootstrap front page before the "… [+N]" marker. The default lives
+// in contextBudget.ts next to the gist function; re-exported for config
+// consumers.
+export { DEFAULT_BOOTSTRAP_GIST_CHARS };
+
+// Budget defaults that loadConfig itself persisted on first run — 50KB
+// through v1.1.x, 38KB through v1.3.0. Every install from before #212
+// carries one of them as an explicit value in config.json, so a changed
+// default would never reach it (the 1.2.0 50KB→38KB change didn't: stores
+// created under 1.0/1.1 kept running at 51200). Treat them as unset and
+// apply the current default. Side effect: these two exact values can't be
+// chosen explicitly — setConfigSetting warns; pick a neighbouring value.
+const LEGACY_PERSISTED_BUDGET_DEFAULTS: ReadonlySet<number> = new Set([50 * 1024, 38 * 1024]);
+
+function resolveBudgetSetting(raw: unknown): number {
+  if (typeof raw !== 'number' || raw <= 0) return DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES;
+  if (LEGACY_PERSISTED_BUDGET_DEFAULTS.has(raw)) return DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES;
+  return raw;
+}
 
 // Default configuration
 const defaultConfig: Config = {
@@ -34,6 +62,7 @@ const defaultConfig: Config = {
   max_backups: 10,
   import_max_bytes: DEFAULT_IMPORT_MAX_BYTES,
   bootstrap_max_response_bytes: DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES,
+  bootstrap_gist_chars: DEFAULT_BOOTSTRAP_GIST_CHARS,
 };
 
 // Mtime-based cache for config
@@ -81,9 +110,10 @@ export function loadConfig(): Config {
       import_max_bytes: typeof config.import_max_bytes === 'number' && config.import_max_bytes > 0
         ? config.import_max_bytes
         : defaultConfig.import_max_bytes,
-      bootstrap_max_response_bytes: typeof config.bootstrap_max_response_bytes === 'number' && config.bootstrap_max_response_bytes > 0
-        ? config.bootstrap_max_response_bytes
-        : defaultConfig.bootstrap_max_response_bytes,
+      bootstrap_max_response_bytes: resolveBudgetSetting(config.bootstrap_max_response_bytes),
+      bootstrap_gist_chars: typeof config.bootstrap_gist_chars === 'number' && Number.isInteger(config.bootstrap_gist_chars) && config.bootstrap_gist_chars > 0
+        ? config.bootstrap_gist_chars
+        : defaultConfig.bootstrap_gist_chars,
     };
 
     configCache = result;
@@ -163,7 +193,18 @@ export function setConfigSetting(key: string, value: string | boolean): void {
       console.error(`Invalid bootstrap_max_response_bytes: '${value}'. Must be a positive integer (bytes).`);
       return;
     }
+    if (LEGACY_PERSISTED_BUDGET_DEFAULTS.has(num)) {
+      console.error(`Note: ${num} is a former default that older versions wrote to config.json; it is treated as unset (effective: ${DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES}). Pick a neighbouring value to pin it.`);
+    }
     config.bootstrap_max_response_bytes = num;
+    saveConfig(config);
+  } else if (key === 'bootstrap_gist_chars') {
+    const num = Number(value);
+    if (!Number.isInteger(num) || num <= 0) {
+      console.error(`Invalid bootstrap_gist_chars: '${value}'. Must be a positive integer (characters).`);
+      return;
+    }
+    config.bootstrap_gist_chars = num;
     saveConfig(config);
   } else {
     console.error(`Unknown configuration key: ${key}`);

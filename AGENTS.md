@@ -15,7 +15,7 @@ Never hand-edit `.reverie/*.json` directly — that bypasses audit logging, alia
 
 ## Bootstrap
 
-1. Load all stored project knowledge first — `rvr context`.
+1. Load the front page first — `rvr context`: pinned namespaces in full, a one-line gist for every other entry. Open an entry with `rvr get <key>` when its gist is relevant to the task.
 2. If this is a git repo, run `gh issue list --state open` and read any issue related to the user's request before coding.
 
 ## Before exploring code

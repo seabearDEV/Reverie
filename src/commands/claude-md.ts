@@ -32,7 +32,7 @@ Never hand-edit \`.reverie/*.json\` directly — that bypasses audit logging, al
 
 ## Bootstrap
 
-1. Load all stored project knowledge first — \`reverie_context\` (MCP) or \`rvr context\` (CLI).
+1. Load the front page first — \`reverie_context\` (MCP) or \`rvr context\` (CLI): pinned namespaces in full, a one-line gist for every other entry. Open an entry (\`reverie_get\` / \`rvr get <key>\`) when its gist is relevant to the task.
 2. If this is a git repo, run \`gh issue list --state open\` and read any issue related to the user's request before coding.
 
 ## Before exploring code

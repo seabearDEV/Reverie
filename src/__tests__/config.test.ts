@@ -84,6 +84,21 @@ describe('Config', () => {
       expect(config.theme).toBe('default');
     });
 
+    it('treats the budget defaults earlier versions persisted (50KB, 38KB) as unset (#212)', () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      for (const legacy of [50 * 1024, 38 * 1024]) {
+        clearConfigCache();
+        (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({ bootstrap_max_response_bytes: legacy }));
+        expect(loadConfig().bootstrap_max_response_bytes).toBe(28 * 1024);
+      }
+    });
+
+    it('honors any other explicit budget', () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({ bootstrap_max_response_bytes: 40000 }));
+      expect(loadConfig().bootstrap_max_response_bytes).toBe(40000);
+    });
+
     it('does not let caller mutation pollute defaultConfig on a fresh-install ENOENT path', () => {
       // Regression test for the bug Copilot caught in PR #66 review:
       // loadConfig() was returning `defaultConfig` BY REFERENCE in the
@@ -260,8 +275,8 @@ describe('Config', () => {
       const first = loadConfig();
       const second = loadConfig();
 
-      expect(first).toEqual({ colors: false, theme: 'dark', max_backups: 10, import_max_bytes: 50 * 1024 * 1024, bootstrap_max_response_bytes: 38 * 1024 });
-      expect(second).toEqual({ colors: false, theme: 'dark', max_backups: 10, import_max_bytes: 50 * 1024 * 1024, bootstrap_max_response_bytes: 38 * 1024 });
+      expect(first).toEqual({ colors: false, theme: 'dark', max_backups: 10, import_max_bytes: 50 * 1024 * 1024, bootstrap_max_response_bytes: 28 * 1024, bootstrap_gist_chars: 160 });
+      expect(second).toEqual({ colors: false, theme: 'dark', max_backups: 10, import_max_bytes: 50 * 1024 * 1024, bootstrap_max_response_bytes: 28 * 1024, bootstrap_gist_chars: 160 });
       expect(fs.readFileSync).toHaveBeenCalledTimes(1);
     });
 
