@@ -1,4 +1,5 @@
-import { recordWrite, formatWriteAmpWarning, clearWriteAmpState } from '../utils/writeAmp';
+import { recordWrite, formatWriteAmpWarning, clearWriteAmpState, isWriteAmpExempt } from '../utils/writeAmp';
+import { HANDOFF_KEY } from '../utils/handoff';
 
 beforeEach(() => {
   clearWriteAmpState();
@@ -80,6 +81,33 @@ describe('recordWrite', () => {
     clearWriteAmpState();
     const r = recordWrite('s1', 'k', 1_002_000);
     expect(r).toBeNull();
+  });
+});
+
+describe('exempt keys', () => {
+  it('the handoff never trips, however often it is rewritten', () => {
+    for (let i = 0; i < 6; i++) {
+      expect(recordWrite('s1', HANDOFF_KEY, 1_000_000 + i * 1_000)).toBeNull();
+    }
+  });
+
+  it('the exemption is the exact key, not a prefix or a namespace', () => {
+    expect(isWriteAmpExempt(HANDOFF_KEY)).toBe(true);
+    for (const key of ['context.next_sessionX', 'context.next_session.draft', 'context', 'context.handoff', 'next_session']) {
+      expect(isWriteAmpExempt(key)).toBe(false);
+      clearWriteAmpState();
+      recordWrite('s1', key, 1_000_000);
+      recordWrite('s1', key, 1_001_000);
+      expect(recordWrite('s1', key, 1_002_000)?.count).toBe(3);
+    }
+  });
+
+  it('handoff writes do not disturb the counters of other keys in the session', () => {
+    recordWrite('s1', 'files.x', 1_000_000);
+    recordWrite('s1', HANDOFF_KEY, 1_000_500);
+    recordWrite('s1', 'files.x', 1_001_000);
+    recordWrite('s1', HANDOFF_KEY, 1_001_500);
+    expect(recordWrite('s1', 'files.x', 1_002_000)?.count).toBe(3);
   });
 });
 

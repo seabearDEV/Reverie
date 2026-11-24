@@ -170,3 +170,13 @@ These ship in one PR because they share the telemetry/audit field extension surf
 8. **LLM_INSTRUCTIONS** update — point at both new behaviors so agents understand the warning surface and the trimmed-payload notice. (Mirrors what #99 did for refusal.)
 
 After this lands, **#103** (tier semantics docs) becomes unblocked — both #100's budget contract and the unchanged `tier: "full"` semantics are documented, and the docs can describe the relationship between tiers, the budget knob, and the write-amp warning.
+
+## Addendum: the handoff is exempt (v1.4.0)
+
+`context.next_session` is not counted and never warns. The guard exists to catch a seed being used as scratch space; the handoff is ephemeral state that is replaced, not accumulated, and `conventions.seedDensity` — the entry the warning points at — already carves it out (#91). The case stayed rare while only MCP sessions carried a window. Session detection (#207) put every Claude Code CLI session behind the guard, and a session that keeps its handoff current rewrites it more than twice in 30 minutes.
+
+- **One key, exact match.** `isWriteAmpExempt` in `src/utils/writeAmp.ts` holds `HANDOFF_KEY` and nothing else: no prefix match, no `context.*`, no config knob. A second exempt key needs the same argument the handoff has.
+- **Checked in two places.** `recordWrite` covers the MCP server and the per-process CLI path. `recordCliWrite` checks again because a shared CLI session runs `pruneAndRecord` against the state file directly, and that function takes no key. The early return there also saves the locked read-modify-write of the state file.
+- **Resolved key.** Both call sites pass the alias-resolved key, so a handoff written through an alias is exempt too.
+- **Nothing is recorded.** An exempt write leaves no timestamps, so `writeAmpWarning` / `writeAmpCount` never appear on its telemetry or audit rows. The rewrite frequency of the handoff is still visible in the audit log, like any other write.
+

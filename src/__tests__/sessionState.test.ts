@@ -8,6 +8,7 @@ import { clearDataDirectoryCache } from '../utils/paths';
 import { loadSessionState, pruneStaleSessions, recordCliWrite, trackCliMissPath } from '../utils/sessionState';
 import { resetSessionIdForTests, getSessionId, isSharedSession, isSessionDetected, deriveSession } from '../utils/session';
 import { clearWriteAmpState } from '../utils/writeAmp';
+import { HANDOFF_KEY } from '../utils/handoff';
 
 let dataDir: string;
 const originalDataDir = process.env.RVR_DATA_DIR;
@@ -103,6 +104,29 @@ describe('recordCliWrite (#119/#101)', () => {
     expect(recordCliWrite('files.a', t0 + 1000)).toBeNull();
     // Third write 31 minutes later: first two are out of window.
     expect(recordCliWrite('files.a', t0 + 31 * 60 * 1000)).toBeNull();
+  });
+
+  it('the handoff is exempt in a shared session: no warning, nothing recorded, no state file', () => {
+    // The shared-session path does its own window math against the state
+    // file, so the exemption in recordWrite alone would not reach it.
+    process.env.RVR_SESSION = 'sess-handoff';
+    resetSessionIdForTests();
+    const t0 = Date.now();
+    for (let i = 0; i < 5; i++) expect(recordCliWrite(HANDOFF_KEY, t0 + i * 1000)).toBeNull();
+    expect(fs.existsSync(path.join(sessionsDir(), 'sess-handoff.json'))).toBe(false);
+
+    // An ordinary key in the same session still trips, and the handoff is
+    // absent from the persisted window.
+    expect(recordCliWrite('files.a', t0 + 6000)).toBeNull();
+    expect(recordCliWrite(HANDOFF_KEY, t0 + 6500)).toBeNull();
+    expect(recordCliWrite('files.a', t0 + 7000)).toBeNull();
+    expect(recordCliWrite('files.a', t0 + 8000)?.count).toBe(3);
+    expect(Object.keys(loadSessionState('sess-handoff').writes)).toEqual(['files.a']);
+  });
+
+  it('the handoff is exempt without a shared session too', () => {
+    const t0 = Date.now();
+    for (let i = 0; i < 5; i++) expect(recordCliWrite(HANDOFF_KEY, t0 + i * 1000)).toBeNull();
   });
 
   it('treats a corrupt session file as empty instead of crashing', () => {
@@ -294,10 +318,16 @@ describe('a detected harness session drives the CLI guardrails (#207)', () => {
 
   it('trips the write-amp threshold on the 3rd write, in a state file named by the harness id', () => {
     const t0 = Date.now();
-    expect(recordCliWrite('context.next_session', t0)).toBeNull();
-    expect(recordCliWrite('context.next_session', t0 + 1000)).toBeNull();
-    expect(recordCliWrite('context.next_session', t0 + 2000)?.count).toBe(3);
+    expect(recordCliWrite('project.inFlight', t0)).toBeNull();
+    expect(recordCliWrite('project.inFlight', t0 + 1000)).toBeNull();
+    expect(recordCliWrite('project.inFlight', t0 + 2000)?.count).toBe(3);
     expect(fs.existsSync(path.join(sessionsDir(), `${HARNESS_ID}.json`))).toBe(true);
+  });
+
+  it('the handoff does not trip under a detected session', () => {
+    const t0 = Date.now();
+    for (let i = 0; i < 5; i++) expect(recordCliWrite(HANDOFF_KEY, t0 + i * 1000)).toBeNull();
+    expect(fs.existsSync(path.join(sessionsDir(), `${HARNESS_ID}.json`))).toBe(false);
   });
 
   it('miss-path tracking is live: a read miss leaves an open window', () => {

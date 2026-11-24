@@ -5,8 +5,22 @@
 // window math against the on-disk session state file (#119, sessionState.ts)
 // via pruneAndRecord below.
 
+import { HANDOFF_KEY } from './handoff';
+
 const WINDOW_MS = 30 * 60 * 1000;
 const THRESHOLD = 3;
+
+// Keys the guard never counts. The warning asks whether an entry has
+// stabilized, and the handoff is the one entry rewritten by convention as a
+// session progresses — it is replaced, not accumulated, so the question does
+// not apply. Once CLI sessions were detected (#207) every third handoff
+// rewrite warned. Exact keys only: no prefixes, no config knob.
+const EXEMPT_KEYS: ReadonlySet<string> = new Set([HANDOFF_KEY]);
+
+/** True for keys the write-amp guard neither counts nor warns about. */
+export function isWriteAmpExempt(key: string): boolean {
+  return EXEMPT_KEYS.has(key);
+}
 
 // sessionId → key → timestamps[] (ms epoch). Per-MCP-server-process state,
 // cleared on server restart. Keys are lazily evicted when their most recent
@@ -40,11 +54,14 @@ export function pruneAndRecord(prior: number[], now: number): { timestamps: numb
  * descriptor when the threshold trips, or null when no warning is warranted.
  *
  * The threshold trips on the 3rd+ write within the same session and the
- * 30-min sliding window. Different sessions get fresh counters.
+ * 30-min sliding window. Different sessions get fresh counters. Exempt keys
+ * (see isWriteAmpExempt) are not recorded at all.
  *
  * `now` is injected for testability (default: Date.now()).
  */
 export function recordWrite(sessionId: string, key: string, now = Date.now()): WriteAmpResult | null {
+  if (isWriteAmpExempt(key)) return null;
+
   let perSession = sessionWrites.get(sessionId);
   if (!perSession) {
     perSession = new Map();

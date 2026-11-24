@@ -246,6 +246,44 @@ describe('CLI JSON envelope (#117)', () => {
     expect(rows[0].sessionDetected).toBeUndefined();
   });
 
+  // ── The handoff is exempt from the write-amp guard ───────────────────
+  // context.next_session is rewritten as a session progresses, by design.
+  // Once sessions were detected (#207) the convention tripped the guard on
+  // every third rewrite, with advice ("has the entry stabilized?") that does
+  // not apply to it.
+
+  const ampWarnings = (stdout: string) =>
+    ((parse(stdout).warnings ?? []) as { code: string }[]).filter(w => w.code === 'WRITE_AMP').length;
+
+  it('the handoff never trips WRITE_AMP, under an explicit or a detected session', () => {
+    for (const env of [
+      { RVR_SESSION: 'handoff-exempt' } as Record<string, string>,
+      { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: '7a1d9c3e-aaaa-4bbb-8ccc-ddddeeeeffff' } as Record<string, string>,
+    ]) {
+      for (let i = 1; i <= 4; i++) {
+        const r = run(`--json set context.next_session "note ${i}"`, env);
+        expect(parse(r.stdout).ok).toBe(true);
+        expect(ampWarnings(r.stdout)).toBe(0);
+      }
+      // Same session, an ordinary key: the guard is still live.
+      run('--json set handoff.control "v1"', env);
+      run('--json set handoff.control "v2"', env);
+      expect(ampWarnings(run('--json set handoff.control "v3"', env).stdout)).toBe(1);
+    }
+  });
+
+  it('a handoff written through an alias is exempt too (the guard sees the resolved key)', () => {
+    const env = { RVR_SESSION: 'handoff-alias' };
+    run('set context.next_session "seed"', env);
+    run('alias set ho context.next_session', env);
+    for (let i = 1; i <= 3; i++) {
+      const r = run(`--json set ho "aliased note ${i}"`, env);
+      expect(parse(r.stdout).ok).toBe(true);
+      expect(ampWarnings(r.stdout)).toBe(0);
+    }
+    expect(parse(run('--json get context.next_session').stdout).result).toEqual({ 'context.next_session': 'aliased note 3' });
+  });
+
   // ── #120 guard: no result-less ok envelopes, no stdout pollution ───────
   // Every successful JSON-mode command must carry a `result` (an ok envelope
   // with no result means the handler's output was silently dropped — the

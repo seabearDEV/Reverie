@@ -15,7 +15,7 @@ import { getDataDirectory } from './paths';
 import { getSessionId, isSharedSession } from './session';
 import { atomicWriteFileSync } from './atomicWrite';
 import { withFileLock } from './fileLock';
-import { recordWrite, pruneAndRecord, WriteAmpResult } from './writeAmp';
+import { recordWrite, pruneAndRecord, isWriteAmpExempt, WriteAmpResult } from './writeAmp';
 import { MissWindowTracker, MissPath, OpenMissWindow } from './telemetry';
 import { debug } from './debug';
 
@@ -143,9 +143,13 @@ export function pruneStaleSessions(now = Date.now()): void {
 /**
  * Write-amp guard for CLI `set` (#119). Shared session → disk-backed window;
  * otherwise the in-memory per-process guard (never trips for a one-shot CLI
- * process, preserving pre-#119 behavior).
+ * process, preserving pre-#119 behavior). An exempt key (the handoff) is
+ * checked here as well as in recordWrite: the shared-session path goes
+ * straight to pruneAndRecord, which is key-agnostic, and an exempt write
+ * should not cost a locked read-modify-write of the state file.
  */
 export function recordCliWrite(key: string, now = Date.now()): WriteAmpResult | null {
+  if (isWriteAmpExempt(key)) return null;
   if (!isSharedSession()) {
     return recordWrite(getSessionId(), key, now);
   }

@@ -1488,6 +1488,21 @@ describe('MCP Server Tools', () => {
       expect(audit.writeAmpWarning).toBeUndefined();
     });
 
+    it('the handoff key is exempt: repeated reverie_set never warns or signals', async () => {
+      for (let i = 1; i <= 4; i++) {
+        logAuditMock.mockClear();
+        logToolCallMock.mockClear();
+        const result = await toolHandlers['reverie_set']({ key: 'context.next_session', value: `note ${i}` });
+        expect(result.content[0].text).toContain('Set: context.next_session');
+        expect(result.content[0].text).not.toContain('warning:');
+        const audit = logAuditMock.mock.calls[logAuditMock.mock.calls.length - 1][0] as Record<string, unknown>;
+        expect(audit.writeAmpWarning).toBeUndefined();
+        expect(audit.writeAmpCount).toBeUndefined();
+        const signals = logToolCallMock.mock.calls[logToolCallMock.mock.calls.length - 1][4] as Record<string, unknown> | undefined;
+        expect(signals?.writeAmpWarning).toBeUndefined();
+      }
+    });
+
     it('reverie_context emits degraded + shedNamespaces when over budget', async () => {
       mockConfig.bootstrap_max_response_bytes = 200;
       const big = 'x'.repeat(300);
