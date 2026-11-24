@@ -17,6 +17,7 @@ vi.mock('../utils/crypto', () => ({
 
 import { logAudit, loadAuditLog, queryAuditLog, sanitizeValue, sanitizeParams, AuditEntry } from '../utils/audit';
 import { clearAgentIdentityCache } from '../utils/agentIdentity';
+import { resetSessionIdForTests } from '../utils/session';
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-audit-'));
@@ -26,7 +27,10 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
   delete process.env.RVR_AGENT_NAME;
+  delete process.env.RVR_SESSION;
+  delete process.env.CLAUDE_CODE_SESSION_ID;
   clearAgentIdentityCache();
+  resetSessionIdForTests();
   mockProjectFile = null;
 });
 
@@ -126,6 +130,28 @@ describe('logAudit', () => {
     const entries = loadAuditLog();
     expect(entries[0].agent).toBe('claude-code');
     expect(entries[0].agentDetected).toBe(true);
+  });
+
+  it('tags rows whose session id was detected from the harness (#207)', async () => {
+    process.env.CLAUDECODE = '1';
+    process.env.CLAUDE_CODE_SESSION_ID = '0b7c2f0e-1111-4222-8333-444455556666';
+    resetSessionIdForTests();
+    await logAudit({ src: 'cli', tool: 'reverie_get', op: 'read', success: true });
+    const entries = loadAuditLog();
+    expect(entries[0].session).toBe('0b7c2f0e-1111-4222-8333-444455556666');
+    expect(entries[0].sessionDetected).toBe(true);
+  });
+
+  it('does not tag an explicit RVR_SESSION or a per-process session as detected (#207)', async () => {
+    process.env.RVR_SESSION = 'explicit';
+    resetSessionIdForTests();
+    await logAudit({ src: 'cli', tool: 'reverie_get', op: 'read', success: true });
+    delete process.env.RVR_SESSION;
+    resetSessionIdForTests();
+    await logAudit({ src: 'cli', tool: 'reverie_get', op: 'read', success: true });
+    const entries = loadAuditLog();
+    expect(entries.map(e => e.sessionDetected)).toEqual([undefined, undefined]);
+    expect(entries.some(e => e.session === 'explicit')).toBe(true);
   });
 
   it('records project directory from findProjectFile', async () => {

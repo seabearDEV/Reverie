@@ -333,9 +333,9 @@ export async function withCliInstrumentation<T>(
       entryCount = (r.dataCount ?? 0) + (r.aliasCount ?? 0);
     }
 
-    // Write-amp guard on CLI set (#119/#101). Disk-backed when RVR_SESSION
-    // bridges invocations into one session; in-memory (never trips for a
-    // one-shot process) otherwise. The write itself already succeeded —
+    // Write-amp guard on CLI set (#119/#101). Disk-backed when a shared
+    // session (RVR_SESSION, or one detected from the harness — #207) bridges
+    // invocations; in-memory (never trips for a one-shot process) otherwise. The write itself already succeeded —
     // the warning is advisory and must never fail the command, so the
     // whole block is best-effort.
     let writeAmp: WriteAmpResult | null = null;
@@ -408,8 +408,8 @@ export async function withCliInstrumentation<T>(
       ...signals,
     }, true);
 
-    // Miss-path tracking on CLI reads (#119). Only meaningful when
-    // RVR_SESSION bridges invocations (trackCliMissPath no-ops otherwise —
+    // Miss-path tracking on CLI reads (#119). Only meaningful when a shared
+    // session bridges invocations (trackCliMissPath no-ops otherwise —
     // a window that dies with a one-shot process would log pure noise).
     try {
       const closedPaths = trackCliMissPath({

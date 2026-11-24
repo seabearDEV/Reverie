@@ -355,14 +355,20 @@ rvr config set bootstrap_gist_chars 120              # shorter index lines (the 
 
 For test/integration workflows, `RVR_BOOTSTRAP_MAX_BYTES` and `RVR_BOOTSTRAP_GIST_CHARS` override the config.
 
-## CLI agent sessions (`RVR_SESSION`)
+## CLI agent sessions (`RVR_SESSION`, harness detection)
 
-The CLI is one process per invocation, so session-scoped guardrails have nothing to attach to by default. Agents driving Reverie through `rvr` should export `RVR_SESSION=<any-id>` once at session start: every invocation sharing the id counts as one session, with state persisted to `~/.reverie/store/sessions/<id>.json` (TTL-pruned after 24h). This enables the same guardrails MCP sessions get ([#119](https://github.com/seabearDEV/reverie/issues/119)):
+The CLI is one process per invocation, so session-scoped guardrails need an id that spans invocations. It is resolved in this order:
+
+1. **`RVR_SESSION=<any-id>`** — explicit, always wins.
+2. **The harness's own session id** ([#207](https://github.com/seabearDEV/reverie/issues/207)) — when the environment identifies a harness that exports one. Today that is Claude Code (`CLAUDE_CODE_SESSION_ID`, honored only alongside the Claude Code fingerprint). Nothing to configure; telemetry and audit rows carry `sessionDetected: true`.
+3. **Otherwise** each invocation is its own session and no state files are written. Agents on a harness with no detected session variable (Codex, for now) should still export `RVR_SESSION` once at session start.
+
+With a shared id (1 or 2), every invocation counts as one session, with state persisted to `~/.reverie/sessions/<id>.json` (TTL-pruned after 24h). This enables the same guardrails MCP sessions get ([#119](https://github.com/seabearDEV/reverie/issues/119)):
 
 - **Write-amplification warnings** (#101): the 3rd+ write of the same key within 30 minutes adds a `WRITE_AMP` warning to the envelope's `warnings[]` (with `count`) and to stderr in human mode.
 - **Miss-path tracking**: read misses open exploration windows that close on writeback/hit across invocations, feeding the same `reverie_stats` calibration as MCP sessions.
 
-Unset, each invocation is its own session — no state files are written.
+The write-amplification guard has no exempt keys: a handoff (`context.next_session`) rewritten three times inside 30 minutes warns like any other entry. The warning is advisory and never fails the write.
 
 ## Validation
 

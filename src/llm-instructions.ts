@@ -39,7 +39,7 @@ STRUCTURED OUTPUT (for agents):
 - On failure, "ok" is false, "error.code" is from a frozen set (${ERROR_CODES.join(', ')}), and the process exits non-zero. Branch on "error.code", not on prose.
 - Diagnostics and prompts go to stderr; stdout carries only the one envelope. Run \`rvr manifest --json\` to discover every command, flag, and the MCP-tool↔CLI-command map.
 - One exception: \`rvr audit --follow --json\` is an unbounded watch stream — it emits raw NDJSON audit rows (one JSON object per line, no envelope) until interrupted. Every single-shot command keeps the envelope contract.
-- Set \`RVR_SESSION=<any-id>\` once per agent session so separate \`rvr\` invocations count as one session: write-amplification warnings (3rd+ write of a key in 30min) land in \`warnings[]\` with code WRITE_AMP, and miss-path telemetry works across invocations — the same session guardrails MCP agents get.
+- Separate \`rvr\` invocations count as one session when a session id is known — Claude Code's is detected automatically; elsewhere set \`RVR_SESSION=<any-id>\` once per agent session. Then write-amplification warnings (3rd+ write of a key in 30min) land in \`warnings[]\` with code WRITE_AMP, and miss-path telemetry works across invocations — the same session guardrails MCP agents get.
 
 HOW TO USE:
 - At session start, run \`rvr context\`: pinned namespaces (project/commands/conventions) in full plus a one-line gist per other entry — open any entry with \`rvr get <key>\` when its gist is relevant.

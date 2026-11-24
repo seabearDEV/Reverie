@@ -1,0 +1,7 @@
+{
+  "value": "Session id resolution (src/utils/session.ts, deriveSession — one pure function decides id + shared + detected together): RVR_SESSION → the harness's own session var when its env fingerprint matches (#207; Claude Code: CLAUDE_CODE_SESSION_ID) → per-process random. A shared id (explicit or detected) switches on the disk-backed CLI guardrails in sessionState.ts: write-amp window and miss-path tracking, one state file per session under <dataDir>/sessions/.\n\nGOTCHAS:\n- Detect the HARNESS from the env (detectHarness), never from the resolved agent: deriveAgentIdentity returns early when RVR_AGENT_NAME is set, and the fleet sets it everywhere — a fallback built on the agent name never fires on a fleet machine.\n- The suite runs inside Claude Code (no test job on PRs). _setup.ts scrubs HARNESS_SESSION_VARS; without it 8 tests fail and a session file leaks into the shared tmp data dir. Spawns inherit the scrub only through { ...process.env } — an env-less spawn does not.\n- Adding a harness: add sessionVar to its FINGERPRINTS row; the scrub and detection follow. Codex's variable is unknown.\n- The write-amp guard has no exempt keys — context.next_session warns on its 3rd write in 30 min.\n- Unverified: whether Claude Code subagents share the parent's id (CLAUDE_CODE_CHILD_SESSION exists) and whether a resumed session keeps it.\n- Contended session-file lock waits at most ~31ms, then that call skips its bookkeeping; the command never fails.",
+  "meta": {
+    "created": 1795542177078,
+    "updated": 1795542177078
+  }
+}

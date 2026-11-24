@@ -1,7 +1,7 @@
 import path from 'path';
 import { getDataDirectory, findProjectFile } from './paths';
 import { isEncrypted } from './crypto';
-import { getSessionId } from './session';
+import { getSessionId, isSessionDetected } from './session';
 import { createJsonlLog } from './jsonl';
 import { isTestRun } from './testTraffic';
 import { getProjectId } from './projectId';
@@ -26,6 +26,8 @@ export interface AuditEntry {
   agent?: string | undefined;
   // Agent came from env fingerprinting, not explicit RVR_AGENT_NAME (#138)
   agentDetected?: boolean | undefined;
+  // Session id came from the harness's own session variable, not RVR_SESSION (#207)
+  sessionDetected?: boolean | undefined;
   duration?: number | undefined;
   aliasResolved?: string | undefined;
   // Token-efficiency metrics
@@ -112,6 +114,7 @@ export function logAudit(partial: Omit<AuditEntry, 'ts' | 'session' | 'agent' | 
     ...partial,
     ts: Date.now(),
     session: getSessionId(),
+    ...(isSessionDetected() && { sessionDetected: true }),
     project: projectDir,
     ...(projectDir !== undefined && { projectId: getProjectId(projectDir) }),
     agent: identity.agent,

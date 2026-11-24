@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach } from 'bun:test';
 import { resetOutput } from '../utils/output';
+import { HARNESS_SESSION_VARS } from '../utils/agentIdentity';
 
 if (!process.env.RVR_DATA_DIR) {
   process.env.RVR_DATA_DIR = path.join(os.tmpdir(), 'reverie-bun');
@@ -14,6 +15,15 @@ if (!process.env.RVR_DATA_DIR) {
 // suite writes are tagged test:true and excluded from stats by default.
 // Spawn suites inherit this via process.env spreads into child env.
 process.env.RVR_TEST = '1';
+
+// #207: the suite usually runs inside an agent harness (no test job runs on
+// PRs), where the harness's session variable is set. Left in place, every
+// in-process test and every spawned child would adopt one shared session and
+// switch on the disk-backed session guardrails — the suite would behave
+// differently under Claude Code than under CI. Scrub it; tests of the
+// detection set it explicitly. Spawn suites inherit the scrub through their
+// `{ ...process.env }` spreads (an env-less spawn would not — always pass env).
+for (const name of HARNESS_SESSION_VARS) delete process.env[name];
 
 // printError() in src/commands/helpers.ts sets process.exitCode = 1 to
 // propagate failure to wrapping shell scripts. Several tests exercise

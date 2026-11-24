@@ -1,9 +1,10 @@
 // #119 (WS3): on-disk per-session state bridging the MCP server's
-// session-scoped guardrails to the per-invocation CLI. When RVR_SESSION is
-// set, every CLI invocation with the same id reads/updates one state file —
-// the write-amp window (#101) and miss-path tracking work across processes
-// exactly as they do across calls inside one MCP server process. When
-// RVR_SESSION is unset there is nothing to bridge: write-amp falls back to
+// session-scoped guardrails to the per-invocation CLI. When a shared session
+// id is in effect — RVR_SESSION, or a harness session detected from the env
+// (#207, see session.ts) — every CLI invocation with the same id
+// reads/updates one state file: the write-amp window (#101) and miss-path
+// tracking work across processes exactly as they do across calls inside one
+// MCP server process. Without one there is nothing to bridge: write-amp falls back to
 // the in-memory per-process guard (which a one-shot CLI process never
 // trips — today's behavior) and miss-path tracking is skipped (a window
 // that dies with the process would log pure noise).
@@ -96,6 +97,11 @@ function updateSessionState<T>(
 ): T | undefined {
   try {
     fs.mkdirSync(sessionsDir(), { recursive: true, mode: 0o700 });
+    // First touch of this session: sweep expired files. Miss-path tracking
+    // writes a state file on a session's first read, so with detected
+    // harness sessions (#207) a session that never calls `set` leaves one
+    // too — the sweep cannot wait for recordCliWrite to trigger it.
+    if (!fs.existsSync(sessionFilePath(id))) pruneStaleSessions(now);
     return withFileLock(sessionFilePath(id), () => {
       const state = loadSessionState(id, now);
       const out = fn(state);
@@ -110,8 +116,8 @@ function updateSessionState<T>(
 
 /**
  * TTL prune: delete session files whose mtime is older than 24h. Called
- * opportunistically from the write paths; the dir holds one small file per
- * active agent session, so a readdir sweep is cheap.
+ * opportunistically — on a session's first touch and on every `set`; the dir
+ * holds one small file per active agent session, so a readdir sweep is cheap.
  */
 export function pruneStaleSessions(now = Date.now()): void {
   try {
@@ -156,7 +162,7 @@ export function recordCliWrite(key: string, now = Date.now()): WriteAmpResult | 
  * Miss-path tracking for CLI reads (#119). Rehydrates the tracker from the
  * session file, feeds it this call, persists the surviving windows, and
  * returns any closed paths for the caller to append to miss-paths.jsonl.
- * No-op without a shared session.
+ * No-op without a shared session (explicit or detected).
  */
 export function trackCliMissPath(call: {
   tool: string;
