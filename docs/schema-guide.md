@@ -247,7 +247,7 @@ If an entry needs multiple paragraphs, it's probably better as a doc file refere
 
 ## Putting it all together
 
-Here's a minimal `.reverie/` store for a new project, as the commands that create it:
+Here's what a minimal store holds for a new project. `rvr init` creates `.reverie/` and fills in what it can detect from the codebase; entries like these are then added with `rvr set`:
 
 ```bash
 rvr set project.name "myapp"
@@ -257,7 +257,7 @@ rvr set conventions.errors "All API errors return { error: string, code: number 
 rvr set context.auth "Auth middleware reads JWT from Authorization header, not cookies. Mobile clients can't use cookies."
 ```
 
-That leaves five entry files in `.reverie/`, one per key.
+Each command writes one entry file.
 
 Four namespaces, five entries, and an agent already knows: what the project is, how to build and test it, how errors should look, and why auth works the way it does. That's enough to be useful on day one. Add `arch.*`, `files.*`, and `deps.*` entries as you discover things worth keeping.
 

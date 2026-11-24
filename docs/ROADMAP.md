@@ -20,7 +20,7 @@ The steps and their order are in #186; the work is tracked under the [v1.4.0 —
 
 ### After that
 
-Later themes are soak-gated: each is picked from usage telemetry at the soak exit of the release before it, not pre-committed. The candidates, by area:
+What follows v1.4.0 is not committed here. The candidates, by area:
 
 #### Smarter Knowledge Management
 
