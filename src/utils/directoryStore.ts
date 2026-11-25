@@ -116,6 +116,11 @@ same entry), Reverie will not read that file and refuses to write over it.
 Keep one side whole — \`git checkout --ours -- <file>\` or
 \`git checkout --theirs -- <file>\` — then \`git add <file>\`.
 \`rvr lint\` lists every file in this state.
+
+A file that is not a conflict but simply invalid (truncated, emptied) is
+refused the same way. Restore it from version control or a backup, or
+delete it — the one case where removing a file here by hand is the fix:
+the tools will not remove a file they cannot read.
 `;
 
 /**
