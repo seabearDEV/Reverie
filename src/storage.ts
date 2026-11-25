@@ -1,5 +1,6 @@
 import { color } from './formatting';
 import { getNestedValue, setNestedValue, removeNestedValue, flattenObject } from './utils/objectPath';
+import { KeyCollisionError, assertKeyWritable, findCollidingPairs } from './utils/keyCollision';
 import { CodexData, CodexValue } from './types';
 import { debug } from './utils/debug';
 import { Scope, loadEntries, saveEntries, loadEntriesMerged, findProjectFile, saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta, getEntryFast, setEntryFast } from './store';
@@ -41,6 +42,18 @@ export function handleError(message: string, error: unknown, context?: string): 
       failJson('STORE_UNREADABLE', errorText);
     } else {
       recordErrorCode('STORE_UNREADABLE');
+      console.error(`${color.red('✗ ')}${errorText}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  // #216 / #224: a refused collision says what is in the way and what to do.
+  // It is a request to change, not a fault: INVALID_INPUT, no "Failed to…".
+  if (error instanceof KeyCollisionError) {
+    if (isJsonMode()) {
+      failJson(error.code, errorText);
+    } else {
       console.error(`${color.red('✗ ')}${errorText}`);
       process.exitCode = 1;
     }
@@ -195,6 +208,11 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
     debug(`setValue fast-path failed, falling through: ${String(err)}`);
   }
   const data = loadEntries(effectiveScope);
+  // #216 / #224: the fast path declined because another entry is in the way —
+  // one under this key, a leaf above it, or a key that differs only by case.
+  // Setting the value here would restructure the tree and remove that entry
+  // without a word. Refuse, naming it.
+  assertKeyWritable(data, key);
   setNestedValue(data, key, value);
   saveEntriesAndTouchMeta(data, key, effectiveScope);
 }
@@ -252,6 +270,7 @@ export function validateImportEntries(obj: Record<string, unknown>): void {
   const invalid: string[] = [];
   const masked: string[] = [];
   const nonString: string[] = [];
+  const leafKeys: string[] = [];
 
   function walk(node: Record<string, unknown>, prefix: string): void {
     for (const key of Object.getOwnPropertyNames(node)) {
@@ -266,6 +285,7 @@ export function validateImportEntries(obj: Record<string, unknown>): void {
         walk(value as Record<string, unknown>, fullKey);
       } else {
         if (!isValidEntryKey(fullKey)) invalid.push(fullKey);
+        leafKeys.push(fullKey);
         // Catch the [encrypted] sentinel that maskEncryptedValues writes on
         // export. Importing it would overwrite real ciphertext in the store
         // with the literal string, silently destroying every encrypted
@@ -298,6 +318,14 @@ export function validateImportEntries(obj: Record<string, unknown>): void {
   if (nonString.length > 0) {
     const list = nonString.map(k => JSON.stringify(k)).join(', ');
     throw new Error(`Import contains non-string leaf values at keys: ${list}. Entry values must be strings.`);
+  }
+  // #216: two keys in one file that differ only by case (or one the parent
+  // of the other once case is ignored) are one file on a case-insensitive
+  // filesystem — the second would replace the first.
+  const pairs = findCollidingPairs(leafKeys);
+  if (pairs.length > 0) {
+    const list = pairs.map(([a, b]) => `'${a}' and '${b}'`).join('; ');
+    throw new Error(`Import contains keys that differ only by case and cannot both be stored: ${list}.`);
   }
 }
 

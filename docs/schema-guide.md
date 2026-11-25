@@ -44,7 +44,11 @@ All project knowledge lives in entries, addressed by dot notation: `project.name
 
 The dots are for addressing; the tools present entries as a tree. `rvr get arch` lists the keys under `arch.*`, and `rvr get arch -v` prints their values too.
 
-A key is either a leaf with a value or a parent of other keys, never both — and the store keeps it that way by replacing, not refusing. Writing a value to a parent (`rvr set arch "…"`) removes every entry under it; writing under a leaf (`rvr set arch.api.v2 "…"` when `arch.api` holds a value) removes the leaf. In a terminal the first asks before overwriting; run from a script or an agent's shell, neither asks. Check that a key is not already a parent before writing a value to it.
+A key is either a leaf with a value or a parent of other keys, never both, and a write that would break that is refused. Writing a value to a parent (`rvr set arch "…"` when `arch.api` exists) would remove every entry under it; writing under a leaf (`rvr set arch.api.v2 "…"` when `arch.api` holds a value) would remove the leaf. Both fail with an error naming the entries in the way, and nothing is written. Remove or rename those entries first. There is no flag to force it: `-f` only skips the overwrite prompt for the same key.
+
+Keys keep the case you give them and compare case-insensitively. `arch.authFlow` and `arch.authflow` are one file on a case-insensitive filesystem (default macOS, Windows), so a write to the second spelling is refused on every machine, naming the first. To change only the case of a key, rename it through a temporary key. `rvr lint` flags a pair that already exists.
+
+The same refusals apply to `copy`, `rename`, `rvr data import --merge` and the MCP tools.
 
 One file per entry is what makes a committed store workable for a team: two branches that add or change *different* entries merge without conflict. Two branches that write the *same* entry conflict in that entry's file. Reverie then refuses to read or overwrite the file until one side is chosen — see [When a store file cannot be read](#when-a-store-file-cannot-be-read-merge-conflicts).
 

@@ -35,6 +35,7 @@ import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMet
 import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
+import { KeyCollisionError, assertKeysWritable, renameDestinationProblem } from "./utils/keyCollision";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
@@ -516,6 +517,8 @@ server.tool(
       return textResponse(lines.join('\n'));
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      // #216 / #224: the refusal is complete on its own.
+      if (err instanceof KeyCollisionError) return errorResponse(err.message);
       return errorResponse(`Error setting entry: ${String(err)}`);
     }
   }
@@ -758,15 +761,24 @@ server.tool(
         // otherwise be missed.
         const writeScope = resolveScopeForWrite(scope);
         const data = loadEntries(writeScope);
-        for (const [flatKey, flatVal] of Object.entries(flattenObject({ [resolvedSource]: value }))) {
-          setNestedValue(data, dest + flatKey.slice(resolvedSource.length), String(flatVal));
-        }
+        // This path does not go through setValue: validate the destination
+        // here, or an unsafe segment is dropped silently and the copy
+        // reports success having written nothing.
+        if (!isValidEntryKey(dest)) return errorResponse(`Invalid key: ${JSON.stringify(dest)}`);
+        const leaves = Object.entries(flattenObject({ [resolvedSource]: value }))
+          .map(([flatKey, flatVal]): [string, string] => [dest + flatKey.slice(resolvedSource.length), String(flatVal)]);
+        // #216 / #224: every destination leaf is checked against the store
+        // as it stands, before the first is set. A refusal saves nothing.
+        assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
+        for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
         saveEntriesAndTouchMeta(data, dest, writeScope);
       }
 
       return textResponse(`Copied: ${resolvedSource} -> ${dest}`);
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      // #216 / #224: the refusal is complete on its own.
+      if (err instanceof KeyCollisionError) return errorResponse(err.message);
       return errorResponse(`Error copying entry: ${String(err)}`);
     }
   }
@@ -810,6 +822,12 @@ server.tool(
         return errorResponse(`Key '${oldKey}' not found.`, 'NOT_FOUND');
       }
 
+      // #224: the move writes the new keys and then removes the old key with
+      // everything under it. Refuse a destination that would be removed with
+      // it, or that cannot be stored at all.
+      const destinationProblem = renameDestinationProblem(resolvedOld, newKey, isValidEntryKey);
+      if (destinationProblem) return errorResponse(destinationProblem);
+
       const existing = readForWrite<CodexValue | undefined, Scope>(s => getValue(newKey, s), scope, () => resolveScopeForWrite(scope)); // #215, as reverie_copy
       if (existing !== undefined) {
         return errorResponse(`Key '${newKey}' already exists. Remove it first or choose a different key.`);
@@ -828,9 +846,12 @@ server.tool(
         // scope so the project-resolution guard fires here too (#99).
         const writeScope = resolveScopeForWrite(scope);
         const data = loadEntries(writeScope);
-        for (const [flatKey, flatVal] of Object.entries(flattenObject({ [resolvedOld]: value }))) {
-          setNestedValue(data, newKey + flatKey.slice(resolvedOld.length), String(flatVal));
-        }
+        const leaves = Object.entries(flattenObject({ [resolvedOld]: value }))
+          .map(([flatKey, flatVal]): [string, string] => [newKey + flatKey.slice(resolvedOld.length), String(flatVal)]);
+        // #216 / #224: checked against the store as it stands, before the
+        // first leaf is set. A refusal saves nothing and the source stays.
+        assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
+        for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
         saveEntriesAndTouchMeta(data, newKey, writeScope);
       }
       removeValue(resolvedOld, scope);
@@ -875,6 +896,8 @@ server.tool(
       return textResponse(`Renamed: ${resolvedOld} -> ${newKey}`);
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      // #216 / #224: the refusal is complete on its own.
+      if (err instanceof KeyCollisionError) return errorResponse(err.message);
       return errorResponse(`Error renaming entry: ${String(err)}`);
     }
   }
@@ -1448,9 +1471,13 @@ server.tool(
         },
         !!merge,
         {
-          entries: () => loadData(scope),
-          aliases: () => loadAliases(scope),
-          confirm: () => loadConfirmKeys(scope),
+          // The merge base is the one store the import writes to, not the
+          // default view that layers the project over the global store:
+          // that view copied every global entry, alias and confirm flag into
+          // the project on each merge.
+          entries: () => loadData(getEffectiveScope(scope)),
+          aliases: () => loadAliases(getEffectiveScope(scope)),
+          confirm: () => loadConfirmKeys(getEffectiveScope(scope)),
         },
       );
 
@@ -1462,6 +1489,8 @@ server.tool(
       );
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      // #216 / #224: the refusal is complete on its own.
+      if (err instanceof KeyCollisionError) return errorResponse(err.message);
       return errorResponse(`Error importing: ${String(err)}`);
     }
   }

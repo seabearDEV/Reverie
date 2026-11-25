@@ -1,7 +1,0 @@
-{
-  "value": "`set` on a parent key replaces its whole subtree, and `set` under a leaf deletes the leaf — silently. `rvr set arch x` removes every arch.* entry; `rvr set a.b.c v` when a.b holds a value removes a.b, and an alias to a.b then points at a parent. The CLI from a non-TTY and MCP reverie_set both report success with no warning; a terminal prompts only for the parent case. Same on 1.3.0. Found 2026-11-24 reviewing #223; documented in docs/schema-guide.md (Store anatomy); tracked as #224, which gates v1.4.0. Before writing a value to a short key, check that `rvr get <key>` lists no children. #222's collision guard covers only the unreadable-file case.",
-  "meta": {
-    "created": 1795577626076,
-    "updated": 1795578349425
-  }
-}

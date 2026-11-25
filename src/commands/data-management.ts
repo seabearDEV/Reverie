@@ -17,6 +17,7 @@ import { version as pkgVersion } from '../../package.json';
 import { getConfigSetting } from '../config';
 import { getBinaryName } from '../utils/binaryName';
 import { StoreUnreadableError, describeUnreadable, markUnreadableShown } from '../utils/unreadable';
+import { KeyCollisionError } from '../utils/keyCollision';
 
 function resolveImportMaxBytes(): number {
   const configured = Number(getConfigSetting('import_max_bytes'));
@@ -302,7 +303,8 @@ export async function importData(type: string, file: string, options: ImportOpti
         }
         if (confirmSection) validateImportConfirm(confirmSection);
       } catch (err) {
-        printError(err instanceof Error ? err.message : String(err));
+        // The file is what is wrong, not the store or the process.
+        printError(err instanceof Error ? err.message : String(err), 'INVALID_INPUT');
         return;
       }
       showImportPreview({ entries: entriesSection, aliases: aliasesSection, confirm: confirmSection }, !!options.merge);
@@ -338,7 +340,8 @@ export async function importData(type: string, file: string, options: ImportOpti
       }
       if (confirmSection) validateImportConfirm(confirmSection);
     } catch (err) {
-      printError(err instanceof Error ? err.message : String(err));
+      // The file is what is wrong, not the store or the process.
+      printError(err instanceof Error ? err.message : String(err), 'INVALID_INPUT');
       return;
     }
 
@@ -355,9 +358,15 @@ export async function importData(type: string, file: string, options: ImportOpti
       },
       !!options.merge,
       {
-        entries: () => loadData(scope),
-        aliases: () => loadAliases(scope),
-        confirm: () => loadConfirmKeys(scope),
+        // The merge base is the one store the import writes to. In the
+        // default scope `loadData(scope)` and its siblings return the project
+        // layered over the global store, so every merge copied the global
+        // entries, aliases and confirm flags into the project — and where a
+        // global key differed from a project key only by case, replaced the
+        // project's value with the global one.
+        entries: () => loadData(getEffectiveScope(scope)),
+        aliases: () => loadAliases(getEffectiveScope(scope)),
+        confirm: () => loadConfirmKeys(getEffectiveScope(scope)),
       },
     );
 
@@ -603,16 +612,16 @@ export function handleProjectFile(options: {
 
   // Seed conventions.persistence (unless --no-scan or it already exists)
   if (shouldScan && !options.dryRun) {
-    if (!seedKeyTaken('conventions.persistence')) {
-      setValue('conventions.persistence', PERSISTENCE_VALUE, 'project');
+    if (!seedKeyTaken('conventions.persistence') && seedEntry('conventions.persistence', PERSISTENCE_VALUE)) {
       console.log(`  ${color.green('+')} conventions.persistence: ${color.white(PERSISTENCE_VALUE)}`);
     }
 
     // Seed context.initialized marker for agents to detect fresh scaffold
     if (!seedKeyTaken('context.initialized')) {
       const markerValue = 'scaffold — arch.* and context.* namespaces need deep analysis by an AI agent';
-      setValue('context.initialized', markerValue, 'project');
-      console.log(`  ${color.green('+')} context.initialized: ${color.white(markerValue)}`);
+      if (seedEntry('context.initialized', markerValue)) {
+        console.log(`  ${color.green('+')} context.initialized: ${color.white(markerValue)}`);
+      }
     }
   }
 
@@ -662,6 +671,22 @@ function seedKeyTaken(key: string): boolean {
   }
 }
 
+/**
+ * Write one init seed. A key that collides with an entry already in the store
+ * (#216, #224) is skipped with a warning, as an unreadable one is: init must
+ * not remove what is there, and must not stop half-way either.
+ */
+function seedEntry(key: string, value: string): boolean {
+  try {
+    setValue(key, value, 'project');
+    return true;
+  } catch (err) {
+    if (!(err instanceof KeyCollisionError)) throw err;
+    printWarning(`Skipped ${key}: ${err.message}`);
+    return false;
+  }
+}
+
 function mergeScaffoldEntries(discovered: ScaffoldEntry[]): number {
   if (discovered.length === 0) {
     printWarning('No project information detected.');
@@ -680,7 +705,7 @@ function mergeScaffoldEntries(discovered: ScaffoldEntry[]): number {
   let count = 0;
   for (const { key, value } of unique) {
     if (seedKeyTaken(key)) continue;
-    setValue(key, value, 'project');
+    if (!seedEntry(key, value)) continue;
     console.log(`  ${color.green('+')} ${key}: ${color.white(value)}`);
     count++;
   }
