@@ -482,4 +482,96 @@ describe('a write that would remove or overwrite another entry is refused (#216,
     expect(r.status).toBe(1);
     expect(r.stdout + r.stderr).toContain("'arch.authFlow' and 'arch.authflow'");
   });
+
+  // ── what the refusals are recorded as (#203) ─────────────────────────
+  // The envelope says INVALID_INPUT. In text mode there is no envelope, and a
+  // path that sets the exit code without recording a code leaves the row
+  // saying RUNTIME. Each case counts the rows first: reading "the last row"
+  // alone would be satisfied by the row of the call before it.
+
+  interface Row { tool: string; success?: boolean; errorCode?: string }
+  const rows = (file: string): Row[] => {
+    const p = path.join(dataDir, file);
+    if (!fs.existsSync(p)) return [];
+    return fs.readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Row);
+  };
+  /** Run one command and return the single telemetry row it appended. */
+  const rowOf = (...args: string[]): { status: number | null; row: Row } => {
+    const before = rows('telemetry.jsonl').length;
+    const r = rvr(...args);
+    const after = rows('telemetry.jsonl');
+    expect(after.length, args.join(' ')).toBe(before + 1);
+    return { status: r.status, row: after[after.length - 1] };
+  };
+
+  it('a refused write records INVALID_INPUT in text mode, the code --json reports', () => {
+    expect(rvr('set', 'solo', 'value').status).toBe(0);
+    const importFile = path.join(dataDir, 'flat.json');
+    fs.writeFileSync(importFile, JSON.stringify({ arch: 'flat' }));
+    const pairFile = path.join(dataDir, 'pair.json');
+    fs.writeFileSync(pairFile, JSON.stringify({ notes: { Key: 'one', key: 'two' } }));
+    const refusals: [string, string[]][] = [
+      ['reverie_set', ['set', 'arch', 'flat']],                                   // a value to a parent
+      ['reverie_set', ['set', 'arch.API', 'other']],                              // a case variant
+      ['reverie_set', ['set', 'arch.api.v2', 'x']],                               // a key under a leaf
+      ['reverie_copy', ['copy', 'solo', 'arch', '--force']],
+      ['reverie_rename', ['rename', 'solo', 'arch.api.moved']],
+      ['reverie_rename', ['rename', 'arch', 'arch.sub']],                         // under itself
+      ['reverie_import', ['data', 'import', 'entries', importFile, '--merge', '--force']],
+      ['reverie_import', ['data', 'import', 'entries', pairFile, '--merge', '--force']],   // the pair is in the file
+    ];
+    for (const [tool, args] of refusals) {
+      const label = args.join(' ');
+      for (const mode of [[], ['--json']]) {
+        const auditBefore = rows('audit.jsonl').length;
+        const { status, row } = rowOf(...mode, ...args);
+        expect(status, label).toBe(1);
+        expect(row.tool, label).toBe(tool);
+        expect(row.success, label).toBe(false);
+        expect(row.errorCode, `${mode.join('')} ${label}`).toBe('INVALID_INPUT');
+        const audit = rows('audit.jsonl');
+        expect(audit.length, `audit ${label}`).toBe(auditBefore + 1);
+        expect(audit[audit.length - 1].errorCode, `audit ${mode.join('')} ${label}`).toBe('INVALID_INPUT');
+      }
+    }
+    expect(keys()).toEqual(['arch.api', 'arch.auth', 'solo']);
+  });
+
+  // A leaf and a key under another spelling of it: two different files on
+  // every filesystem, and a pair that cannot both exist as keys. So unlike
+  // the pair in the lint test above, this one can be put on disk anywhere.
+  const plantCollision = () => fs.writeFileSync(
+    path.join(projectDir, '.reverie', 'arch.API.v2.json'),
+    JSON.stringify({ value: 'under', meta: { created: 1, updated: 1 } }),
+  );
+
+  it('lint: a failing run records INVALID_INPUT in text mode, the code --json reports', () => {
+    plantCollision();
+    // Text mode first: its row must stand on its own.
+    const text = rowOf('lint');
+    expect(text.status).toBe(1);
+    expect(text.row.tool).toBe('reverie_lint');
+    expect(text.row.success).toBe(false);
+    expect(text.row.errorCode).toBe('INVALID_INPUT');
+    expect(rvr('lint').stdout).toContain("'arch.api' and 'arch.API.v2'");
+
+    expect(json('lint').error?.code).toBe('INVALID_INPUT');
+    expect(rowOf('--json', 'lint').row.errorCode).toBe('INVALID_INPUT');
+  });
+
+  it('lint: with an unreadable file as well, both modes record STORE_UNREADABLE', () => {
+    // The JSON branch reports the unreadable files first. The text branch
+    // prints both sections and records one code; it has to be the same one.
+    plantCollision();
+    fs.writeFileSync(path.join(projectDir, '.reverie', 'arch.broken.json'), '{\n<<<<<<< ours\n=======\n>>>>>>> theirs\n}\n');
+    const text = rowOf('lint');
+    expect(text.status).toBe(1);
+    expect(text.row.errorCode).toBe('STORE_UNREADABLE');
+    const out = rvr('lint').stdout;
+    expect(out).toContain('cannot be read');
+    expect(out).toContain("'arch.api' and 'arch.API.v2'");
+
+    expect(json('lint').error?.code).toBe('STORE_UNREADABLE');
+    expect(rowOf('--json', 'lint').row.errorCode).toBe('STORE_UNREADABLE');
+  });
 });

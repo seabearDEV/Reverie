@@ -528,7 +528,7 @@ server.tool(
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       // #216 / #224: the refusal is complete on its own.
-      if (err instanceof KeyCollisionError) return errorResponse(err.message);
+      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error setting entry: ${String(err)}`);
     }
   }
@@ -762,7 +762,7 @@ server.tool(
       // failed read — worded and audited as one, as on the CLI.
       const existing = readForWrite<CodexValue | undefined, Scope>(s => getValue(dest, s), scope, () => resolveScopeForWrite(scope));
       if (existing !== undefined && !force) {
-        return errorResponse(`Key '${dest}' already exists. Pass force: true to overwrite.`);
+        return errorResponse(`Key '${dest}' already exists. Pass force: true to overwrite.`, 'INVALID_INPUT');
       }
 
       if (typeof value === "string") {
@@ -791,7 +791,7 @@ server.tool(
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       // #216 / #224: the refusal is complete on its own.
-      if (err instanceof KeyCollisionError) return errorResponse(err.message);
+      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error copying entry: ${String(err)}`);
     }
   }
@@ -820,7 +820,7 @@ server.tool(
           if (!(oldKey in aliases)) {
             return errorResponse(`Alias '${oldKey}' not found.`, 'NOT_FOUND');
           }
-          return errorResponse(`Alias '${newKey}' already exists.`);
+          return errorResponse(`Alias '${newKey}' already exists.`, 'INVALID_INPUT');
         }
         return textResponse(`Alias '${oldKey}' renamed to '${newKey}'.`);
       }
@@ -839,11 +839,11 @@ server.tool(
       // everything under it. Refuse a destination that would be removed with
       // it, or that cannot be stored at all.
       const destinationProblem = renameDestinationProblem(resolvedOld, newKey, isValidEntryKey);
-      if (destinationProblem) return errorResponse(destinationProblem);
+      if (destinationProblem) return errorResponse(destinationProblem, 'INVALID_INPUT');
 
       const existing = readForWrite<CodexValue | undefined, Scope>(s => getValue(newKey, s), scope, () => resolveScopeForWrite(scope)); // #215, as reverie_copy
       if (existing !== undefined) {
-        return errorResponse(`Key '${newKey}' already exists. Remove it first or choose a different key.`);
+        return errorResponse(`Key '${newKey}' already exists. Remove it first or choose a different key.`, 'INVALID_INPUT');
       }
 
       // #215: a rename moves the value, re-points aliases and moves the
@@ -916,7 +916,7 @@ server.tool(
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       // #216 / #224: the refusal is complete on its own.
-      if (err instanceof KeyCollisionError) return errorResponse(err.message);
+      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error renaming entry: ${String(err)}`);
     }
   }
@@ -1389,7 +1389,9 @@ server.tool(
           }
           if (confirmSection) validateImportConfirm(confirmSection);
         } catch (err) {
-          return errorResponse(`Preview failed: ${err instanceof Error ? err.message : String(err)}`);
+          // The data is what is wrong, not the store: INVALID_INPUT, as the
+          // CLI reports a file that fails the same checks.
+          return errorResponse(`Preview failed: ${err instanceof Error ? err.message : String(err)}`, 'INVALID_INPUT');
         }
 
         const lines: string[] = [];
@@ -1470,14 +1472,21 @@ server.tool(
       // Validate + shape-check everything BEFORE any save. #77: multi-
       // section imports need to be transactional — one validation failure
       // must not leave a half-applied store.
-      if (entriesSection) validateImportEntries(entriesSection);
-      if (aliasesSection) {
-        if (Object.values(aliasesSection).some(v => typeof v !== "string")) {
-          return errorResponse("Alias values must all be strings (dot-notation paths).");
+      try {
+        if (entriesSection) validateImportEntries(entriesSection);
+        if (aliasesSection) {
+          if (Object.values(aliasesSection).some(v => typeof v !== "string")) {
+            return errorResponse("Alias values must all be strings (dot-notation paths).", 'INVALID_INPUT');
+          }
+          validateImportAliases(aliasesSection);
         }
-        validateImportAliases(aliasesSection);
+        if (confirmSection) validateImportConfirm(confirmSection);
+      } catch (err) {
+        // As in the preview above: data that fails validation — invalid
+        // keys, or two keys that cannot both be stored (#216) — is
+        // INVALID_INPUT. Worded as the catch-all below words it.
+        return errorResponse(`Error importing: ${String(err)}`, 'INVALID_INPUT');
       }
-      if (confirmSection) validateImportConfirm(confirmSection);
 
       // Compute each section's final value (shared #133 contract: omitted
       // sections are never touched, including type:'all' replace), then
@@ -1509,7 +1518,7 @@ server.tool(
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       // #216 / #224: the refusal is complete on its own.
-      if (err instanceof KeyCollisionError) return errorResponse(err.message);
+      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error importing: ${String(err)}`);
     }
   }

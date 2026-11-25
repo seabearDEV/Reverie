@@ -278,6 +278,9 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
     for (const pair of caseCollisions) console.log(`  ${color.red(describePair(pair))}`);
     console.log(`    ${color.gray(CASE_COLLISION_FIX)}`);
     console.log('');
+    // The code the JSON branch reports (#203) — which, with both findings,
+    // is the unreadable files': leave that one recorded.
+    if (unreadable.length === 0) recordErrorCode('INVALID_INPUT');
     process.exitCode = 1;
   }
 

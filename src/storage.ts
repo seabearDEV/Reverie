@@ -54,6 +54,9 @@ export function handleError(message: string, error: unknown, context?: string): 
     if (isJsonMode()) {
       failJson(error.code, errorText);
     } else {
+      // The row carries the code --json reports (#203). Without this the
+      // wrapper falls back to RUNTIME for a text-mode refusal.
+      recordErrorCode(error.code);
       console.error(`${color.red('✗ ')}${errorText}`);
       process.exitCode = 1;
     }
