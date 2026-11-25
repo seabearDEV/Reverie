@@ -362,17 +362,27 @@ export function assertSidecarsWritable(target: () => string, kinds: ('aliases' |
  */
 export function nameCollisionError(key: string, file: UnreadableFile): StoreUnreadableError {
   const other = file.key ?? path.basename(file.path, '.json');
-  const relation = key.startsWith(`${other}.`) ? 'under' : 'over';
-  return new StoreUnreadableError(
-    [file],
-    'write',
-    `Refusing to write '${key}' ${relation} ${subject(file)}, which cannot be read (the two cannot both exist)`,
-  );
+  const lower = key.toLowerCase();
+  const otherLower = other.toLowerCase();
+  // Keys compare case-insensitively (#216): a spelling that differs only by
+  // case is the same file on a case-insensitive filesystem.
+  const message = lower === otherLower
+    ? `Refusing to write '${key}': it differs only by case from ${subject(file)}, which cannot be read (the two cannot both exist)`
+    : `Refusing to write '${key}' ${lower.startsWith(`${otherLower}.`) ? 'under' : 'over'} ${subject(file)}, which cannot be read (the two cannot both exist)`;
+  return new StoreUnreadableError([file], 'write', message);
 }
 
-/** Is `other` an ancestor or a descendant of `key` in the dotted-key tree? */
+/**
+ * Can `key` and `other` not both be stored? True when one is an ancestor of
+ * the other in the dotted-key tree, or when they differ only by case —
+ * compared case-insensitively, as every key collision is (#216). The same
+ * key, spelled the same way, is not a collision.
+ */
 export function keysCollide(key: string, other: string): boolean {
-  return key.startsWith(`${other}.`) || other.startsWith(`${key}.`);
+  if (key === other) return false;
+  const lower = key.toLowerCase();
+  const otherLower = other.toLowerCase();
+  return lower === otherLower || lower.startsWith(`${otherLower}.`) || otherLower.startsWith(`${lower}.`);
 }
 
 /**

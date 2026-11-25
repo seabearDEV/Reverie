@@ -4,6 +4,8 @@ import os from 'os';
 import path from 'path';
 import { loadData, handleError, getValue, getValueForWrite, setValue, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
+import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
+import { isValidEntryKey } from '../utils/directoryStore';
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
 import { displayTree } from '../formatting';
@@ -21,7 +23,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
 import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, interpolateForRead, unresolvedWarning, UNRESOLVED_WARNING_CODE, UnresolvedOnRead } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
-import { isJsonMode, setResult, failJson, addWarning } from '../utils/output';
+import { isJsonMode, setResult, failJson, addWarning, recordErrorCode } from '../utils/output';
 import { markValueStored } from '../utils/writeAmp';
 
 function toScope(global?: boolean  ): Scope | undefined {
@@ -277,6 +279,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
         const stdout = execSync(execValue, { encoding: 'utf-8', shell: process.env.SHELL ?? '/bin/sh' });
         process.stdout.write(stdout);
       } catch (err: unknown) {
+        recordErrorCode('COMMAND_FAILED'); // the code the JSON branch reports (#203)
         process.exitCode = (err && typeof err === 'object' && 'status' in err ? Number(err.status) : 1) || 1;
         if (err && typeof err === 'object' && 'stderr' in err && (err as { stderr?: string }).stderr) {
           process.stderr.write(String((err as { stderr?: string }).stderr));
@@ -286,6 +289,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       try {
         execSync(execValue, { stdio: 'inherit', shell: process.env.SHELL ?? '/bin/sh' });
       } catch (err: unknown) {
+        recordErrorCode('COMMAND_FAILED');
         process.exitCode = (err && typeof err === 'object' && 'status' in err ? Number(err.status) : 1) || 1;
       }
     }
@@ -906,9 +910,16 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
       // storage.ts setValue, so the guard would otherwise be skipped (#99).
       const effectiveScope = resolveScopeForWrite(scope);
       const data = loadEntries(effectiveScope);
-      for (const [flatKey, flatVal] of Object.entries(flattenObject({ [sourceKey]: value }))) {
-        setNestedValue(data, destKey + flatKey.slice(sourceKey.length), String(flatVal));
-      }
+      // This path does not go through setValue, so it validates the
+      // destination itself: setNestedValue drops an unsafe segment silently,
+      // and the copy would report success having written nothing.
+      if (!isValidEntryKey(destKey)) throw new Error(`Invalid store key: ${JSON.stringify(destKey)}`);
+      const leaves = Object.entries(flattenObject({ [sourceKey]: value }))
+        .map(([flatKey, flatVal]): [string, string] => [destKey + flatKey.slice(sourceKey.length), String(flatVal)]);
+      // #216 / #224: every destination leaf is checked against the store as
+      // it stands, before the first is set. A refusal saves nothing.
+      assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
+      for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
       saveEntriesAndTouchMeta(data, destKey, effectiveScope);
     }
 
@@ -951,6 +962,17 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     return;
   }
 
+  // #224: the move below writes the new keys and then removes the old key
+  // with everything under it. Refuse a destination that would be removed
+  // with it, or that cannot be stored at all — both used to report success
+  // with the entries gone.
+  const destinationProblem = renameDestinationProblem(oldKey, newKey, isValidEntryKey);
+  if (destinationProblem) {
+    printError(destinationProblem, 'INVALID_INPUT');
+    process.exitCode = 1;
+    return;
+  }
+
   const existing = getValueForWrite(newKey, scope);
   if (existing !== undefined) {
     printError(`Entry '${newKey}' already exists. Remove it first or choose a different key.`, 'INVALID_INPUT');
@@ -963,19 +985,26 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   // refuse before the value moves.
   assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
-  // Move the value
-  if (typeof value === 'string') {
-    setValue(newKey, value, scope);
-  } else {
-    // Batch: load once, set all leaves, save once (instead of O(L) file writes).
-    // Apply the project-resolution guard here too — this path bypasses
-    // storage.ts setValue, so the guard would otherwise be skipped (#99).
-    const effectiveScope = resolveScopeForWrite(scope);
-    const data = loadEntries(effectiveScope);
-    for (const [flatKey, flatVal] of Object.entries(flattenObject({ [oldKey]: value }))) {
-      setNestedValue(data, newKey + flatKey.slice(oldKey.length), String(flatVal));
+  // Move the value. A refused collision (#216 / #224) is thrown before
+  // anything is written; report it and leave the source where it is.
+  try {
+    if (typeof value === 'string') {
+      setValue(newKey, value, scope);
+    } else {
+      // Batch: load once, set all leaves, save once (instead of O(L) file writes).
+      // Apply the project-resolution guard here too — this path bypasses
+      // storage.ts setValue, so the guard would otherwise be skipped (#99).
+      const effectiveScope = resolveScopeForWrite(scope);
+      const data = loadEntries(effectiveScope);
+      const leaves = Object.entries(flattenObject({ [oldKey]: value }))
+        .map(([flatKey, flatVal]): [string, string] => [newKey + flatKey.slice(oldKey.length), String(flatVal)]);
+      assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
+      for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
+      saveEntriesAndTouchMeta(data, newKey, effectiveScope);
     }
-    saveEntriesAndTouchMeta(data, newKey, effectiveScope);
+  } catch (error) {
+    handleError('Failed to rename entry:', error);
+    return;
   }
   removeValue(oldKey, scope);
 

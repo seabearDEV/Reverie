@@ -1,7 +1,7 @@
 {
-  "value": "2026-11-24 (10) — Tracker organized: milestone 'v1.4.0 — Forum' is the release gate (work list in project.inFlight); 'v1.4.0 — Find' deleted; new #224–#227. NEXT: (1) #216, #224, #225, #202 each need a one-line owner decision before work starts; (2) can start now: #192 + #203 + #206 (one wrapper fix), #204; (3) #189 design pass — #215 steps 2–3, #226, #227 wait on it. Until 1.4.0 is installed, pipe values or pass \"$(cat f)\".",
+  "value": "2026-11-24 (11) — The eight bug issues are in four PRs: #228, #229, #230, #232. All green, mergeable in any order. The feature plan is docs/design-189-forum-threads.md in PR #231; seven owner decisions (O1–O7) gate that work. NEXT: (1) the owner merges the five PRs; (2) O1–O7; (3) slices 1–2 of the design. Detail in project.inFlight. Until 1.4.0 is installed, pipe values or pass \"$(cat f)\".",
   "meta": {
     "created": 1777392524252,
-    "updated": 1795578601177
+    "updated": 1795583068725
   }
 }

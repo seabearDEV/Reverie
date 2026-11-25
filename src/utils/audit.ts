@@ -22,6 +22,9 @@ export interface AuditEntry {
   before?: string | undefined;
   after?: string | undefined;
   error?: string | undefined;
+  /** The code the call failed with (#203) — the envelope's error codes. Absent
+   *  on success, and on a failure whose handler reported none. */
+  errorCode?: string | undefined;
   params?: Record<string, unknown> | undefined;
   agent?: string | undefined;
   // Agent came from env fingerprinting, not explicit RVR_AGENT_NAME (#138)

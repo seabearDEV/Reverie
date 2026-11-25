@@ -262,6 +262,78 @@ describe('MCP Integration (real I/O)', () => {
     });
   });
 
+  // ── #216 / #224: a write that would remove another entry is refused ──
+  describe('key collisions over MCP (#216, #224)', () => {
+    const text = (r: { content: { text: string }[] }) => r.content.map(c => c.text).join('\n');
+    const seed = () => {
+      callMcpTool('reverie_set', { key: 'col.api', value: 'leaf value' });
+      callMcpTool('reverie_set', { key: 'col.auth', value: 'JWT' });
+    };
+    const stillThere = () => {
+      expect(text(callMcpTool('reverie_get', { key: 'col.api' }))).toContain('leaf value');
+      expect(text(callMcpTool('reverie_get', { key: 'col.auth' }))).toContain('JWT');
+    };
+
+    it('reverie_set: a value to a parent, a key under a leaf, and a case variant are refused', () => {
+      seed();
+      const parent = callMcpTool('reverie_set', { key: 'col', value: 'x' });
+      expect(parent.isError).toBe(true);
+      expect(text(parent)).toContain("Refusing to write 'col': it is the parent of 2 entries ('col.api', 'col.auth')");
+      expect(text(parent)).not.toContain('Error setting entry');
+      const child = callMcpTool('reverie_set', { key: 'col.api.v2', value: 'child' });
+      expect(child.isError).toBe(true);
+      expect(text(child)).toContain("'col.api' holds a value");
+      const cased = callMcpTool('reverie_set', { key: 'col.API', value: 'other' });
+      expect(cased.isError).toBe(true);
+      expect(text(cased)).toContain("differs only by case from the existing key 'col.api'");
+      stillThere();
+    });
+
+    it('reverie_copy and reverie_rename are refused the same way, and the source stays', () => {
+      seed();
+      callMcpTool('reverie_set', { key: 'colsolo', value: 'value' });
+      const copy = callMcpTool('reverie_copy', { source: 'colsolo', dest: 'col', force: true });
+      expect(copy.isError).toBe(true);
+      expect(text(copy)).toContain("Refusing to write 'col'");
+      const rename = callMcpTool('reverie_rename', { oldKey: 'colsolo', newKey: 'col.api.moved' });
+      expect(rename.isError).toBe(true);
+      expect(text(rename)).toContain("'col.api' holds a value");
+      expect(text(callMcpTool('reverie_get', { key: 'colsolo' }))).toContain('value');
+      stillThere();
+    });
+
+    it('reverie_rename refuses a destination under the source or an invalid one, and removes nothing', () => {
+      seed();
+      const under = callMcpTool('reverie_rename', { oldKey: 'col', newKey: 'col.sub' });
+      expect(under.isError).toBe(true);
+      expect(text(under)).toContain('the new key is under the old one');
+      const invalid = callMcpTool('reverie_rename', { oldKey: 'col', newKey: 'constructor' });
+      expect(invalid.isError).toBe(true);
+      expect(text(invalid)).toContain('not a valid key');
+      stillThere();
+    });
+
+    it('reverie_set compares against the other casing of a branch, and an empty import group deletes nothing', () => {
+      callMcpTool('reverie_set', { key: 'mix.x', value: 'one' });
+      callMcpTool('reverie_set', { key: 'MIX.y', value: 'two' });
+      const twin = callMcpTool('reverie_set', { key: 'MIX.x', value: 'three' });
+      expect(twin.isError).toBe(true);
+      expect(text(twin)).toContain("differs only by case from the existing key 'mix.x'");
+      expect(text(callMcpTool('reverie_get', { key: 'mix.x' }))).toContain('one');
+      const empty = callMcpTool('reverie_import', { type: 'entries', data: JSON.stringify({ mix: { x: {} } }), merge: true });
+      expect(empty.isError).toBeUndefined();
+      expect(text(callMcpTool('reverie_get', { key: 'mix.x' }))).toContain('one');
+    });
+
+    it('reverie_import (merge) is refused when a leaf would flatten a subtree', () => {
+      seed();
+      const r = callMcpTool('reverie_import', { type: 'entries', data: JSON.stringify({ col: 'flat' }), merge: true });
+      expect(r.isError).toBe(true);
+      expect(text(r)).toContain("Refusing to write 'col'");
+      stillThere();
+    });
+  });
+
   describe('reverie_find', () => {
     it('finds entries by value content', () => {
       callMcpTool('reverie_set', { key: 'server.ip', value: '192.168.1.100' });
@@ -741,5 +813,60 @@ describe('MCP Integration (real I/O)', () => {
       const r = callMcpTool('reverie_get', { key: 'arch.store' });
       expect(r.content).toHaveLength(1);
     });
+  });
+
+  // ── #203: the error code reaches the telemetry and audit rows ────────
+  describe('what a failed call is recorded as (#203)', () => {
+    interface Row { tool: string; success?: boolean; errorCode?: string }
+    const lastRow = (file: string): Row => {
+      const lines = fs.readFileSync(path.join(tmpDir, file), 'utf8').trim().split('\n');
+      return JSON.parse(lines[lines.length - 1]) as Row;
+    };
+
+    it('a read of a missing key is NOT_FOUND on both rows', () => {
+      const r = callMcpTool('reverie_get', { key: 'rows203.absent' });
+      expect(r.isError).toBe(true);
+      for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+        const row = lastRow(file);
+        expect(row.tool, file).toBe('reverie_get');
+        expect(row.success, file).toBe(false);
+        expect(row.errorCode, file).toBe('NOT_FOUND');
+      }
+    });
+
+    it('a call that succeeds carries no code, and the client payload is unchanged', () => {
+      callMcpTool('reverie_set', { key: 'rows203.present', value: 'v' });
+      const r = callMcpTool('reverie_get', { key: 'rows203.present' });
+      expect(r.isError).toBeUndefined();
+      expect('errorCode' in lastRow('telemetry.jsonl')).toBe(false);
+      const miss = callMcpTool('reverie_get', { key: 'rows203.absent' });
+      expect(Object.keys(miss).sort()).toEqual(['content', 'isError']);
+    });
+
+    it('an unknown config setting is NOT_FOUND, as on the CLI', () => {
+      const r = callMcpTool('reverie_config_get', { key: 'no_such_setting' });
+      expect(r.isError).toBe(true);
+      for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+        const row = lastRow(file);
+        expect(row.tool, file).toBe('reverie_config_get');
+        expect(row.errorCode, file).toBe('NOT_FOUND');
+      }
+    });
+  });
+
+  // ── #206: a config call is not a lookup ──────────────────────────────
+  it('a config read is not fed to the miss tracker (#206)', async () => {
+    const missPaths = path.join(tmpDir, 'miss-paths.jsonl');
+    const namespaces = (): string[] => !fs.existsSync(missPaths) ? [] :
+      fs.readFileSync(missPaths, 'utf8').trim().split('\n').filter(Boolean).map(l => (JSON.parse(l) as { namespace: string }).namespace);
+    await withMcpSession(async call => {
+      await call('reverie_set', { key: 'rows206.present', value: 'v' });
+      expect((await call('reverie_config_get', { key: 'no_such_setting_206' })).isError).toBe(true);
+      // A hit closes every open window of the session and logs it.
+      await call('reverie_get', { key: 'rows206.present' });
+      await call('reverie_get', { key: 'rows206.present' });
+    });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(namespaces()).not.toContain('no_such_setting_206');
   });
 });

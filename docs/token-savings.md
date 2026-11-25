@@ -44,6 +44,7 @@ Running `rvr stats` (or `reverie_stats` via MCP) produces a token savings sectio
 ```
 Token savings:
   Lookup hit rate:   87% of reads found stored data (34 hits, 5 misses)
+  Misses by cause:   NOT_FOUND 3, empty 1, STORE_UNREADABLE 1
   Duplicate writes:  10% of writes were already up to date (6 of 58)
   Data served:       51.4KB returned from store, 585B avg
   Avg latency:       2ms per call
@@ -84,6 +85,14 @@ Lookup hit rate:   87% of reads found stored data (34 hits, 5 misses)
 
 **What counts as a miss:** A read that returned an error or empty result — the agent asked for something that wasn't stored.
 
+**Misses by cause:** The next line splits the misses by what went wrong, largest first:
+
+```
+Misses by cause:   NOT_FOUND 3, empty 1, STORE_UNREADABLE 1
+```
+
+A code is the error the call failed with. `NOT_FOUND` means the store lacks the key; any other code means the read failed for another reason, and the key may well exist. `empty` is a read that succeeded and matched nothing, such as a search with no results. `unrecorded` is a failed read with no code: every row logged before v1.4.0, and an MCP error response that carries none. The same split is `missesByCode` in `rvr stats --json`.
+
 **Why it matters:** A high hit rate means the knowledge base is well-populated for the agent's needs. A low hit rate means agents are asking for things that aren't stored yet — a signal to add more entries.
 
 ```mermaid
@@ -115,7 +124,7 @@ Data served:       51.4KB returned from store, 585B avg
 
 **What it measures:** The total bytes of text content returned across all tool calls, and the average per call.
 
-**How it's calculated:** `Buffer.byteLength(responseText, 'utf8')` for each MCP tool response. This is the plain text the agent receives, not the JSON protocol envelope.
+**How it's calculated:** `Buffer.byteLength(responseText, 'utf8')` for each MCP tool response. This is the plain text the agent receives, not the JSON protocol envelope. On the CLI it is what the command printed, and with `--json` the bytes of the envelope it wrote.
 
 **Why it matters:** This is the raw throughput of the knowledge base. Higher numbers mean agents are consuming more stored knowledge per session.
 
@@ -149,7 +158,9 @@ Delivery cost:   ~12.3K tokens (context delivered to agent)
 
 **What it measures:** The token cost of Reverie itself — the data it pushes into the agent's context window on cache hits. Every `reverie_context` or `reverie_get` hit returns data that consumes agent tokens.
 
-**How it's calculated:** `sum(responseSize for all hit reads) / 4`
+**How it's calculated:** `sum(responseSize for all hit reads) / 3`
+
+Every token figure in `rvr stats` divides bytes by one constant, `BYTES_PER_TOKEN` = 3. Measured density runs from about 2.35 bytes per token on a dense store (dotted keys, identifiers, dates) to about 4 on prose; 3 sits between, so an estimate is off by at most about a third either way. It is used for reporting only.
 
 **Why it matters:** Token savings aren't free. If Reverie delivers 50KB of context but only saves the agent from 30KB of exploration, the net effect is negative. Delivery cost creates a natural pressure to keep the knowledge base lean and high-signal. Storing 500 low-value entries inflates delivery cost and erodes net savings.
 
@@ -254,7 +265,7 @@ The static multipliers above are educated guesses. Reverie replaces them with **
 | **moved_on** | Agent gets a hit on any key | Agent found what it needed elsewhere |
 | **timeout** | 5 minutes elapse with no resolution | Agent abandoned the search or session ended |
 
-The exploration cost for each closed miss window is `sum(responseSize of all calls in the window) / 4` — the tokens the agent actually consumed while searching.
+The exploration cost for each closed miss window is `sum(responseSize of all calls in the window) / 3` — the tokens the agent actually consumed while searching.
 
 **Calibration threshold:** Once a namespace accumulates **5 or more writeback resolutions**, Reverie switches from the static multiplier to the **median observed cost** for that namespace. The `[observed, n=12]` tag in the stats output indicates this.
 
@@ -290,19 +301,21 @@ Miss-path records are stored in `~/.reverie/miss-paths.jsonl` and can be cleared
 The `reverie_context` tool is special — it returns many entries at once in a single call. Its exploration cost is calculated differently:
 
 ```
-approx_entries  = response_size_bytes / 80     (each entry averages ~80 bytes)
+entries_shown   = pinned + indexed             (entries in full + entries as index lines)
 exploration_cost = max(
-  response_size / 4,                           (delivery floor)
-  approx_entries * 200                         (200 tokens per entry avoided)
+  response_size / 3,                           (delivery floor)
+  entries_shown * 200                          (200 tokens per entry avoided)
 )
 ```
 
 The 200-token-per-entry cost reflects that each entry in the context represents roughly one small lookup the agent would have needed to make. The `max()` ensures the exploration estimate is never lower than the delivery floor.
 
-**Example:** A `reverie_context` call returns 8,000 bytes (~100 entries):
-- Delivery floor: `8000 / 4 = 2,000 tokens`
+`pinned` and `indexed` are on every context row logged since v1.4.0, so the count is exact, and one front page is credited the same whether it was read as text or as the larger `--json` envelope. A row logged before that carries no counts; for those the count is approximated as `response_size_bytes / 80`.
+
+**Example:** A `reverie_context` call returns 8,000 bytes showing 100 entries:
+- Delivery floor: `8000 / 3 ≈ 2,667 tokens`
 - Exploration estimate: `100 entries * 200 = 20,000 tokens`
-- Result: `max(2000, 20000) = 20,000 tokens`
+- Result: `max(2667, 20000) = 20,000 tokens`
 
 ### Estimation Pipeline
 
@@ -310,8 +323,9 @@ The 200-token-per-entry cost reflects that each entry in the context represents 
 flowchart TD
     T["Telemetry JSONL entries"] --> F{"Filter: op=read, hit=true"}
     F -->|reverie_context| B["Bootstrap estimation
-    entries ≈ responseSize / 80
-    cost = max(bytes/4, entries × 200)"]
+    entries = pinned + indexed
+    (older rows: ≈ responseSize / 80)
+    cost = max(bytes/3, entries × 200)"]
     F -->|other reads| CAL{"Calibrated?
     (≥5 writeback samples)"}
     CAL -->|Yes| OBS["Observed median cost
@@ -328,7 +342,7 @@ flowchart TD
     RW --> GROSS
 
     T --> DC["Delivery cost (all hit reads)
-    cost = sum(responseSize) / 4"]
+    cost = sum(responseSize) / 3"]
 
     GROSS --> NET["Net tokens saved
     = gross − delivery cost"]
@@ -341,7 +355,7 @@ A typical session might look like this:
 
 | Call | Tool | Namespace | Response | Hit? | Exploration Savings |
 |------|------|-----------|----------|------|-------------------|
-| 1 | `reverie_context` | (bootstrap) | 8,000B | Yes | 20,000 |
+| 1 | `reverie_context` | (bootstrap, 100 entries) | 8,000B | Yes | 20,000 |
 | 2 | `reverie_get` | files | 200B | Yes | 2,000 |
 | 3 | `reverie_get` | arch | 300B | Yes | 3,000 |
 | 4 | `reverie_get` | missing.key | 30B | No | 0 |
@@ -350,10 +364,10 @@ A typical session might look like this:
 
 **Totals:**
 - Gross exploration avoided: `20,000 + 2,000 + 3,000 + 150 = 25,150 tokens`
-- Delivery cost: `(8000 + 200 + 300) / 4 = 2,125 tokens`
-- **Net savings: 25,150 − 2,125 = 23,025 tokens**
+- Delivery cost: `(8000 + 200 + 300) / 3 ≈ 2,833 tokens`
+- **Net savings: 25,150 − 2,833 = 22,317 tokens**
 
-The gross estimate is **12x** the delivery cost in this example, reflecting the leverage of stored knowledge. As the knowledge base grows, both numbers increase — but if entries become low-signal, delivery cost grows faster than exploration savings, and net savings shrinks.
+The gross estimate is about **9x** the delivery cost in this example, reflecting the leverage of stored knowledge. As the knowledge base grows, both numbers increase — but if entries become low-signal, delivery cost grows faster than exploration savings, and net savings shrinks.
 
 ## Data Collection
 
@@ -415,6 +429,7 @@ Every tool call is logged to `~/.reverie/telemetry.jsonl` as a single JSON line:
   "hit": true,
   "redundant": null,
   "responseSize": 200,
+  "success": true,
   "agent": "claude-code"
 }
 ```
@@ -432,7 +447,9 @@ Every tool call is logged to `~/.reverie/telemetry.jsonl` as a single JSON line:
 | `duration` | Execution time in milliseconds |
 | `hit` | Whether the read returned stored data (reads only) |
 | `redundant` | Whether the write was a no-op (writes only) |
-| `responseSize` | UTF-8 byte length of the response text |
+| `responseSize` | UTF-8 byte length of what the caller received: the response text over MCP, the printed output on the CLI, the whole envelope with `--json` |
+| `success` | Whether the call succeeded |
+| `errorCode` | The code a failed call failed with (`NOT_FOUND`, `INVALID_INPUT`, `STORE_UNREADABLE`, …) — the same in text mode as with `--json`. Absent on success |
 | `agent` | Value of `RVR_AGENT_NAME` env var (if set) |
 
 ### How Hits and Misses Are Determined
@@ -469,13 +486,13 @@ The static namespace multipliers (e.g., `files: 2000`, `arch: 3000`) are based o
 
 All `files.*` lookups get the same 2,000-token multiplier, whether the entry is `files.entry` (a one-liner about the CLI entry point) or a hypothetical `files.architecture` (a long description that would take extensive exploration to discover). In reality, some entries save more exploration than others.
 
-### Bootstrap entry count is approximated
+### Bootstrap entry count is approximated for older rows
 
-The `reverie_context` estimation divides `responseSize` by 80 to approximate entry count. This works reasonably well for typical entries (~80 bytes of formatted output per line), but breaks down for entries with very long or very short values.
+A context row logged before v1.4.0 does not say how many entries it showed, so the estimation divides its `responseSize` by 80. That suits one-line entries of about 80 bytes and overcounts a page with long values. Rows logged since carry the counts and need no approximation; an entry shown as an index line is credited the same 200 tokens as one shown in full.
 
-### CLI reads don't log responseSize
+### `--json` rows count the whole envelope
 
-CLI tool calls (as opposed to MCP) don't always log `responseSize`, so CLI-only usage may have incomplete data for the delivery floor calculation. The exploration estimate is unaffected since it uses hit counts, not response sizes.
+A CLI row's `responseSize` is what the command wrote — with `--json`, the entire envelope. An agent that pipes the envelope through a filter such as `jq` takes in fewer bytes than the row records, so delivery cost is an upper bound for those calls. Before v1.4.0 a `--json` call recorded 0, which left it out of delivery cost altogether.
 
 ### No A/B comparison
 

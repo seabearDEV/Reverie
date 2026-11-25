@@ -1,5 +1,6 @@
 import { deepMerge } from './deepMerge';
-import { expandFlatKeys } from './objectPath';
+import { expandFlatKeys, flattenObject } from './objectPath';
+import { assertKeysWritable } from './keyCollision';
 import type { CodexData } from '../types';
 
 export interface ImportSections {
@@ -36,9 +37,22 @@ export function computeImportSections(
 ): ImportSections {
   const next: ImportSections = {};
   if (sections.entries) {
-    next.entries = (merge
-      ? deepMerge(current.entries(), expandFlatKeys(sections.entries))
-      : expandFlatKeys(sections.entries)) as CodexData;
+    const incoming = expandFlatKeys(sections.entries);
+    if (merge) {
+      const existing = current.entries();
+      // An empty group names no entry. Merged as-is it replaced a leaf at
+      // that key with nothing; it is a no-op.
+      const incomingEntries = pruneEmptyBranches(incoming);
+      // #216 / #224: a merge adds and overwrites keys; it does not get to
+      // remove the entries under a key it flattens, the leaf above a key it
+      // nests, or a key that differs only by case. Checked against the store
+      // as it stands, before anything is merged. `current` must be the one
+      // store being written, never a view layered over another store.
+      assertKeysWritable(existing, Object.keys(flattenObject(incomingEntries)));
+      next.entries = deepMerge(existing, incomingEntries) as CodexData;
+    } else {
+      next.entries = incoming as CodexData;
+    }
   }
   if (sections.aliases) {
     next.aliases = merge ? { ...current.aliases(), ...sections.aliases } : sections.aliases;
@@ -47,4 +61,18 @@ export function computeImportSections(
     next.confirm = merge ? { ...current.confirm(), ...sections.confirm } : sections.confirm;
   }
   return next;
+}
+
+/** A copy of `node` without groups that hold no entry at any depth. */
+function pruneEmptyBranches(node: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      const pruned = pruneEmptyBranches(value as Record<string, unknown>);
+      if (Object.keys(pruned).length > 0) out[key] = pruned;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
 }

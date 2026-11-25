@@ -20,6 +20,7 @@ vi.mock('../formatting', () => ({
     gray: (s: string) => `[gray]${s}[/gray]`,
     yellow: (s: string) => `[yellow]${s}[/yellow]`,
     bold: (s: string) => `[bold]${s}[/bold]`,
+    red: (s: string) => `[red]${s}[/red]`,
   },
 }));
 
@@ -171,5 +172,39 @@ describe('lintEntries', () => {
     lintEntries({ global: true });
 
     expect(mockGetEntriesFlat).toHaveBeenCalledWith('global');
+  });
+});
+
+describe('lintEntries — keys that cannot both be stored (#216)', () => {
+  afterEach(() => { process.exitCode = 0; });
+
+  it('flags a pair that differs only by case and fails the command', () => {
+    mockGetEntriesFlat.mockReturnValue({ 'arch.authFlow': 'alice', 'arch.authflow': 'bob', 'arch.api': 'x' });
+    lintEntries();
+    const out = (console.log as Mock<typeof console.log>).mock.calls.map(c => String(c[0])).join('\n');
+    expect(out).toContain('1 pair of keys cannot both be stored');
+    expect(out).toContain("'arch.authFlow' and 'arch.authflow'");
+    expect(out).toContain('Rename or remove one key of each pair.');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('JSON: the pair is in the payload and the envelope fails with INVALID_INPUT', () => {
+    mockGetEntriesFlat.mockReturnValue({ 'arch.authFlow': 'alice', 'arch.authflow': 'bob' });
+    configureOutput({ json: true, command: 'lint' });
+    lintEntries({ json: true });
+    const env = buildEnvelope();
+    expect(env.ok).toBe(false);
+    expect(env.error?.code).toBe('INVALID_INPUT');
+    expect((env.result as { caseCollisions: { keys: string[] }[] }).caseCollisions).toEqual([{ keys: ['arch.authFlow', 'arch.authflow'] }]);
+    configureOutput({ json: false, command: 'lint' });
+  });
+
+  it('a store with no such pair is unaffected', () => {
+    mockGetEntriesFlat.mockReturnValue({ 'arch.api': 'x', 'arch.api2': 'y', 'archive.old': 'z' });
+    process.exitCode = 0;
+    lintEntries();
+    const out = (console.log as Mock<typeof console.log>).mock.calls.map(c => String(c[0])).join('\n');
+    expect(out).not.toContain('cannot both be stored');
+    expect(process.exitCode).toBe(0);
   });
 });

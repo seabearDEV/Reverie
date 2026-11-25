@@ -2,8 +2,9 @@ import { getEntriesFlat, Scope } from '../storage';
 import { color } from '../formatting';
 import { findProjectFile } from '../store';
 import { interpolate, interpolateForRead, unresolvedWarning, UnresolvedReferenceError } from '../utils/interpolate';
-import { isJsonMode, setResult, failJson } from '../utils/output';
+import { isJsonMode, setResult, failJson, recordErrorCode } from '../utils/output';
 import { describeUnreadable, displayPath, listUnreadableFiles, markUnreadableShown, resolutionHint } from '../utils/unreadable';
+import { findCollidingPairs } from '../utils/keyCollision';
 import fs from 'fs';
 import path from 'path';
 
@@ -129,6 +130,26 @@ export function checkSeedQuality(flat: Record<string, string>): SeedIssue[] {
   return issues;
 }
 
+const CASE_COLLISION_FIX = 'On a case-insensitive filesystem (default macOS, Windows) each pair is one file. Rename or remove one key of each pair.';
+
+function caseCollisionHeadline(n: number): string {
+  return `${n} pair${n === 1 ? '' : 's'} of keys cannot both be stored`;
+}
+
+function describePair([a, b]: [string, string]): string {
+  return `'${a}' and '${b}'`;
+}
+
+/** The keys of the one store lint is looking at, for the case-collision check. */
+function caseCheckedKeys(flat: Record<string, string>, global: boolean | undefined): string[] {
+  if (global || !findProjectFile()) return Object.keys(flat);
+  try {
+    return Object.keys(getEntriesFlat('project'));
+  } catch {
+    return Object.keys(flat);
+  }
+}
+
 function loadCustomSchema(): string[] | null {
   const projectFile = findProjectFile();
   if (!projectFile) return null;
@@ -199,6 +220,16 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
   // command. getEntriesFlat above scanned the store(s) — no extra read.
   const unreadable = listUnreadableFiles();
 
+  // #216: keys in one store that differ only by case. On a case-insensitive
+  // filesystem they are one file, so whoever checks the store out there gets
+  // one of the two entries under both names. `rvr` no longer creates such a
+  // pair; this finds one that already exists (written by an older version on
+  // a case-sensitive filesystem, or by hand). Like an unreadable file it is a
+  // broken store, not advice, and fails the command. Checked per store: the
+  // default view merges the project store over the global one, and a key in
+  // each is two files in two directories.
+  const caseCollisions = findCollidingPairs(caseCheckedKeys(flat, options.global));
+
   if (isJsonMode()) {
     const payload: Record<string, unknown> = {
       issues: namespaceIssues,
@@ -215,9 +246,12 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
         fix: resolutionHint(f),
       }));
     }
+    if (caseCollisions.length > 0) payload.caseCollisions = caseCollisions.map(keys => ({ keys }));
     setResult(payload);
     if (unreadable.length > 0) {
       failJson('STORE_UNREADABLE', `${unreadable.length} store file${unreadable.length === 1 ? '' : 's'} cannot be read: ${unreadable.map(describeUnreadable).join('; ')}.`);
+    } else if (caseCollisions.length > 0) {
+      failJson('INVALID_INPUT', `${caseCollisionHeadline(caseCollisions.length)}: ${caseCollisions.map(describePair).join('; ')}. ${CASE_COLLISION_FIX}`);
     }
     return;
   }
@@ -231,6 +265,15 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
     console.log('');
     // Listed here, so the wrapper need not repeat them on stderr.
     markUnreadableShown();
+    recordErrorCode('STORE_UNREADABLE'); // the code the JSON branch reports (#203)
+    process.exitCode = 1;
+  }
+
+  if (caseCollisions.length > 0) {
+    console.log(color.red(color.bold(`\n${caseCollisionHeadline(caseCollisions.length)}:\n`)));
+    for (const pair of caseCollisions) console.log(`  ${color.red(describePair(pair))}`);
+    console.log(`    ${color.gray(CASE_COLLISION_FIX)}`);
+    console.log('');
     process.exitCode = 1;
   }
 

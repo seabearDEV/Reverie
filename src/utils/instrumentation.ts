@@ -4,7 +4,7 @@ import { Scope } from '../store';
 import { getValue, getEntriesFlat } from '../storage';
 import { loadAliases, resolveKey } from '../alias';
 import { sanitizeValue, sanitizeParams, logAudit } from './audit';
-import { logToolCall, classifyOp, TelemetryEntry, TelemetryExtras, extractNamespace, appendMissPath } from './telemetry';
+import { logToolCall, classifyOp, TelemetryEntry, TelemetryExtras, extractNamespace, keyIsEntryKey, appendMissPath } from './telemetry';
 import { recordCliWrite, trackCliMissPath } from './sessionState';
 import { formatWriteAmpWarning, takeValueStored, writeAmpStore, WriteAmpResult } from './writeAmp';
 import { findProjectFile } from '../store';
@@ -13,7 +13,7 @@ import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
 import { color } from '../formatting';
 import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, takeWriteRefused, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
-import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError, takeSignals } from './output';
+import { isJsonMode, failJson, emitEnvelope, addWarning, hasWarning, setResult, hasResult, hasError, takeSignals, takeErrorCode, serializeEnvelope, alreadyEmitted } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
@@ -136,6 +136,11 @@ export interface CliToolContext {
   params?: Record<string, unknown> | undefined;
   writeValue?: string | undefined;        // explicit after-value for set operations
   copySourceKey?: string | undefined;     // for reverie_copy: source key to pre-capture
+  /** JSON mode: leave the envelope to a later call of this invocation. A
+   *  batch `set` runs one call per pair and writes one envelope, after the
+   *  last, so its `ok` and `error` cover every pair. A deferring call's row
+   *  records no response bytes: it wrote none. */
+  deferEnvelope?: boolean | undefined;
 }
 
 /**
@@ -248,17 +253,29 @@ export async function withCliInstrumentation<T>(
     };
   }
 
-  // Execute handler
+  // Execute handler. The call is judged on its own exit code (#203), not on
+  // whether the exit code changed: an earlier call in this process — a
+  // previous pair of a batch `set` — may have left it non-zero already, and
+  // a second failure then changes nothing. So a non-zero code is set aside
+  // while the handler runs and put back after it, unless this call failed
+  // too. (Zeroed, not cleared: Bun keeps the old value when exitCode is
+  // assigned undefined.)
   const prevExitCode = process.exitCode;
+  const failedBefore = (prevExitCode ?? 0) !== 0;
+  if (failedBefore) process.exitCode = 0;
   let result: T | undefined;
   let success = true;
   let errorMsg: string | undefined;
   let refusedReason: string | undefined;
+  let thrownCode: string | undefined;
   try {
     result = await Promise.resolve(fn());
   } catch (err) {
     success = false;
     errorMsg = String(err);
+    thrownCode = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
+      : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
+      : 'RUNTIME';
     if (err instanceof ProjectResolutionError) {
       refusedReason = 'project_unresolved';
     } else if (err instanceof StoreUnreadableError) {
@@ -295,9 +312,14 @@ export async function withCliInstrumentation<T>(
     }
     const measuredResponseSize = endResponseMeasure();
 
-    if (success) {
-      success = process.exitCode === prevExitCode;
-    }
+    // Failed if it threw, or left a non-zero exit code. A handler that
+    // assigns the exit code 0 — `run` in JSON mode passes on its command's —
+    // has not failed. An earlier failure still fails the process: its code
+    // comes back unless this call set one of its own. Restored here, before
+    // the envelope is built, because the envelope's `ok` reads the exit code.
+    const ownExitCode = process.exitCode ?? 0;
+    if (success) success = ownExitCode === 0;
+    if (failedBefore && ownExitCode === 0) process.exitCode = prevExitCode;
     // #215: most commands render a refused write through handleError, so the
     // catch above never sees it. Read (and always clear) the note it left.
     if (takeWriteRefused() && refusedReason === undefined) refusedReason = 'store_unreadable';
@@ -319,12 +341,15 @@ export async function withCliInstrumentation<T>(
       after = captureBulkCount(scope);
     }
 
-    // Compute metrics. responseSize is the actual stdout byte count
-    // captured by the wrapper above (matches the MCP wrapper's "bytes
-    // returned to caller" semantic). Falls back to undefined if no
-    // measurement happened (shouldn't occur in practice — every code
-    // path through this wrapper installs a measurement).
-    const responseSize = measuredResponseSize;
+    // The code the failure was reported with (#203): what the handler passed
+    // to printError / failJson, else the class of what it threw, else RUNTIME
+    // for an exit code set with no report — the same fallback the envelope
+    // uses. Always taken, so a code never outlives its call. A text-mode
+    // failure path that sets the exit code itself must call recordErrorCode
+    // with the code its JSON branch reports, or the two modes disagree.
+    const reportedCode = takeErrorCode();
+    const errorCode = success ? undefined : (reportedCode ?? thrownCode ?? 'RUNTIME');
+
     const requestSize = ctx.params ? Buffer.byteLength(JSON.stringify(ctx.params), 'utf8') : undefined;
 
     // Hit detection for reads
@@ -358,8 +383,12 @@ export async function withCliInstrumentation<T>(
       const unshown = withoutShown(unreadable);
       if (jsonMode) {
         // warnings[] is the machine channel: every file, whatever the result
-        // or error already says.
-        for (const file of unreadable) addWarning(unreadableWarning(file), 'STORE_UNREADABLE');
+        // or error already says — once per envelope, however many calls a
+        // batch runs into it.
+        for (const file of unreadable) {
+          const message = unreadableWarning(file);
+          if (!hasWarning(message, 'STORE_UNREADABLE')) addWarning(message, 'STORE_UNREADABLE');
+        }
       } else {
         for (const line of unreadableWarningBlock(unshown)) console.error(line);
       }
@@ -392,6 +421,38 @@ export async function withCliInstrumentation<T>(
       }
     }
 
+    // #120: derive the envelope result from the handler's return value.
+    // Populating `result` stops being per-site setResult discipline —
+    // a handler that returns its payload gets it into the envelope.
+    // Explicit setResult/failJson still win (handlers that need a result
+    // alongside an error, or a result shaped differently from the value
+    // they return to the wrapper for hit detection, e.g. searchEntries).
+    // Done before the rows are written so the envelope can be measured.
+    if (jsonMode && success && !hasError() && result !== undefined && !hasResult()) {
+      setResult(result);
+    }
+
+    // Bytes returned to the caller, the MCP wrapper's semantic. In text mode
+    // that is what the handler printed: its stdout, and under Bun also what
+    // it wrote through console.error, which the measurement above counts. In
+    // JSON mode the handler's stdout is swallowed and the caller receives the
+    // envelope, which is written below, after the rows — so it is serialized
+    // here, once, and that string is what gets written (#192). Every warning
+    // has been added by this point.
+    let envelopeLine: string | undefined;
+    let responseSize = measuredResponseSize;
+    if (jsonMode && ctx.deferEnvelope) {
+      responseSize = 0;
+    } else if (jsonMode && !alreadyEmitted()) {
+      try {
+        envelopeLine = serializeEnvelope();
+        responseSize = Buffer.byteLength(envelopeLine, 'utf8');
+      } catch {
+        // A result that cannot be serialized. The rows are still written;
+        // the emit below raises the error, as it did before this was measured.
+      }
+    }
+
     // Telemetry
     const projectFile = findProjectFile();
     const resolvedScope: 'project' | 'global' | undefined = scope === 'auto'
@@ -409,6 +470,8 @@ export async function withCliInstrumentation<T>(
       hit,
       redundant,
       responseSize,
+      success,
+      ...(errorCode !== undefined && { errorCode }),
       project: projectFile ? path.dirname(projectFile) : undefined,
       refusedReason,
       rescuedByExplicitGlobal,
@@ -430,6 +493,7 @@ export async function withCliInstrumentation<T>(
       before: isWrite ? before : undefined,
       after: isWrite ? after : undefined,
       error: errorMsg,
+      ...(errorCode !== undefined && { errorCode }),
       duration,
       aliasResolved,
       responseSize,
@@ -449,8 +513,10 @@ export async function withCliInstrumentation<T>(
     // Miss-path tracking on CLI reads (#119). Only meaningful when a shared
     // session bridges invocations (trackCliMissPath no-ops otherwise —
     // a window that dies with a one-shot process would log pure noise).
+    // A config call is not a lookup (#206): its key is a setting name, so it
+    // opens no miss window and closes none.
     try {
-      const closedPaths = trackCliMissPath({
+      const closedPaths = !keyIsEntryKey(ctx.tool) ? [] : trackCliMissPath({
         tool: ctx.tool,
         namespace: extractNamespace(ctx.key),
         key: ctx.key ?? '',
@@ -470,17 +536,8 @@ export async function withCliInstrumentation<T>(
     // the envelope reaches the real stdout regardless of patch state. ok and
     // any error are derived inside buildEnvelope from exitCode + recorded
     // failure. Idempotent: a no-op if something already emitted.
-    if (jsonMode) {
-      // #120: derive the envelope result from the handler's return value.
-      // Populating `result` stops being per-site setResult discipline —
-      // a handler that returns its payload gets it into the envelope.
-      // Explicit setResult/failJson still win (handlers that need a result
-      // alongside an error, or a result shaped differently from the value
-      // they return to the wrapper for hit detection, e.g. searchEntries).
-      if (success && !hasError() && result !== undefined && !hasResult()) {
-        setResult(result);
-      }
-      emitEnvelope((s) => { (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(s); });
+    if (jsonMode && !ctx.deferEnvelope) {
+      emitEnvelope((s) => { (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(s); }, envelopeLine);
     }
   }
 
