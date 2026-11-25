@@ -32,10 +32,10 @@ import {
 } from "./utils/paths";
 import { fileURLToPath } from "url";
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
-import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
+import { hasConfirm, gatedAmong, moveConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
-import { KeyCollisionError, assertKeysWritable, renameDestinationProblem } from "./utils/keyCollision";
+import { KeyCollisionError, assertKeysWritable, renameDestinationProblem, renamedLeaves } from "./utils/keyCollision";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
@@ -851,6 +851,12 @@ server.tool(
       // carry over — refuse before the value moves.
       assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
+      // Which of the entries about to move does the gate ask about? Asked
+      // now: it looks at their files, and afterwards those are gone.
+      const movedLeaves = renamedLeaves(resolvedOld, newKey, value);
+      const gatedNow = gatedAmong(movedLeaves.map(([from]) => from));
+      const gatedLeaves = movedLeaves.filter(([from]) => gatedNow.has(from));
+
       // Move the value
       if (typeof value === 'string') {
         setValue(newKey, value, scope);
@@ -895,11 +901,10 @@ server.tool(
         saveAliases(aliases, scope);
       }
 
-      // Move confirm metadata
-      if (hasConfirm(resolvedOld)) {
-        removeConfirm(resolvedOld, scope);
-        setConfirm(newKey, scope);
-      }
+      // Confirm metadata: each gated entry that moved is flagged under its
+      // new key. The old name keeps its flag — it may be what gates an entry
+      // of that name somewhere this rename cannot see.
+      moveConfirm(gatedLeaves, scope);
 
       // Set a new alias on the renamed key
       if (alias) {

@@ -55,11 +55,14 @@ export function displayKeys(keys: string[], keyToAliasMap?: Record<string, strin
 
 export function displayEntries(entries: Record<string, string>, keyToAliasMap?: Record<string, string>): void {
   const aliasMap = keyToAliasMap ?? buildKeyToAliasMap();
-  const confirmKeys = loadConfirmKeys();
+  // Lower-cased: the run gate matches a flag by name, case aside. It also
+  // matches one whose name opens the same entry file (confirm.ts); the tag
+  // does not look at files, so it misses a flag that gates only that way.
+  const confirmKeys = new Set(Object.entries(loadConfirmKeys()).filter(([, flag]) => flag === true).map(([k]) => k.toLowerCase()));
   Object.entries(entries).forEach(([key, value]) => {
     const colorizedPath = colorizePathByLevels(key);
     const alias = aliasMap[key];
-    const confirmTag = confirmKeys[key] ? ` ${color.red('[confirm]')}` : '';
+    const confirmTag = confirmKeys.has(key.toLowerCase()) ? ` ${color.red('[confirm]')}` : '';
     const displayed = isEncrypted(value) ? '[encrypted]' : interpretEscapes(value);
     const lines = displayed.split('\n');
 

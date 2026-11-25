@@ -416,8 +416,8 @@ export function assertSubtreeReadable(target: () => string, key: string, verb: '
  * gates OR this with the entry's own flag, so they fail closed: a conflicted
  * `_confirm.json` loads as empty, and "no flag" would run entries that
  * required confirmation. Call after the flag lookup, which does the scan.
- * Kept apart from hasConfirm(), which must stay literal — rename uses it to
- * decide whether there is a flag to move.
+ * Kept apart from hasConfirm() and moveConfirm(), which answer from the list
+ * as loaded: a rename has to know whether there is a flag to move.
  */
 export function confirmListUnreadable(): boolean {
   return listUnreadableFiles().some(f => f.kind === 'confirm');

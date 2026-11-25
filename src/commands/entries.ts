@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { loadData, handleError, getValue, getValueForWrite, setValue, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
-import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
+import { assertKeysWritable, renameDestinationProblem, renamedLeaves } from '../utils/keyCollision';
 import { isValidEntryKey } from '../utils/directoryStore';
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
@@ -13,7 +13,7 @@ import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
 import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAliases, resolveKey, renameAlias } from '../alias';
-import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey } from '../confirm';
+import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey, moveConfirm, flagsGating, gatedAmong } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
@@ -348,11 +348,99 @@ async function promptAndEncrypt(value: string, passwordFile?: string): Promise<s
   return encryptValue(value, password);
 }
 
+/**
+ * What still gates `key` after a command cleared a flag from it, as a
+ * message, or null when nothing does. Clearing takes the flag listed under
+ * the name given, in the list of the store it is given for — nothing else,
+ * or it would take the flag of another entry. So the key can still be gated,
+ * and reporting it cleared would be false. `removed` says whether the named
+ * flag was there to remove.
+ */
+export function stillGatedNote(key: string, removed: boolean): string | null {
+  const held = flagsGating(key);
+  if (held.length === 0) return null;
+  const bin = getBinaryName();
+  const where = held.map(h => `'${h.key}' in the ${h.scope} list`).join(' and ');
+  const fix = held.map(h => `\`${bin} confirm remove ${h.scope === 'global' ? '-G ' : ''}${h.key}\``).join(', ');
+  const lead = removed
+    ? `The flag listed as '${key}' was removed, but '${key}' still requires confirmation`
+    : `'${key}' still requires confirmation`;
+  return `${lead}: it is flagged as ${where}. A flag is removed only under the name and in the list it is in: ${fix}.`;
+}
+
+/**
+ * The keys stored in the scope a lookup of `scope` covers. Each store is read
+ * on its own: the default view (loadData with no scope) replaces a whole
+ * top-level namespace of the global store with the project's, which hides
+ * global keys that a lookup by key still finds.
+ */
+function storedKeys(scope?: Scope): string[] {
+  if (scope === 'project' || scope === 'global') return Object.keys(flattenObject(loadData(scope)));
+  const keys = new Set(Object.keys(flattenObject(loadData('global'))));
+  if (findProjectFile()) for (const k of Object.keys(flattenObject(loadData('project')))) keys.add(k);
+  return [...keys];
+}
+
+/**
+ * Why a confirmation flag cannot be set on `key` (or, with `setting` false,
+ * cleared from it), or null when it can.
+ *
+ * A flag gates `run`, and `run` takes an entry that holds a command. Two
+ * requests used to report "now requires confirmation" and gate nothing, and
+ * are refused:
+ *
+ *   - a key that names no entry (a typo): `confirm set` did not look;
+ *   - a namespace: the lookup found the subtree, and `run` never takes one.
+ *
+ * Another spelling of an entry is accepted. The gate matches a flag by name,
+ * case aside, and by the file the name opens (confirm.ts), so a flag listed
+ * as `commands.Deploy` does gate the entry stored as `commands.deploy`.
+ * Refusing it would leave unflagged what the user asked to flag.
+ *
+ * Clearing is looser about one thing: a namespace is accepted, so a flag
+ * that an older version put on one can be taken off again.
+ *
+ * `unreadableIsEntry`: an entry whose file cannot be read (#215) is still an
+ * entry. `confirm set` flags it; the flag-only `set` keeps refusing, as it
+ * does for every other write to such a key, by letting the read throw.
+ */
+export function confirmTargetProblem(
+  key: string,
+  scope?: Scope,
+  setting = true,
+  unreadableIsEntry = false,
+): { message: string; code: 'NOT_FOUND' | 'INVALID_INPUT' } | null {
+  let value: CodexValue | undefined;
+  try {
+    value = getValue(key, scope);
+  } catch (err) {
+    if (unreadableIsEntry && err instanceof StoreUnreadableError) return null;
+    throw err;
+  }
+  if (value !== undefined && typeof value !== 'string') {
+    return !setting ? null : {
+      code: 'INVALID_INPUT',
+      message: `'${key}' is a namespace, not an entry. A confirmation flag goes on an entry that holds a command: set it on the entries under '${key}'.`,
+    };
+  }
+  // An entry reads under this key: stored under it, or under a spelling the
+  // filesystem folds onto it.
+  if (value !== undefined) return null;
+  // Nothing reads. On a filesystem that folds nothing, another case of a
+  // stored key lands here, and it names an entry all the same.
+  const lower = key.toLowerCase();
+  if (storedKeys(scope).some(k => k.toLowerCase() === lower)) return null;
+  return { code: 'NOT_FOUND', message: `Entry '${key}' not found. Cannot update confirm on a non-existent entry.` };
+}
+
 async function handlePostSetConfirm(key: string, confirm: boolean | undefined, scope?: Scope  ): Promise<void> {
   if (confirm === true) {
     setConfirm(key, scope);
   } else if (confirm === false) {
-    removeConfirm(key, scope);
+    const removed = removeConfirm(key, scope);
+    // The value is stored either way; say so if the key is still gated.
+    const note = stillGatedNote(key, removed);
+    if (note) printWarning(note);
   } else if (process.stdin.isTTY) {
     // #215: with the confirmation list unreadable the answer could not be
     // saved — the value is already written, so do not ask.
@@ -378,9 +466,9 @@ export async function setEntry(key: string, value: string | undefined, force = f
     if (value === undefined) {
       // Handle --confirm / --no-confirm on an existing entry (no value needed)
       if (confirm !== undefined) {
-        const existing = getValue(key, scope);
-        if (existing === undefined) {
-          printError(`Entry '${key}' not found. Cannot update confirm on a non-existent entry.`, 'NOT_FOUND');
+        const problem = confirmTargetProblem(key, scope, confirm);
+        if (problem) {
+          printError(problem.message, problem.code);
           process.exitCode = 1;
           return;
         }
@@ -392,8 +480,14 @@ export async function setEntry(key: string, value: string | undefined, force = f
           setConfirm(key, scope);
           printSuccess(`Entry '${key}' now requires confirmation to run.`);
         } else {
-          removeConfirm(key, scope);
-          printSuccess(`Entry '${key}' no longer requires confirmation to run.`);
+          const removed = removeConfirm(key, scope);
+          const note = stillGatedNote(key, removed);
+          if (note) {
+            printError(note, 'INVALID_INPUT');
+            process.exitCode = 1;
+          } else {
+            printSuccess(`Entry '${key}' no longer requires confirmation to run.`);
+          }
         }
         if (alias) {
           setAlias(alias, key, scope);
@@ -1006,6 +1100,12 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   // refuse before the value moves.
   assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
+  // Which of the entries about to move does the gate ask about? Asked now:
+  // it looks at their files, and afterwards those are gone.
+  const leaves = renamedLeaves(oldKey, newKey, value);
+  const gatedNow = gatedAmong(leaves.map(([from]) => from));
+  const gatedLeaves = leaves.filter(([from]) => gatedNow.has(from));
+
   // Move the value. A refused collision (#216 / #224) is thrown before
   // anything is written; report it and leave the source where it is.
   try {
@@ -1060,11 +1160,10 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     saveAliases(aliases, scope);
   }
 
-  // Move confirm metadata
-  if (hasConfirm(oldKey)) {
-    removeConfirm(oldKey, scope);
-    setConfirm(newKey, scope);
-  }
+  // Confirm metadata: each gated entry that moved is flagged under its new
+  // key. The old name keeps its flag — it may be what gates an entry of that
+  // name somewhere this rename cannot see.
+  moveConfirm(gatedLeaves, scope);
 
   // Set a new alias on the renamed key
   if (newAlias) {

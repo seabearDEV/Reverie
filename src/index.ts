@@ -474,6 +474,16 @@ confirmCommand
     await withCliInstrumentation(
       { tool: 'reverie_confirm_set', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
+        // The key has to name an entry. This command used to skip the check
+        // and report success for a key that named nothing. It is looked up in
+        // both stores whatever list -G selects: a flag gates by name wherever
+        // the entry lives, so `confirm set -G` on a project entry is a
+        // request that can be met.
+        const problem = commands.confirmTargetProblem(resolvedKey, undefined, true, true);
+        if (problem) {
+          printError(problem.message, problem.code);
+          return undefined;
+        }
         setConfirm(resolvedKey, scope);
         console.log(`Entry '${resolvedKey}' now requires confirmation to run.`);
         return { key: resolvedKey, confirm: true };
@@ -491,8 +501,18 @@ confirmCommand
     await withCliInstrumentation(
       { tool: 'reverie_confirm_remove', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
-        removeConfirm(resolvedKey, scope);
-        console.log(`Confirmation removed from '${resolvedKey}'.`);
+        const removed = removeConfirm(resolvedKey, scope);
+        // Removal is exact, so the key can still be gated: by a flag under
+        // another spelling, or in the other store's list. This used to
+        // print "removed" whatever had happened.
+        const note = commands.stillGatedNote(resolvedKey, removed);
+        if (note) {
+          printError(note, 'INVALID_INPUT');
+          return undefined;
+        }
+        console.log(removed
+          ? `Confirmation removed from '${resolvedKey}'.`
+          : `'${resolvedKey}' did not require confirmation: no flag is listed for it.`);
         return { key: resolvedKey, confirm: false };
       }
     );

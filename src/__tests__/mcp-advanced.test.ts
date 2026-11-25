@@ -158,6 +158,10 @@ vi.mock('../confirm', () => ({
   hasConfirm: vi.fn((key: string) => mockConfirmKeys[key] === true),
   setConfirm: vi.fn((key: string) => { mockConfirmKeys[key] = true; }),
   removeConfirm: vi.fn((key: string) => { delete mockConfirmKeys[key]; }),
+  gatedAmong: vi.fn((keys: string[]) => new Set(keys.filter(k => mockConfirmKeys[k] === true))),
+  moveConfirm: vi.fn((gated: [string, string][]) => {
+    for (const [, to] of gated) mockConfirmKeys[to] = true;
+  }),
   loadConfirmKeys: vi.fn(() => ({ ...mockConfirmKeys })),
   saveConfirmKeys: vi.fn((c: any) => {
     Object.keys(mockConfirmKeys).forEach(k => delete mockConfirmKeys[k]);

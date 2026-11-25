@@ -162,12 +162,15 @@ describe('entries advanced', () => {
       expect(data.aliases.src).toBe('rn.dst');
     });
 
-    it('moves confirm metadata on rename', () => {
+    it('carries confirm metadata to the new key on rename, and keeps the old name flagged', () => {
+      // A rename removes no flag: the old name's may be what gates an entry
+      // of that name in another project, which the rename cannot see
+      // (confirm.ts). `confirm remove` clears it when it is stale.
       run('set --force rn.confirmed "cmd" --confirm');
       run('rename rn.confirmed rn.moved');
       const data = readData();
       expect(data.confirm['rn.moved']).toBe(true);
-      expect(data.confirm['rn.confirmed']).toBeUndefined();
+      expect(data.confirm['rn.confirmed']).toBe(true);
     });
 
     it('errors when target key exists', () => {

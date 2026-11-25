@@ -391,7 +391,7 @@ rvr cp server.ip server.ip.backup -f
 Rename entry keys or aliases without re-creating them:
 
 ```bash
-# Rename an entry key (moves the value, updates aliases)
+# Rename an entry key (moves the value, updates aliases, flags the new key if the old one required confirmation)
 rvr rename server.old server.new
 
 # Rename an alias
@@ -745,6 +745,8 @@ rvr confirm remove commands.deploy
 rvr run commands.deploy -y
 ```
 
+The key has to name an entry: `confirm set` and `set <key> --confirm` refuse a key that is not in the store and a namespace. A flagged command asks for confirmation under any spelling that reaches it, directly, through a `${reference}` or through an alias: on a filesystem that ignores case, `rvr run commands.Deploy` opens the entry stored as `commands.deploy`, and is gated like it. `confirm remove` clears the flag listed under the name it is given, and tells you if the key is still gated by another one. Renaming an entry or a namespace flags the new keys of the gated entries it moves and leaves the old names flagged; clear those with `confirm remove` once nothing uses them.
+
 ### Staleness Detection
 
 Track when entries were last updated and find stale knowledge that may need refreshing.
@@ -1014,7 +1016,7 @@ claude mcp add reverie -- bun /absolute/path/to/dist/mcp-server.js
 | `reverie_get` | Retrieve stored knowledge by dot-notation key, or list all entries (staleness tags on stale/untracked entries, optional decrypt) |
 | `reverie_remove` | Remove a stored entry or alias by key |
 | `reverie_copy` | Copy an entry to a new key (optional force to overwrite) |
-| `reverie_rename` | Rename an entry key or alias (re-points aliases, migrates confirm metadata) |
+| `reverie_rename` | Rename an entry key or alias (re-points aliases, carries confirm flags to the new keys) |
 | `reverie_find` | Search stored knowledge by keyword (keys, values, or both; regex supported) |
 | `reverie_alias_set` | Create or update an alias for a dot-notation path |
 | `reverie_alias_remove` | Remove an alias |
