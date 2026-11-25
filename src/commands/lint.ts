@@ -127,6 +127,26 @@ export function checkSeedQuality(flat: Record<string, string>): SeedIssue[] {
   return issues;
 }
 
+const CASE_COLLISION_FIX = 'On a case-insensitive filesystem (default macOS, Windows) each pair is one file. Rename or remove one key of each pair.';
+
+function caseCollisionHeadline(n: number): string {
+  return `${n} pair${n === 1 ? '' : 's'} of keys cannot both be stored`;
+}
+
+function describePair([a, b]: [string, string]): string {
+  return `'${a}' and '${b}'`;
+}
+
+/** The keys of the one store lint is looking at, for the case-collision check. */
+function caseCheckedKeys(flat: Record<string, string>, global: boolean | undefined): string[] {
+  if (global || !findProjectFile()) return Object.keys(flat);
+  try {
+    return Object.keys(getEntriesFlat('project'));
+  } catch {
+    return Object.keys(flat);
+  }
+}
+
 function loadCustomSchema(): string[] | null {
   const projectFile = findProjectFile();
   if (!projectFile) return null;
@@ -148,26 +168,6 @@ export interface LintResult {
   key: string;
   namespace: string;
   message: string;
-}
-
-const CASE_COLLISION_FIX = 'On a case-insensitive filesystem (default macOS, Windows) each pair is one file. Rename or remove one key of each pair.';
-
-function caseCollisionHeadline(n: number): string {
-  return `${n} pair${n === 1 ? '' : 's'} of keys cannot both be stored`;
-}
-
-function describePair([a, b]: [string, string]): string {
-  return `'${a}' and '${b}'`;
-}
-
-/** The keys of the one store lint is looking at, for the case-collision check. */
-function caseCheckedKeys(flat: Record<string, string>, global: boolean | undefined): string[] {
-  if (global || !findProjectFile()) return Object.keys(flat);
-  try {
-    return Object.keys(getEntriesFlat('project'));
-  } catch {
-    return Object.keys(flat);
-  }
 }
 
 export function lintEntries(options: { json?: boolean; global?: boolean; seedQuality?: boolean } = {}): void {
@@ -194,6 +194,11 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
 
   const seedIssues = options.seedQuality ? checkSeedQuality(flat) : [];
 
+  // #215: files that exist but do not parse. Everything else lint reports is
+  // advice; this is a broken store, and the one finding that fails the
+  // command. getEntriesFlat above scanned the store(s) — no extra read.
+  const unreadable = listUnreadableFiles();
+
   // #216: keys in one store that differ only by case. On a case-insensitive
   // filesystem they are one file, so whoever checks the store out there gets
   // one of the two entries under both names. `rvr` no longer creates such a
@@ -204,18 +209,12 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
   // each is two files in two directories.
   const caseCollisions = findCollidingPairs(caseCheckedKeys(flat, options.global));
 
-  // #215: files that exist but do not parse. Everything else lint reports is
-  // advice; this is a broken store, and the one finding that fails the
-  // command. getEntriesFlat above scanned the store(s) — no extra read.
-  const unreadable = listUnreadableFiles();
-
   if (isJsonMode()) {
     const payload: Record<string, unknown> = {
       issues: namespaceIssues,
       allowed: allowedNamespaces,
     };
     if (options.seedQuality) payload.seedQuality = seedIssues;
-    if (caseCollisions.length > 0) payload.caseCollisions = caseCollisions.map(keys => ({ keys }));
     if (unreadable.length > 0) {
       payload.unreadable = unreadable.map(f => ({
         kind: f.kind,
@@ -225,6 +224,7 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
         fix: resolutionHint(f),
       }));
     }
+    if (caseCollisions.length > 0) payload.caseCollisions = caseCollisions.map(keys => ({ keys }));
     setResult(payload);
     if (unreadable.length > 0) {
       failJson('STORE_UNREADABLE', `${unreadable.length} store file${unreadable.length === 1 ? '' : 's'} cannot be read: ${unreadable.map(describeUnreadable).join('; ')}.`);
