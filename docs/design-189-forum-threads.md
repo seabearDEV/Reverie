@@ -106,7 +106,7 @@ Each is one PR with its own tests.
 
 | # | Slice | Size | Needs |
 |---|---|---|---|
-| 1 | Store layer: `utils/replies.ts`, `utils/committer.ts` (new files only) | M | nothing |
+| 1 | Store layer: `utils/replies.ts`, `utils/committer.ts` (new files only) | M | O1 decided |
 | 2 | Miss rows carry the project | S | nothing |
 | 3 | The reply verb, the remove / rename / reset cascade, orphan `lint` | L | 1; #216 and #224 merged |
 | 4 | `get` opens the thread | M | 1; #216 and #224 merged |
@@ -117,7 +117,7 @@ Each is one PR with its own tests.
 | 9 | Compaction | M | 3, 4, 5 |
 | 10 | Export / import, docs, smoke lines; close #186 | S–M | all |
 
-Slices 1 and 2 can start now and run in parallel. Slices 3, 4 and 5 can run in parallel once 1 lands. Slice 7 can run beside 4–6. No reply file can exist before slice 3, which carries the cascades, so nothing is orphaned in between.
+Slice 2 can start now. Slice 1 can start as soon as O1 is decided, since it carries the committer identity, and the two can run in parallel. Slices 3, 4 and 5 can run in parallel once 1 lands. Slice 7 can run beside 4–6. No reply file can exist before slice 3, which carries the cascades, so nothing is orphaned in between.
 
 Which issue each slice closes: #189 after 3–5; #215 after 6 and 7; #226 after 8; #227 after 9; #186 after 10.
 
