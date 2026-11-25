@@ -391,7 +391,7 @@ rvr cp server.ip server.ip.backup -f
 Rename entry keys or aliases without re-creating them:
 
 ```bash
-# Rename an entry key (moves the value, updates aliases)
+# Rename an entry key (moves the value, updates aliases, flags the new key if the old one required confirmation)
 rvr rename server.old server.new
 
 # Rename an alias
@@ -1016,7 +1016,7 @@ claude mcp add reverie -- bun /absolute/path/to/dist/mcp-server.js
 | `reverie_get` | Retrieve stored knowledge by dot-notation key, or list all entries (staleness tags on stale/untracked entries, optional decrypt) |
 | `reverie_remove` | Remove a stored entry or alias by key |
 | `reverie_copy` | Copy an entry to a new key (optional force to overwrite) |
-| `reverie_rename` | Rename an entry key or alias (re-points aliases, migrates confirm metadata) |
+| `reverie_rename` | Rename an entry key or alias (re-points aliases, carries confirm flags to the new keys) |
 | `reverie_find` | Search stored knowledge by keyword (keys, values, or both; regex supported) |
 | `reverie_alias_set` | Create or update an alias for a dot-notation path |
 | `reverie_alias_remove` | Remove an alias |

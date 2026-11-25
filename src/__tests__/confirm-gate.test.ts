@@ -242,6 +242,8 @@ describe('the confirmation gate follows the entry', () => {
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("'commands.deploy' still requires confirmation: it is flagged as 'commands.DEPLOY' in the project list");
       expect(r.stderr).toContain('confirm remove commands.DEPLOY');
+      // Nothing was listed under the name given, and the message must not say otherwise.
+      expect(r.stderr).not.toContain('was removed');
       expect(r.stdout).not.toContain('Confirmation removed');
       expect(json('confirm', 'remove', 'commands.deploy').error?.code).toBe('INVALID_INPUT');
       expect(projectFlags()).toEqual(['Commands.Status', 'commands.DEPLOY']);
@@ -275,6 +277,7 @@ describe('the confirmation gate follows the entry', () => {
       const r = rvr('set', 'commands.deploy', '--no-confirm');
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("still requires confirmation: it is flagged as 'commands.DEPLOY' in the project list");
+      expect(r.stderr).not.toContain('was removed');
       expect(r.stdout).not.toContain('no longer requires confirmation');
       expect(projectFlags()).toEqual(['Commands.Status', 'commands.DEPLOY']);
     });
@@ -653,6 +656,7 @@ describe('the confirmation gate follows the entry', () => {
         const r = rvr('confirm', 'remove', 'both.deploy');
         expect(r.status).toBe(1);
         expect(r.stderr).toContain("'both.deploy' still requires confirmation: it is flagged as 'both.deploy' in the global list");
+        expect(r.stderr).not.toContain('was removed');
         expect(r.stderr).toContain('confirm remove -G both.deploy');
         expect(globalFlags()).toEqual(['both.deploy']);
         expect(rvr('confirm', 'remove', '-G', 'both.deploy').status).toBe(0);
