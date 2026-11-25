@@ -40,7 +40,7 @@ import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
-import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, interpolateForRead, unresolvedWarning } from "./utils/interpolate";
+import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, interpolateForRead, unresolvedWarning, unresolvedOverflowNote } from "./utils/interpolate";
 import type { UnresolvedOnRead } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace, keyIsEntryKey } from "./utils/telemetry";
 import { resolveAgentIdentity } from "./utils/agentIdentity";
@@ -264,7 +264,8 @@ function extractEntryCount(text: string): number | undefined {
   const tierMatch = /\((\d+) entries?[):]/.exec(text);
   if (tierMatch) return parseInt(tierMatch[1], 10);
   // Count non-empty content lines (rough approximation for listings)
-  const lines = text.split('\n').filter(l => l.trim() && !l.startsWith('[tier:') && !l.startsWith('Aliases:'));
+  // A `warning:` line is about the entries, not one of them (#202).
+  const lines = text.split('\n').filter(l => l.trim() && !l.startsWith('[tier:') && !l.startsWith('Aliases:') && !l.startsWith('warning:'));
   return lines.length > 0 ? lines.length : undefined;
 }
 
@@ -675,7 +676,7 @@ server.tool(
         });
         // #202: name what came back as written; past ten, count the rest.
         for (const [k, u] of unresolved.slice(0, 10)) lines.push(`warning: ${unresolvedWarning(k, u)}`);
-        if (unresolved.length > 10) lines.push(`warning: ${unresolved.length - 10} more entries hold a reference that does not resolve.`);
+        if (unresolved.length > 10) lines.push(`warning: ${unresolvedOverflowNote(unresolved.length - 10)}.`);
         return textResponse(lines.join("\n"));
       }
       return textResponse(Object.keys(flat).join("\n"));

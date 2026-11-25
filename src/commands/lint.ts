@@ -1,7 +1,7 @@
 import { getEntriesFlat, Scope } from '../storage';
 import { color } from '../formatting';
 import { findProjectFile } from '../store';
-import { interpolate, interpolateForRead, unresolvedWarning, UnresolvedReferenceError } from '../utils/interpolate';
+import { interpolateForRead, unresolvedWarning } from '../utils/interpolate';
 import { isJsonMode, setResult, failJson, recordErrorCode } from '../utils/output';
 import { describeUnreadable, displayPath, listUnreadableFiles, markUnreadableShown, resolutionHint } from '../utils/unreadable';
 import { findCollidingPairs } from '../utils/keyCollision';
@@ -111,14 +111,14 @@ export function checkSeedQuality(flat: Record<string, string>): SeedIssue[] {
     }
 
     // Heuristic 3: interpolation landmine (#39 follow-up) — a value whose
-    // read fails: a `:?` that is not met, or a cycle. A plain reference that
-    // does not resolve is no longer one of these (#202): a read returns it
-    // as written, and every lint lists it (findUnresolvedReferences), so
-    // flagging it here too listed the entry twice, once as "would error".
+    // read fails: a `:?` that is not met, or a cycle. Asked of the read rule
+    // itself (interpolateForRead), so the two cannot drift apart: whatever a
+    // read returns as written (#202) is not one of these. Every lint lists
+    // those (findUnresolvedReferences), and flagging them here too listed
+    // the entry twice, once as "would error".
     try {
-      interpolate(value);
+      interpolateForRead(value);
     } catch (err) {
-      if (err instanceof UnresolvedReferenceError) continue;
       issues.push({
         key,
         code: 'interp-landmine',
@@ -207,6 +207,15 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
     }
   }
 
+  // #215: files that exist but do not parse. Everything else lint reports is
+  // advice; this is a broken store, and the one finding that fails the
+  // command. getEntriesFlat above scanned the store(s) — no extra read.
+  // Taken BEFORE the two passes below: they resolve references, a reference
+  // is looked up project-first, and that scan registers the project store's
+  // unreadable files. Listed after them, `lint -G` failed on a project file
+  // whenever a global entry held a reference.
+  const unreadable = listUnreadableFiles();
+
   const seedIssues = options.seedQuality ? checkSeedQuality(flat) : [];
 
   // #202: references that do not resolve, checked on every lint — this was
@@ -214,11 +223,6 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
   // entries could not be read. Advice, like the namespace check: a read
   // returns such a value as written, and only `run` fails on it.
   const unresolvedRefs = findUnresolvedReferences(flat);
-
-  // #215: files that exist but do not parse. Everything else lint reports is
-  // advice; this is a broken store, and the one finding that fails the
-  // command. getEntriesFlat above scanned the store(s) — no extra read.
-  const unreadable = listUnreadableFiles();
 
   // #216: keys in one store that differ only by case. On a case-insensitive
   // filesystem they are one file, so whoever checks the store out there gets
