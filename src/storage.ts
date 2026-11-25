@@ -5,7 +5,7 @@ import { debug } from './utils/debug';
 import { Scope, loadEntries, saveEntries, loadEntriesMerged, findProjectFile, saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta, getEntryFast, setEntryFast } from './store';
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, ProjectResolutionError } from './projectResolution';
-import { StoreUnreadableError, markUnreadableShown, noteWriteRefused } from './utils/unreadable';
+import { StoreUnreadableError, markUnreadableShown, noteWriteRefused, readForWrite } from './utils/unreadable';
 import { isJsonMode, failJson } from './utils/output';
 
 export type { Scope } from './store';
@@ -148,18 +148,12 @@ export function getValue(key: string, scope?: Scope  ): CodexValue | undefined {
 /**
  * Existence pre-read for a key that is about to be written (the overwrite
  * prompt, a copy/rename destination). An entry file that does not parse makes
- * getValue throw a *read* error; here the caller is writing, so re-word it as
- * the refused write it is (#215).
+ * getValue throw a *read* error; here the caller is writing, so it becomes
+ * the refused write it is (#215) — but only when the file is in the store the
+ * write lands in. See readForWrite.
  */
 export function getValueForWrite(key: string, scope?: Scope): CodexValue | undefined {
-  try {
-    return getValue(key, scope);
-  } catch (err) {
-    if (err instanceof StoreUnreadableError && err.attempted === 'read') {
-      throw new StoreUnreadableError(err.files, 'write');
-    }
-    throw err;
-  }
+  return readForWrite<CodexValue | undefined, Scope>(s => getValue(key, s), scope, () => resolveScopeForWrite(scope));
 }
 
 /**

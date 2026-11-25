@@ -36,9 +36,28 @@ export function classifyUnparseable(raw: string): UnreadableReason {
   return /^<{7}(?: |\r?$)/m.test(raw) && /^>{7}(?: |\r?$)/m.test(raw) ? 'conflict' : 'parse';
 }
 
-/** Path as the user would type it: relative when it is under the cwd. */
+let absoluteDisplayPaths = false;
+
+/**
+ * Always name files by absolute path. The MCP server turns this on: it takes
+ * its project from RVR_PROJECT or the client's roots, not from its own
+ * working directory, so a path relative to that directory points nowhere the
+ * reader is — and the fix the messages print is a command to paste.
+ */
+export function setAbsoluteDisplayPaths(on: boolean): void {
+  absoluteDisplayPaths = on;
+}
+
+/**
+ * Path as the user would type it: relative when it is under the cwd. Never
+ * relative to a filesystem root — `path.relative('/', p)` only strips the
+ * leading slash, which names a file that exists from nowhere else.
+ */
 export function displayPath(p: string): string {
-  const rel = path.relative(process.cwd(), p);
+  if (absoluteDisplayPaths) return p;
+  const cwd = process.cwd();
+  if (path.parse(cwd).root === cwd) return p;
+  const rel = path.relative(cwd, p);
   return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : p;
 }
 
@@ -118,6 +137,37 @@ export class StoreUnreadableError extends Error {
     this.name = 'StoreUnreadableError';
     this.files = files;
     this.attempted = attempted;
+  }
+}
+
+/**
+ * Existence pre-read for a key a command is about to write: the overwrite
+ * prompt, a copy or rename destination. `read` looks the key up the way reads
+ * do — in auto scope that falls through from the project store to the global
+ * one — and the healthy path is exactly that lookup: a value that exists only
+ * in the global store still counts as "already exists".
+ *
+ * A file that does not parse is a refused write only if it sits in the store
+ * the write will land in. An unreadable global file must not block a write to
+ * the project store, which would never touch it. So when the lookup fails on
+ * one, ask again in the write's own store (`writeScope`; if that cannot be
+ * resolved, its error is the precise one and propagates), and re-word a
+ * failure there as the refused write it is.
+ */
+export function readForWrite<T, S>(read: (scope: S | undefined) => T, scope: S | undefined, writeScope: () => S): T {
+  try {
+    return read(scope);
+  } catch (err) {
+    if (!(err instanceof StoreUnreadableError) || err.attempted !== 'read') throw err;
+    const target = writeScope();
+    try {
+      return read(target);
+    } catch (inner) {
+      if (inner instanceof StoreUnreadableError && inner.attempted === 'read') {
+        throw new StoreUnreadableError(inner.files, 'write');
+      }
+      throw inner;
+    }
   }
 }
 

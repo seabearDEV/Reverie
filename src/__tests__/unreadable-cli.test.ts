@@ -305,6 +305,18 @@ describe('a store with git conflict markers in it (#215)', () => {
       expect(read('_aliases.json')).toBe(before);
     });
 
+    it('set --confirm -a with no value refuses before the confirmation list is written', () => {
+      // Two writes: the flag, then the alias. A refusal at the second used to
+      // leave the first one done, under a message saying nothing was written.
+      const confirmBefore = read('_confirm.json');
+      const r = rvr('set', '--global', 'commands.hello', '--confirm', '-a', 'hi');
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('Refusing to write the alias map');
+      expect(r.stdout).not.toContain('now requires confirmation');
+      expect(read('_confirm.json')).toBe(confirmBefore);
+      expect(read('_aliases.json')).toBe(before);
+    });
+
     it('reads say no aliases are being read; entry writes still work', () => {
       const r = rvr('get', 'arch.store');
       expect(r.status).toBe(0);
@@ -369,5 +381,78 @@ describe('a store with git conflict markers in it (#215)', () => {
       expect(r.stderr).toContain('Refusing to write the confirmation list');
       expect(read('_confirm.json')).toBe(before);
     });
+  });
+});
+
+// A project store beside the global one. Reads in the default scope look in
+// the project first and fall through to the global store; writes land in the
+// project. A broken file is a refused write only where the write would land.
+describe('a project store beside a global one (#215)', () => {
+  const cli = path.resolve('dist/index.js');
+  let dataDir: string;
+  let projectDir: string;
+
+  const rvrIn = (cwd: string, ...args: string[]) => {
+    const e: Record<string, string | undefined> = { ...process.env, RVR_DATA_DIR: dataDir };
+    delete e.RVR_SESSION;
+    delete e.RVR_NO_PROJECT;
+    delete e.RVR_PROJECT;
+    const r = spawnSync('bun', [cli, ...args], { cwd, env: e as NodeJS.ProcessEnv, input: '' });
+    return { stdout: r.stdout.toString(), stderr: r.stderr.toString(), status: r.status };
+  };
+  const json = (...args: string[]): Envelope => JSON.parse(rvrIn(projectDir, '--json', ...args).stdout) as Envelope;
+  const globalFile = (name: string) => path.join(dataDir, 'store', name);
+  const projectFile = (name: string) => path.join(projectDir, '.reverie', name);
+  const TRUNCATED = '{\n  "value": "trunc';
+
+  beforeAll(() => { assertDistHonorsDataDir(); });
+
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-unreadable-data-'));
+    projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-unreadable-proj-'));
+    expect(rvrIn(projectDir, 'init', '--no-scan', '--no-claude', '--no-agents').status).toBe(0);
+    expect(rvrIn(projectDir, 'set', '--global', 'zz.note', 'global value').status).toBe(0);
+    expect(rvrIn(projectDir, 'set', 'arch.store', 'file per entry').status).toBe(0);
+    fs.writeFileSync(globalFile('zz.note.json'), TRUNCATED);
+  });
+  afterEach(() => {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  it('a broken GLOBAL file does not block a project write of the same key', () => {
+    const e = json('set', 'zz.note', 'project value');
+    expect(e.ok).toBe(true);
+    expect((JSON.parse(fs.readFileSync(projectFile('zz.note.json'), 'utf8')) as { value: string }).value).toBe('project value');
+    expect(fs.readFileSync(globalFile('zz.note.json'), 'utf8')).toBe(TRUNCATED);
+  });
+
+  it('nor a copy or a rename onto that key in the project', () => {
+    expect(json('copy', 'arch.store', 'zz.note').ok).toBe(true);
+    expect(fs.existsSync(projectFile('zz.note.json'))).toBe(true);
+    fs.rmSync(projectFile('zz.note.json'));
+    expect(json('rename', 'arch.store', 'zz.note').ok).toBe(true);
+    expect(fs.existsSync(projectFile('zz.note.json'))).toBe(true);
+    expect(fs.readFileSync(globalFile('zz.note.json'), 'utf8')).toBe(TRUNCATED);
+  });
+
+  it('a write aimed at the global store is still refused, and a read still fails', () => {
+    const w = json('set', '--global', 'zz.note', 'replacement');
+    expect(w.ok).toBe(false);
+    expect(w.error?.code).toBe('STORE_UNREADABLE');
+    expect(w.error?.message).toMatch(/^Refusing to write entry 'zz\.note'/);
+    expect(fs.readFileSync(globalFile('zz.note.json'), 'utf8')).toBe(TRUNCATED);
+
+    const r = json('get', 'zz.note');
+    expect(r.ok).toBe(false);
+    expect(r.error?.code).toBe('STORE_UNREADABLE');
+  });
+
+  it('a broken PROJECT file is still a refused write', () => {
+    fs.writeFileSync(projectFile('arch.store.json'), TRUNCATED);
+    const e = json('set', 'arch.store', 'replacement');
+    expect(e.ok).toBe(false);
+    expect(e.error?.code).toBe('STORE_UNREADABLE');
+    expect(fs.readFileSync(projectFile('arch.store.json'), 'utf8')).toBe(TRUNCATED);
   });
 });

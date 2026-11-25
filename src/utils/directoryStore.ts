@@ -487,6 +487,33 @@ export function createDirectoryStore(
   }
 
   /**
+   * Has a file recorded as unreadable changed, or gone, since the scan that
+   * recorded it (#215)? The directory-mtime fast skip below assumes every
+   * writer adds or removes a directory entry. The store's own atomic writes
+   * do, and so does git; a person repairing a broken file with an editor save
+   * or `cp backup <file>` rewrites it in place and leaves the directory
+   * untouched. Without this check a long-lived process keeps reporting the
+   * file, keeps the entry out of load(), and — the next time it saves — acts
+   * on that stale picture: the repaired entry is absent from the data being
+   * saved, so it is deleted; a repaired alias map is rewritten from empty.
+   * Costs one stat per unreadable file, and nothing on a healthy store.
+   */
+  function unreadableFileChanged(): boolean {
+    const recorded: [string, number][] = [];
+    for (const u of unreadableEntries.values()) recorded.push([u.file.path, u.mtimeMs]);
+    if (aliasesCache?.unreadable) recorded.push([aliasesCache.unreadable.path, aliasesCache.mtimeMs]);
+    if (confirmCache?.unreadable) recorded.push([confirmCache.unreadable.path, confirmCache.mtimeMs]);
+    for (const [filePath, mtimeMs] of recorded) {
+      try {
+        if (fs.statSync(filePath).mtimeMs !== mtimeMs) return true;
+      } catch {
+        return true; // gone, or not statable: let the full scan decide
+      }
+    }
+    return false;
+  }
+
+  /**
    * Scan the directory and refresh caches: re-read any entry whose mtime has
    * changed, drop cache entries for files that no longer exist, and reload
    * the sidecars. Must be called with or without the lock depending on caller
@@ -500,10 +527,12 @@ export function createDirectoryStore(
     // inside it (atomicWriteFileSync's create-tmp + rename bumps the dir
     // mtime as a side effect of adding and removing the tmp dirent), so
     // the entry cache, sidecar caches, and seqlock epoch file are all
-    // still authoritative. Skip the readdir + per-entry stat loop.
+    // still authoritative. Skip the readdir + per-entry stat loop — unless a
+    // file recorded as unreadable has since been repaired in place, which
+    // the directory mtime cannot show.
     try {
       const dirStat = fs.statSync(dir);
-      if (dirMtimeMs !== -1 && dirStat.mtimeMs === dirMtimeMs) {
+      if (dirMtimeMs !== -1 && dirStat.mtimeMs === dirMtimeMs && !unreadableFileChanged()) {
         return;
       }
       dirMtimeMs = dirStat.mtimeMs;
@@ -551,7 +580,12 @@ export function createDirectoryStore(
       }
       seen.add(key);
       const cached = entryCache.get(key);
-      if (cached?.mtimeMs === mtimeMs) continue;
+      if (cached?.mtimeMs === mtimeMs) {
+        // A key is in at most one of the two maps. A current cache entry
+        // means the file parsed (or we wrote it) after it was recorded.
+        unreadableEntries.delete(key);
+        continue;
+      }
       if (unreadableEntries.get(key)?.mtimeMs === mtimeMs) continue;
       try {
         const raw = readStoreFile(filePath);
@@ -773,6 +807,7 @@ export function createDirectoryStore(
         atomicWriteFileSync(filePath, serializeEntryWrapper(wrapper));
         const mtimeMs = fs.statSync(filePath).mtimeMs;
         entryCache.set(key, { wrapper, mtimeMs });
+        unreadableEntries.delete(key);
       }
 
       // 5. Sidecars — rewrite only if changed. After a write, pick up the
@@ -954,6 +989,9 @@ export function createDirectoryStore(
 
         // Refresh the per-entry cache so a subsequent load() doesn't re-read
         // a file we just wrote ourselves.
+        // The write went through, so the file parses: it was read fresh above.
+        // Drop any record of it as unreadable left by an earlier scan (#215).
+        unreadableEntries.delete(key);
         try {
           const mtimeMs = fs.statSync(filePath).mtimeMs;
           entryCache.set(key, { wrapper, mtimeMs });

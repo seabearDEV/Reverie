@@ -5,7 +5,7 @@
  * file system operations through the actual store layer. This catches
  * wiring bugs between the MCP tool handlers and the persistence layer.
  */
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -104,6 +104,60 @@ function callMcpTool(tool: string, params: Record<string, unknown> = {}, opts: {
       } catch { /* skip */ }
     }
     throw new Error(`MCP call failed: ${e.message}\nstdout: ${stdout}\nstderr: ${e.stderr?.toString() ?? ''}`, { cause: err });
+  }
+}
+
+interface ToolResult { content: { text: string }[]; isError?: boolean }
+type ToolCall = (tool: string, params?: Record<string, unknown>) => Promise<ToolResult>;
+
+/**
+ * One server process, many calls. callMcpTool starts a server per call, which
+ * cannot show what a long-lived server does when a store file changes under
+ * it between two calls — the case its caches exist for.
+ */
+async function withMcpSession(fn: (call: ToolCall) => Promise<void>, opts: { cwd?: string; dataDir?: string } = {}): Promise<void> {
+  const dataDir = opts.dataDir ?? tmpDir;
+  const child = spawn('bun', [path.resolve('dist/mcp-server.js')], {
+    cwd: opts.cwd ?? process.cwd(),
+    env: { ...process.env, RVR_DATA_DIR: dataDir, RVR_NO_PROJECT: '1' },
+    stdio: ['pipe', 'pipe', 'ignore'],
+  });
+  interface Reply { id?: number; result?: unknown }
+  const waiting = new Map<number, (reply: Reply) => void>();
+  let buffer = '';
+  child.stdout.on('data', (chunk: Buffer) => {
+    buffer += chunk.toString();
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+      if (!line.trim()) continue;
+      try {
+        const reply = JSON.parse(line) as Reply;
+        if (reply.id !== undefined) {
+          waiting.get(reply.id)?.(reply);
+          waiting.delete(reply.id);
+        }
+      } catch { /* skip non-JSON lines */ }
+    }
+  });
+  let nextId = 0;
+  const request = (method: string, params: unknown): Promise<Reply> => new Promise((resolve, reject) => {
+    const id = ++nextId;
+    const timer = setTimeout(() => { reject(new Error(`MCP ${method} got no reply`)); }, 15000);
+    waiting.set(id, reply => { clearTimeout(timer); resolve(reply); });
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+  });
+  try {
+    await request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0' } });
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+    await fn(async (tool, params = {}) => {
+      const args = SCOPED_TOOLS.has(tool) && params.scope === undefined ? { ...params, scope: 'global' } : params;
+      return (await request('tools/call', { name: tool, arguments: args })).result as ToolResult;
+    });
+  } finally {
+    child.stdin.end();
+    child.kill();
   }
 }
 
@@ -495,6 +549,83 @@ describe('MCP Integration (real I/O)', () => {
       expect(texts(r).join('\n')).not.toMatch(/^hello$/m);
       expect(texts(r).join('\n')).toMatch(/confirm/i);
       expect(texts(r).join('\n')).toContain('every entry is treated as requiring confirmation to run');
+    });
+
+    // The server is long-lived and skips a rescan while the store directory's
+    // mtime is unchanged. git moves that mtime; an editor save or
+    // `cp backup <file>` does not.
+    describe('one running server, a file repaired in place', () => {
+      const storeDir = () => path.join(tmpDir, 'store');
+      /** Rewrite a file without removing or renaming it; the directory must not notice. */
+      const inPlace = (name: string, content: string): void => {
+        const dirBefore = fs.statSync(storeDir()).mtimeMs;
+        fs.writeFileSync(storeFile(name), content);
+        const when = Date.now() / 1000 + 100;
+        fs.utimesSync(storeFile(name), when, when);
+        expect(fs.statSync(storeDir()).mtimeMs).toBe(dirBefore);
+      };
+      const repairedHandoff = JSON.stringify({ value: 'our handoff', meta: { created: 1000, updated: 3000 } }, null, 2);
+
+      it('the entry is read again, the warning stops, and the next save keeps the file', async () => {
+        await withMcpSession(async call => {
+          expect((await call('reverie_context')).content[0].text).toContain('!! 1 store file cannot be read');
+
+          inPlace(`${HANDOFF}.json`, repairedHandoff);
+
+          const ctx = await call('reverie_context');
+          expect(ctx.content[0].text).not.toContain('cannot be read');
+          expect(ctx.content[0].text).toContain('our handoff');
+          expect((await call('reverie_get', { key: 'arch.store' })).content).toHaveLength(1);
+          expect((await call('reverie_find', { query: 'our handoff' })).content[0].text).toContain(HANDOFF);
+
+          // A full save. It used to act on the stale picture — the entry was
+          // not in the data being saved — and delete the repaired file.
+          expect((await call('reverie_alias_set', { alias: 'zz', key: 'arch.store' })).isError).toBeFalsy();
+          expect(fs.existsSync(storeFile(`${HANDOFF}.json`))).toBe(true);
+          expect((await call('reverie_get', { key: HANDOFF })).content[0].text).toContain('our handoff');
+        });
+      });
+
+      it('a repaired alias map keeps its aliases through the next alias write', async () => {
+        fs.writeFileSync(storeFile(`${HANDOFF}.json`), repairedHandoff);
+        fs.writeFileSync(storeFile('_aliases.json'), conflictedSidecar('"hand": "context.next_session",', '"ho": "context.next_session",'));
+        await withMcpSession(async call => {
+          expect(texts(await call('reverie_get', { key: 'arch.store' })).join('\n')).toContain('no aliases are being read');
+
+          inPlace('_aliases.json', JSON.stringify({ hand: HANDOFF }, null, 2));
+
+          expect((await call('reverie_get', { key: 'hand' })).content[0].text).toContain('our handoff');
+          expect((await call('reverie_alias_set', { alias: 'st', key: 'arch.store' })).isError).toBeFalsy();
+          expect(JSON.parse(fs.readFileSync(storeFile('_aliases.json'), 'utf8'))).toEqual({ hand: HANDOFF, st: 'arch.store' });
+        });
+      });
+
+      it('a repaired confirmation list stops gating every run', async () => {
+        fs.writeFileSync(storeFile(`${HANDOFF}.json`), repairedHandoff);
+        fs.writeFileSync(storeFile('_confirm.json'), conflictedSidecar('"commands.deploy": true,', '"commands.wipe": true,'));
+        await withMcpSession(async call => {
+          expect(texts(await call('reverie_run', { key: 'commands.hello' })).join('\n')).toMatch(/requires confirmation/);
+
+          inPlace('_confirm.json', '{}');
+
+          const ran = await call('reverie_run', { key: 'commands.hello' });
+          expect(texts(ran).join('\n')).toMatch(/^hello$/m);
+          expect(ran.content).toHaveLength(1);
+        });
+      });
+    });
+
+    it('names files by absolute path, whatever directory the server was started in', async () => {
+      // Started inside the data dir, a path relative to the cwd would read
+      // `store/context.next_session.json` — a file the user cannot find.
+      const real = fs.realpathSync(tmpDir);
+      const absolute = path.join(real, 'store', `${HANDOFF}.json`);
+      await withMcpSession(async call => {
+        const r = await call('reverie_get', { key: HANDOFF });
+        expect(r.isError).toBe(true);
+        expect(r.content[0].text).toContain(`\`git checkout --ours -- ${absolute}\``);
+        expect(r.content[0].text).toContain(`\`git add ${absolute}\``);
+      }, { cwd: real, dataDir: real });
     });
 
     it('a healthy store gets no extra block', () => {

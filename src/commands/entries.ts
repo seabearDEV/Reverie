@@ -332,6 +332,10 @@ export async function setEntry(key: string, value: string | undefined, force = f
           process.exitCode = 1;
           return;
         }
+        // #215: the confirmation list, then (with -a) the alias map. Check
+        // both before the first write, as the value path does below — and
+        // refuse a --no-confirm that cannot see the flag it is asked to drop.
+        assertSidecarsWritable(() => resolveScopeForWrite(scope), alias ? ['confirm', 'aliases'] : ['confirm']);
         if (confirm) {
           setConfirm(key, scope);
           printSuccess(`Entry '${key}' now requires confirmation to run.`);

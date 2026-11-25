@@ -45,7 +45,7 @@ import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
-import { StoreUnreadableError, assertSidecarsWritable, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, unreadableWarning } from "./utils/unreadable";
+import { StoreUnreadableError, assertSidecarsWritable, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
@@ -108,6 +108,11 @@ function projectResolutionErrorResponse(err: ProjectResolutionError) {
 }
 
 ensureDataDirectoryExists();
+
+// #215: this process's working directory is whatever the client launched it
+// in; the project comes from RVR_PROJECT or the client's roots. A path
+// relative to the cwd would name a file the reader cannot find.
+setAbsoluteDisplayPaths(true);
 
 // Shared Zod param for the 15 tools that take a data scope. The reverie_reset
 // variant (extra "Ignored for audit/telemetry/miss-paths." note) stays inline.

@@ -15,11 +15,14 @@ import {
   classifyUnparseable,
   confirmListUnreadable,
   describeUnreadable,
+  displayPath,
   listUnreadableFiles,
   markUnreadableShown,
   noteWriteRefused,
+  readForWrite,
   registerUnreadableSource,
   resolutionHint,
+  setAbsoluteDisplayPaths,
   takeWriteRefused,
   unreadableWarning,
   unreadableWarningBlock,
@@ -299,6 +302,123 @@ describe('a sidecar that does not parse', () => {
   });
 });
 
+// A scan is skipped while the directory's own mtime is unchanged. git writes
+// a file by removing and creating it, which moves the directory; an editor
+// save or `cp backup <file>` rewrites the file in place and does not. A
+// long-lived process (the MCP server) must still notice the repair — it used
+// to keep reporting the file, leave the entry out, and delete the repaired
+// file on its next full save.
+describe('a file repaired in place, with the directory mtime unchanged', () => {
+  const aliasesPath = () => path.join(dir, '_aliases.json');
+  const confirmPath = () => path.join(dir, '_confirm.json');
+  const repaired = (value: string) => serializeEntryWrapper({ value, meta: { created: 1000, updated: 4000 } });
+
+  // Whole seconds, so pinning twice yields the identical mtime.
+  const PINNED = Math.floor(Date.now() / 1000) + 50_000;
+  /** Put the directory mtime where the store's last scan saw it. */
+  const pinDir = (): void => { fs.utimesSync(dir, PINNED, PINNED); };
+  const dirIsPinned = (): boolean => fs.statSync(dir).mtimeMs === PINNED * 1000;
+
+  /** Rewrite `file` in place (no remove, no rename), give it a new mtime, and leave the directory as it was. */
+  function inPlace(file: string, content: string): void {
+    fs.writeFileSync(file, content);
+    const when = Math.floor(Date.now() / 1000) + 60_000 + 10 * ++tick;
+    fs.utimesSync(file, when, when);
+    pinDir();
+  }
+
+  /** A store that has scanned a conflicted `context.next_session`, with the directory pinned. */
+  function scannedConflict() {
+    const store = storeWithConflict();
+    pinDir();
+    expect(store.load().entries).toEqual({ arch: { store: 'healthy' }, context: { other: 'kept' } });
+    expect(store.unreadable()).toHaveLength(1);
+    return store;
+  }
+
+  it('an entry is read again and no longer reported', () => {
+    const store = scannedConflict();
+    inPlace(entryPath('context.next_session'), repaired('our handoff'));
+    expect(dirIsPinned()).toBe(true); // the scan's fast skip would apply
+
+    expect(store.load().entries).toEqual({ arch: { store: 'healthy' }, context: { next_session: 'our handoff', other: 'kept' } });
+    expect(store.unreadable()).toEqual([]);
+  });
+
+  it('a full save after the repair keeps the repaired entry', () => {
+    const store = scannedConflict();
+    inPlace(entryPath('context.next_session'), repaired('our handoff'));
+
+    // What `alias set` does: load, change the alias map, save.
+    const loaded = store.load();
+    store.save({ ...loaded, aliases: { st: 'arch.store' } });
+
+    expect(fs.existsSync(entryPath('context.next_session'))).toBe(true);
+    expect(makeStore().getOne('context.next_session')).toBe('our handoff');
+  });
+
+  it('a repaired alias map is read again, and the next alias write keeps what it holds', () => {
+    const store = makeStore();
+    store.save(data({ arch: { store: 'v' }, commands: { hello: 'echo hello' } }, { aliases: { st: 'arch.store' } }));
+    gitWrite(aliasesPath(), conflictedSidecar('"hand": "arch.store",', '"ho": "arch.store",'));
+    pinDir();
+    expect(store.load().aliases).toEqual({});
+    expect(store.unreadable().map(f => f.kind)).toEqual(['aliases']);
+
+    inPlace(aliasesPath(), JSON.stringify({ hand: 'arch.store' }, null, 2));
+    expect(dirIsPinned()).toBe(true);
+    const loaded = store.load();
+    expect(loaded.aliases).toEqual({ hand: 'arch.store' });
+    expect(store.unreadable()).toEqual([]);
+
+    store.save({ ...loaded, aliases: { ...loaded.aliases, hl: 'commands.hello' } });
+    expect(JSON.parse(fs.readFileSync(aliasesPath(), 'utf8'))).toEqual({ hand: 'arch.store', hl: 'commands.hello' });
+  });
+
+  it('a repaired confirmation list is read again', () => {
+    const store = makeStore();
+    store.save(data({ commands: { deploy: 'echo deploy' } }, { confirm: { 'commands.deploy': true } }));
+    gitWrite(confirmPath(), conflictedSidecar('"commands.deploy": true,', '"commands.wipe": true,'));
+    pinDir();
+    expect(store.load().confirm).toEqual({});
+    expect(store.unreadable().map(f => f.kind)).toEqual(['confirm']);
+
+    inPlace(confirmPath(), JSON.stringify({ 'commands.deploy': true }, null, 2));
+    expect(dirIsPinned()).toBe(true);
+    expect(store.load().confirm).toEqual({ 'commands.deploy': true });
+    expect(store.unreadable()).toEqual([]);
+  });
+
+  it('a broken file that is gone is no longer reported', () => {
+    const store = scannedConflict();
+    fs.rmSync(entryPath('context.next_session'));
+    pinDir();
+    store.load();
+    expect(store.unreadable()).toEqual([]);
+  });
+
+  it('a file that is still broken is still reported, and still left alone', () => {
+    const store = scannedConflict();
+    const before = fs.readFileSync(entryPath('context.next_session'), 'utf8');
+    pinDir();
+    expect(store.load().entries).toEqual({ arch: { store: 'healthy' }, context: { other: 'kept' } });
+    expect(store.unreadable()).toHaveLength(1);
+    expect(fs.readFileSync(entryPath('context.next_session'), 'utf8')).toBe(before);
+  });
+
+  it('a key written after its repair stops being reported at once', () => {
+    const store = scannedConflict();
+    inPlace(entryPath('context.next_session'), repaired('our handoff'));
+
+    // setOne reads its target fresh and never scans: the write goes through.
+    expect(store.setOne('context.next_session', 'next handoff', Date.now())).toBe(true);
+    expect(store.unreadable()).toEqual([]);
+    pinDir();
+    expect(store.load().entries).toMatchObject({ context: { next_session: 'next handoff' } });
+    expect(store.unreadable()).toEqual([]);
+  });
+});
+
 describe('classifyUnparseable', () => {
   it('names a conflict only when both an opening and a closing marker start a line', () => {
     expect(classifyUnparseable(conflictedEntry('a', 'b'))).toBe('conflict');
@@ -314,6 +434,32 @@ describe('messages', () => {
   const entry: UnreadableFile = { kind: 'entry', path: '/repo/.reverie/context.next_session.json', key: 'context.next_session', reason: 'conflict' };
   const aliases: UnreadableFile = { kind: 'aliases', path: '/repo/.reverie/_aliases.json', reason: 'conflict' };
   const confirm: UnreadableFile = { kind: 'confirm', path: '/repo/.reverie/_confirm.json', reason: 'parse' };
+
+  describe('displayPath', () => {
+    const inCwd = path.join(process.cwd(), '.reverie', 'k.json');
+    afterEach(() => { setAbsoluteDisplayPaths(false); });
+
+    it('is relative under the working directory, absolute outside it', () => {
+      expect(displayPath(inCwd)).toBe(path.join('.reverie', 'k.json'));
+      expect(displayPath('/somewhere/else/.reverie/k.json')).toBe('/somewhere/else/.reverie/k.json');
+    });
+
+    it('is never relative to a filesystem root, which would only strip the leading slash', () => {
+      const cwd = vi.spyOn(process, 'cwd').mockReturnValue(path.parse(process.cwd()).root);
+      try {
+        expect(displayPath(inCwd)).toBe(inCwd);
+        expect(resolutionHint({ kind: 'entry', path: inCwd, key: 'k', reason: 'conflict' })).toContain(`git checkout --ours -- ${inCwd}`);
+      } finally {
+        cwd.mockRestore();
+      }
+    });
+
+    it('is absolute everywhere once a surface asks for that (the MCP server)', () => {
+      setAbsoluteDisplayPaths(true);
+      expect(displayPath(inCwd)).toBe(inCwd);
+      expect(describeUnreadable({ kind: 'aliases', path: inCwd, reason: 'parse' })).toBe(`${inCwd} is not a valid store file`);
+    });
+  });
 
   it('a read error says the entry exists, and never says "not found" on its own', () => {
     const msg = new StoreUnreadableError([entry], 'read').message;
@@ -413,6 +559,43 @@ describe('bookkeeping', () => {
     } finally {
       registerUnreadableSource('test-store', () => []);
     }
+  });
+
+  describe('readForWrite: the pre-read of a key about to be written', () => {
+    const globalFile: UnreadableFile = { kind: 'entry', path: '/home/.reverie/store/k.json', key: 'k', reason: 'parse' };
+    const projectFile: UnreadableFile = { kind: 'entry', path: '/repo/.reverie/k.json', key: 'k', reason: 'conflict' };
+    type S = 'project' | 'global' | 'auto';
+
+    it('returns what the lookup returns when nothing is wrong, without asking for the write scope', () => {
+      const writeScope = vi.fn((): S => 'project');
+      expect(readForWrite<string | undefined, S>(() => 'global value', 'auto', writeScope)).toBe('global value');
+      expect(writeScope).not.toHaveBeenCalled();
+    });
+
+    it('an unreadable file in the OTHER store does not block the write', () => {
+      // auto scope: the lookup fell through to the global store and hit a
+      // broken file there; the write goes to the project, where the key is absent.
+      const read = (scope: S | undefined): string | undefined => {
+        if (scope === 'project') return undefined;
+        throw new StoreUnreadableError([globalFile], 'read');
+      };
+      expect(readForWrite<string | undefined, S>(read, 'auto', () => 'project')).toBeUndefined();
+    });
+
+    it('an unreadable file in the store being written is a refused write', () => {
+      const read = (): string | undefined => { throw new StoreUnreadableError([projectFile], 'read'); };
+      const err = expectUnreadable(() => readForWrite<string | undefined, S>(read, 'auto', () => 'project'), 'write');
+      expect(err.files).toEqual([projectFile]);
+    });
+
+    it('when the write has no resolvable target, that error is the one reported', () => {
+      const read = (): string | undefined => { throw new StoreUnreadableError([globalFile], 'read'); };
+      expect(() => readForWrite<string | undefined, S>(read, 'auto', () => { throw new Error('PROJECT_UNRESOLVED'); })).toThrow('PROJECT_UNRESOLVED');
+    });
+
+    it('other errors pass through untouched', () => {
+      expect(() => readForWrite<string, S>(() => { throw new Error('disk on fire'); }, 'auto', () => 'project')).toThrow('disk on fire');
+    });
   });
 
   it('the refused-write note is read once', () => {
