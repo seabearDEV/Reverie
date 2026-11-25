@@ -1,7 +1,7 @@
 import { getEntriesFlat, Scope } from '../storage';
 import { color } from '../formatting';
 import { findProjectFile } from '../store';
-import { interpolate, interpolateForRead, unresolvedWarning } from '../utils/interpolate';
+import { interpolate, interpolateForRead, unresolvedWarning, UnresolvedReferenceError } from '../utils/interpolate';
 import { isJsonMode, setResult, failJson } from '../utils/output';
 import { describeUnreadable, displayPath, listUnreadableFiles, markUnreadableShown, resolutionHint } from '../utils/unreadable';
 import fs from 'fs';
@@ -109,12 +109,15 @@ export function checkSeedQuality(flat: Record<string, string>): SeedIssue[] {
       }
     }
 
-    // Heuristic 3: interpolation landmine (#39 follow-up).
-    // An unescaped \${key} or \$(key) that fails to resolve IS a bug —
-    // anyone trying to resolve the value later gets an interpolation error.
+    // Heuristic 3: interpolation landmine (#39 follow-up) — a value whose
+    // read fails: a `:?` that is not met, or a cycle. A plain reference that
+    // does not resolve is no longer one of these (#202): a read returns it
+    // as written, and every lint lists it (findUnresolvedReferences), so
+    // flagging it here too listed the entry twice, once as "would error".
     try {
       interpolate(value);
     } catch (err) {
+      if (err instanceof UnresolvedReferenceError) continue;
       issues.push({
         key,
         code: 'interp-landmine',
