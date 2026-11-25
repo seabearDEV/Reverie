@@ -145,20 +145,19 @@ describe('computeStats — boundary cases', () => {
 
   it('bootstrap with tiny response still gets floor cost', () => {
     const now = Date.now();
-    // 40 bytes → ~0.5 entries → max(10, 0.5*200=100) → 100 tokens
     writeEntries([
       { ts: now, tool: 'reverie_context', session: 's1', op: 'read', ns: '*', hit: true, responseSize: 40 },
     ]);
     const stats = computeStats();
     const bsTokens = stats.explorationBreakdown['bootstrap']?.tokensSaved ?? 0;
-    // delivery floor = 40/4=10, approx entries = round(40/80)=1 → 1*200=200
-    // max(10, 200) = 200
+    // No counts on the row: entries ≈ round(40 / 80) = 1 → 1 × 200 = 200.
+    // Delivery floor = 40 / 3 ≈ 13 → max(13, 200) = 200
     expect(bsTokens).toBe(200);
   });
 
   it('bootstrap with large response uses entry estimate', () => {
     const now = Date.now();
-    // 16000 bytes → ~200 entries → max(4000, 200*200=40000) → 40000
+    // 16000 bytes → ~200 entries → max(16000 / 3 ≈ 5333, 200 × 200 = 40000) → 40000
     writeEntries([
       { ts: now, tool: 'reverie_context', session: 's1', op: 'read', ns: '*', hit: true, responseSize: 16000 },
     ]);

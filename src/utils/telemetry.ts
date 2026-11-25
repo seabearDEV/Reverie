@@ -711,10 +711,17 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
     // rows logged before that fix carry the setting name as a namespace.
     if (!keyIsEntryKey(e.tool)) continue;
     if (e.tool === 'reverie_context') {
-      // Bootstrap: approximate entry count from response size, each avoids ~1 lookup
+      // Bootstrap: each entry shown avoids ~1 lookup. A row logged since
+      // #188 says how many it showed — in full plus as index lines. Counting
+      // those, not bytes, credits one front page the same whether it was
+      // read as text or as the larger --json envelope, and does not count a
+      // long pinned entry as a dozen. Older rows carry no counts: there the
+      // number is approximated from the response size, as before.
       const deliveryCost = (e.responseSize ?? 0) / BYTES_PER_TOKEN;
-      const approxEntries = Math.round((e.responseSize ?? 0) / 80);
-      const explorationCost = Math.max(deliveryCost, approxEntries * BOOTSTRAP_PER_ENTRY_COST);
+      const entriesShown = e.pinned !== undefined || e.indexed !== undefined
+        ? (e.pinned ?? 0) + (e.indexed ?? 0)
+        : Math.round((e.responseSize ?? 0) / 80);
+      const explorationCost = Math.max(deliveryCost, entriesShown * BOOTSTRAP_PER_ENTRY_COST);
       const rounded = Math.round(explorationCost);
       const bsKey = 'bootstrap';
       if (!explorationBreakdown[bsKey]) explorationBreakdown[bsKey] = { hits: 0, tokensSaved: 0 };

@@ -301,16 +301,18 @@ Miss-path records are stored in `~/.reverie/miss-paths.jsonl` and can be cleared
 The `reverie_context` tool is special — it returns many entries at once in a single call. Its exploration cost is calculated differently:
 
 ```
-approx_entries  = response_size_bytes / 80     (each entry averages ~80 bytes)
+entries_shown   = pinned + indexed             (entries in full + entries as index lines)
 exploration_cost = max(
   response_size / 3,                           (delivery floor)
-  approx_entries * 200                         (200 tokens per entry avoided)
+  entries_shown * 200                          (200 tokens per entry avoided)
 )
 ```
 
 The 200-token-per-entry cost reflects that each entry in the context represents roughly one small lookup the agent would have needed to make. The `max()` ensures the exploration estimate is never lower than the delivery floor.
 
-**Example:** A `reverie_context` call returns 8,000 bytes (~100 entries):
+`pinned` and `indexed` are on every context row logged since v1.4.0, so the count is exact, and one front page is credited the same whether it was read as text or as the larger `--json` envelope. A row logged before that carries no counts; for those the count is approximated as `response_size_bytes / 80`.
+
+**Example:** A `reverie_context` call returns 8,000 bytes showing 100 entries:
 - Delivery floor: `8000 / 3 ≈ 2,667 tokens`
 - Exploration estimate: `100 entries * 200 = 20,000 tokens`
 - Result: `max(2667, 20000) = 20,000 tokens`
@@ -321,7 +323,8 @@ The 200-token-per-entry cost reflects that each entry in the context represents 
 flowchart TD
     T["Telemetry JSONL entries"] --> F{"Filter: op=read, hit=true"}
     F -->|reverie_context| B["Bootstrap estimation
-    entries ≈ responseSize / 80
+    entries = pinned + indexed
+    (older rows: ≈ responseSize / 80)
     cost = max(bytes/3, entries × 200)"]
     F -->|other reads| CAL{"Calibrated?
     (≥5 writeback samples)"}
@@ -352,7 +355,7 @@ A typical session might look like this:
 
 | Call | Tool | Namespace | Response | Hit? | Exploration Savings |
 |------|------|-----------|----------|------|-------------------|
-| 1 | `reverie_context` | (bootstrap) | 8,000B | Yes | 20,000 |
+| 1 | `reverie_context` | (bootstrap, 100 entries) | 8,000B | Yes | 20,000 |
 | 2 | `reverie_get` | files | 200B | Yes | 2,000 |
 | 3 | `reverie_get` | arch | 300B | Yes | 3,000 |
 | 4 | `reverie_get` | missing.key | 30B | No | 0 |
@@ -483,9 +486,9 @@ The static namespace multipliers (e.g., `files: 2000`, `arch: 3000`) are based o
 
 All `files.*` lookups get the same 2,000-token multiplier, whether the entry is `files.entry` (a one-liner about the CLI entry point) or a hypothetical `files.architecture` (a long description that would take extensive exploration to discover). In reality, some entries save more exploration than others.
 
-### Bootstrap entry count is approximated
+### Bootstrap entry count is approximated for older rows
 
-The `reverie_context` estimation divides `responseSize` by 80 to approximate entry count. This works reasonably well for typical entries (~80 bytes of formatted output per line), but breaks down for entries with very long or very short values.
+A context row logged before v1.4.0 does not say how many entries it showed, so the estimation divides its `responseSize` by 80. That suits one-line entries of about 80 bytes and overcounts a page with long values. Rows logged since carry the counts and need no approximation; an entry shown as an index line is credited the same 200 tokens as one shown in full.
 
 ### `--json` rows count the whole envelope
 

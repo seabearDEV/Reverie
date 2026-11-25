@@ -643,6 +643,25 @@ describe('what a row is counted as (#203, #204, #206)', () => {
     expect(stats.deliveryCostTokens).toBe(1100);
   });
 
+  it('a bootstrap is credited by the entries it showed, as text or as a --json envelope', () => {
+    // The same front page — 20 entries in full, 100 as index lines — read
+    // twice. The envelope is larger; the entries are the same.
+    seed([
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 24000, pinned: 20, indexed: 100 },
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 32000, pinned: 20, indexed: 100 },
+    ]);
+    // 120 entries × 200 = 24,000 each; the delivery floors (8,000 and 10,667) are lower.
+    expect(computeStats().explorationBreakdown['bootstrap']).toEqual({ hits: 2, tokensSaved: 48000 });
+  });
+
+  it('a bootstrap row without counts is estimated from its size, and delivery stays the floor', () => {
+    seed([
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 8000 },                        // logged before rows carried counts: 8000 / 80 = 100 entries → 20,000
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 9000, pinned: 2, indexed: 0 }, // 2 × 200 is under the floor, 9000 / 3 = 3,000
+    ]);
+    expect(computeStats().explorationBreakdown['bootstrap']).toEqual({ hits: 2, tokensSaved: 23000 });
+  });
+
   it('#206: a config read is credited no exploration and names no namespace', () => {
     seed([
       { tool: 'reverie_config_get', ns: 'bootstrap_max_response_bytes', hit: true, responseSize: 30 }, // logged before #206
