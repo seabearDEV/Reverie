@@ -372,6 +372,18 @@ describe('the confirmation gate follows the entry', () => {
       expect(json('confirm', 'set', 'gcmds.nosuch').error?.code).toBe('NOT_FOUND');
     });
 
+    it('-G on an entry that lives in the project: accepted, listed globally, and the entry is gated', () => {
+      // -G selects the list the flag goes in, not where the entry has to be.
+      const r = rvr('confirm', 'set', '-G', 'commands.status');
+      expect(r.status).toBe(0);
+      expect(globalFlags()).toEqual(['commands.status']);
+      expect(projectFlags()).toEqual(['commands.deploy']);
+      expect(rvr('run', 'commands.status').stderr).toContain(REFUSAL);
+      expect(ran('status')).toBe(false);
+      // A key in neither store is refused with -G as without.
+      expect(json('confirm', 'set', '-G', 'commands.statsu').error?.code).toBe('NOT_FOUND');
+    });
+
     it('flags an entry whose file cannot be read: it is still an entry', () => {
       const file = path.join(projectDir, '.reverie', 'commands.status.json');
       const good = fs.readFileSync(file, 'utf8');

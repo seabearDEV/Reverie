@@ -474,10 +474,12 @@ confirmCommand
     await withCliInstrumentation(
       { tool: 'reverie_confirm_set', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
-        // The check `set <key> --confirm` makes: the key has to name an entry.
-        // This command used to skip it and report success for a key that
-        // named nothing.
-        const problem = commands.confirmTargetProblem(resolvedKey, scope, true, true);
+        // The key has to name an entry. This command used to skip the check
+        // and report success for a key that named nothing. It is looked up in
+        // both stores whatever list -G selects: a flag gates by name wherever
+        // the entry lives, so `confirm set -G` on a project entry is a
+        // request that can be met.
+        const problem = commands.confirmTargetProblem(resolvedKey, undefined, true, true);
         if (problem) {
           printError(problem.message, problem.code);
           return undefined;
