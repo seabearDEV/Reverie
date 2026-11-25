@@ -1,0 +1,7 @@
+{
+  "value": "CodeQL on a pull request reports only results located in the lines the PR changes. Every refs/pull/N/merge analysis in this repo has results=0 while main carries 2, so a green PR check says nothing about a NEW data flow into an EXISTING sink: the alerts appear on main after the merge.\n\nHit 2026-11-25: #230 sent a masked `set --prompt` value through its new reference check. Six high js/clear-text-logging alerts (#18–#23) appeared on main at console.error lines in src/storage.ts and src/utils/debug.ts that #230 never touched. Fixed by #233; they closed on the next push run.\n\nAFTER ANY MERGE that changes where values flow, read main, not the PR: `gh api 'repos/seabearDEV/Reverie/code-scanning/analyses?ref=refs/heads/main&per_page=3'` (results_count is 2 while only #17 is open) and the state=open alerts on refs/heads/main. The alerts query by PR ref is empty either way. To see the path, download the analysis with `-H 'Accept: application/sarif+json'` and read codeFlows.\n\nA fix can only be proven by the push run on main: the workflow has no workflow_dispatch and there is no CodeQL CLI on the owner's Mac. Also seen that day: the push runs for #231 and #232 (45b4cb5, b91ec60) failed in the analyze step, cause not identified, so main had no analysis between 5662055 and 025d978.",
+  "meta": {
+    "created": 1795627445017,
+    "updated": 1795627445017
+  }
+}

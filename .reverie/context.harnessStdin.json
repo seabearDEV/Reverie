@@ -1,0 +1,7 @@
+{
+  "value": "What a shell command gets on stdin inside Claude Code's Bash tool (observed 2026-11-25, one session, macOS): a simple command gets /dev/null; a compound one — a pipe, a heredoc, a loop — gets an open socket that stays silent. That open, silent stdin is the #225 trigger: anything that reads stdin \"when it is not a terminal\" waits there. A CLI test for it must hold stdin open itself (`sleep N | cmd`, or spawn with a pipe and never end it) — `spawnSync` with `input: ''` closes it and tests nothing. In a `while read` loop, give the inner command `< /dev/null`. `rvr set` with only -a / --confirm / --no-confirm gives up after RVR_STDIN_WAIT_MS (2000) and warns with code STDIN_SILENT; a `set` that needs a value still waits.",
+  "meta": {
+    "created": 1795626588123,
+    "updated": 1795626588123
+  }
+}
