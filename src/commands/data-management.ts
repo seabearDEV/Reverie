@@ -303,7 +303,8 @@ export async function importData(type: string, file: string, options: ImportOpti
         }
         if (confirmSection) validateImportConfirm(confirmSection);
       } catch (err) {
-        printError(err instanceof Error ? err.message : String(err));
+        // The file is what is wrong, not the store or the process.
+        printError(err instanceof Error ? err.message : String(err), 'INVALID_INPUT');
         return;
       }
       showImportPreview({ entries: entriesSection, aliases: aliasesSection, confirm: confirmSection }, !!options.merge);
@@ -357,11 +358,15 @@ export async function importData(type: string, file: string, options: ImportOpti
       },
       !!options.merge,
       {
-        entries: () => loadData(scope),
-        aliases: () => loadAliases(scope),
-        confirm: () => loadConfirmKeys(scope),
-        // The collision check is against the one store the import writes to.
-        targetEntries: () => loadData(getEffectiveScope(scope)),
+        // The merge base is the one store the import writes to. In the
+        // default scope `loadData(scope)` and its siblings return the project
+        // layered over the global store, so every merge copied the global
+        // entries, aliases and confirm flags into the project — and where a
+        // global key differed from a project key only by case, replaced the
+        // project's value with the global one.
+        entries: () => loadData(getEffectiveScope(scope)),
+        aliases: () => loadAliases(getEffectiveScope(scope)),
+        confirm: () => loadConfirmKeys(getEffectiveScope(scope)),
       },
     );
 

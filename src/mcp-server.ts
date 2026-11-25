@@ -1454,20 +1454,13 @@ server.tool(
         },
         !!merge,
         {
-          entries: () => loadData(scope),
-          aliases: () => loadAliases(scope),
-          confirm: () => loadConfirmKeys(scope),
-          // The collision check is against the one store the import writes
-          // to. If that store cannot be resolved here, the check uses the
-          // merged view and the save below reports the resolution failure as
-          // it always has — the check must not add a failure of its own.
-          targetEntries: () => {
-            try {
-              return loadEntries(resolveScopeForWrite(scope));
-            } catch {
-              return loadData(scope);
-            }
-          },
+          // The merge base is the one store the import writes to, not the
+          // default view that layers the project over the global store:
+          // that view copied every global entry, alias and confirm flag into
+          // the project on each merge.
+          entries: () => loadData(getEffectiveScope(scope)),
+          aliases: () => loadAliases(getEffectiveScope(scope)),
+          confirm: () => loadConfirmKeys(getEffectiveScope(scope)),
         },
       );
 

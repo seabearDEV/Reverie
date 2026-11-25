@@ -33,13 +33,6 @@ export function computeImportSections(
     entries: () => CodexData;
     aliases: () => Record<string, string>;
     confirm: () => Record<string, true>;
-    /**
-     * The entries of the one store the import writes to, for the collision
-     * check. `entries` may be a merged view (project over global in the
-     * default scope); a key that exists only in the other store is not in the
-     * way of a write to this one. Falls back to `entries`.
-     */
-    targetEntries?: () => CodexData;
   },
 ): ImportSections {
   const next: ImportSections = {};
@@ -53,8 +46,9 @@ export function computeImportSections(
       // #216 / #224: a merge adds and overwrites keys; it does not get to
       // remove the entries under a key it flattens, the leaf above a key it
       // nests, or a key that differs only by case. Checked against the store
-      // being written, as it stands, before anything is merged.
-      assertKeysWritable(current.targetEntries?.() ?? existing, Object.keys(flattenObject(incomingEntries)));
+      // as it stands, before anything is merged. `current` must be the one
+      // store being written, never a view layered over another store.
+      assertKeysWritable(existing, Object.keys(flattenObject(incomingEntries)));
       next.entries = deepMerge(existing, incomingEntries) as CodexData;
     } else {
       next.entries = incoming as CodexData;

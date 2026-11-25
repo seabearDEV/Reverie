@@ -426,6 +426,26 @@ describe('a write that would remove or overwrite another entry is refused (#216,
     const r = rvr('data', 'import', 'entries', importFile({ gonly: { child: 'p' } }), '--merge', '-f');
     expect(r.status).toBe(0);
     expect(keys()).toContain('gonly.child');
+    expect(keys()).not.toContain('gonly');
+  });
+
+  it('import --merge in the default scope merges into the project store, and copies nothing from the global one', () => {
+    // The merge base used to be the project layered over the global store,
+    // so every merge wrote the global entries into the project — and a
+    // global key differing only by case replaced the project's value.
+    expect(rvr('set', '--global', 'zglobal.only', 'stays global').status).toBe(0);
+    expect(rvr('set', '--global', 'Arch.api', 'the global value').status).toBe(0);
+    expect(rvr('alias', 'set', 'galias', 'zglobal.only', '--global').status).toBe(0);
+    const r = rvr('data', 'import', 'entries', importFile({ fresh: { k: 'v' } }), '--merge', '-f');
+    expect(r.status).toBe(0);
+    expect(keys()).toEqual(['arch.api', 'arch.auth', 'fresh.k']);
+    expect(value('arch.api')).toBe('leaf value');
+
+    const aliasFile = path.join(projectDir, 'aliases.json');
+    fs.writeFileSync(aliasFile, JSON.stringify({ api: 'arch.api' }));
+    expect(rvr('data', 'import', 'aliases', aliasFile, '--merge', '-f').status).toBe(0);
+    const projectAliases = JSON.parse(fs.readFileSync(path.join(projectDir, '.reverie', '_aliases.json'), 'utf8')) as Record<string, string>;
+    expect(projectAliases).toEqual({ api: 'arch.api' });
   });
 
   it('import: a file that names one entry flat and nested is not a colliding pair', () => {
@@ -437,6 +457,7 @@ describe('a write that would remove or overwrite another entry is refused (#216,
   it('import: a refusal carries INVALID_INPUT in the envelope', () => {
     expect(json('data', 'import', 'entries', importFile({ arch: 'flat' }), '--merge', '-f').error?.code).toBe('INVALID_INPUT');
     expect(json('data', 'import', 'entries', importFile({ notes: { Key: 'one', key: 'two' } }), '--merge', '-f').error?.code).toBe('INVALID_INPUT');
+    expect(json('data', 'import', 'entries', importFile({ notes: { Key: 'one', key: 'two' } }), '--merge', '--preview').error?.code).toBe('INVALID_INPUT');
     expect(keys()).toEqual(['arch.api', 'arch.auth']);
   });
 
