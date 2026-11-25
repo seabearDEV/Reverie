@@ -166,6 +166,15 @@ export function addWarning(message: string, code = 'WARNING', count?: number): v
 }
 
 /**
+ * Whether this exact warning is already recorded. A batch `set` runs one
+ * instrumented call per pair into a single envelope, so a warning about the
+ * store itself would otherwise be added once per pair.
+ */
+export function hasWarning(message: string, code = 'WARNING'): boolean {
+  return state.warnings.some(w => w.code === code && w.message === message);
+}
+
+/**
  * Record a structured error and flag the process for a non-zero exit. The
  * envelope is emitted (ok:false) by the wrapper / finalize step. `preview`
  * carries the resolved command for REQUIRES_CONFIRMATION / COMMAND_FAILED.

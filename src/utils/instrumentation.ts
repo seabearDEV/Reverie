@@ -13,7 +13,7 @@ import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
 import { color } from '../formatting';
 import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, takeWriteRefused, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
-import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError, takeSignals, takeErrorCode, serializeEnvelope, alreadyEmitted } from './output';
+import { isJsonMode, failJson, emitEnvelope, addWarning, hasWarning, setResult, hasResult, hasError, takeSignals, takeErrorCode, serializeEnvelope, alreadyEmitted } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
@@ -383,8 +383,12 @@ export async function withCliInstrumentation<T>(
       const unshown = withoutShown(unreadable);
       if (jsonMode) {
         // warnings[] is the machine channel: every file, whatever the result
-        // or error already says.
-        for (const file of unreadable) addWarning(unreadableWarning(file), 'STORE_UNREADABLE');
+        // or error already says — once per envelope, however many calls a
+        // batch runs into it.
+        for (const file of unreadable) {
+          const message = unreadableWarning(file);
+          if (!hasWarning(message, 'STORE_UNREADABLE')) addWarning(message, 'STORE_UNREADABLE');
+        }
       } else {
         for (const line of unreadableWarningBlock(unshown)) console.error(line);
       }

@@ -582,6 +582,21 @@ describe('CLI JSON envelope (#117)', () => {
     expect(parse(run('--json get rows.d2').stdout).result).toEqual({ 'rows.d2': '2' });
   });
 
+  it('a batch --json set names an unreadable store file once, not once per pair', () => {
+    // Every call adds a warning per unreadable file; a batch runs one call
+    // per pair into the same envelope.
+    const torn = path.join(testDir, 'store', 'rows.torn.json');
+    fs.writeFileSync(torn, ['{', '<<<<<<< HEAD', '  "value": "ours"', '=======', '  "value": "theirs"', '>>>>>>> theirs', '}', ''].join('\n'));
+    try {
+      const { stdout, status } = run('--json set rows.e1=1 rows.e2=2 rows.e3=3');
+      expect(status).toBe(0);
+      const warnings = (parse(stdout).warnings ?? []) as { code: string }[];
+      expect(warnings.filter(w => w.code === 'STORE_UNREADABLE')).toHaveLength(1);
+    } finally {
+      fs.rmSync(torn, { force: true });
+    }
+  });
+
   it('#206: a config read is not fed to the miss tracker', () => {
     const env = { RVR_SESSION: 'rows-206' };
     expect(run('get rows.nowhere', env).status).toBe(1);                 // opens a window on `rows`
