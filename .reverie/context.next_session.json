@@ -1,7 +1,7 @@
 {
-  "value": "2026-11-24 (10) — Tracker organized: milestone 'v1.4.0 — Forum' is the release gate, 13 open (list and order in project.inFlight); 'v1.4.0 — Find' deleted; new #224–#227. NEXT: (1) #216 from fresh main, then the other ready bugs (#224, #225, #202, stats #192 #203 #204 #206); (2) #189 design pass — #215 steps 2–3, #226 and #227 wait on it. Until 1.4.0 is installed, pipe values or pass \"$(cat f)\".",
+  "value": "2026-11-24 (10) — Tracker organized: milestone 'v1.4.0 — Forum' is the release gate (work list in project.inFlight); 'v1.4.0 — Find' deleted; new #224–#227. NEXT: (1) #216, #224, #225, #202 each need a one-line owner decision before work starts; (2) can start now: #192 + #203 + #206 (one wrapper fix), #204; (3) #189 design pass — #215 steps 2–3, #226, #227 wait on it. Until 1.4.0 is installed, pipe values or pass \"$(cat f)\".",
   "meta": {
     "created": 1777392524252,
-    "updated": 1795578349384
+    "updated": 1795578601177
   }
 }
