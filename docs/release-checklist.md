@@ -18,6 +18,7 @@ All of the following must be true:
 - [ ] `git status` is clean (no uncommitted work)
 - [ ] You're on `main` and synced with `origin/main`
 - [ ] All issues in the milestone are CLOSED via merged PRs
+- [ ] Minor release: the security audit has run (`/security-audit`) and every confirmed finding is fixed or explicitly accepted. It is an advisory gate, not a hard block — see [security/release-process.md](security/release-process.md), Leg B
 
 ```bash
 gh issue list --milestone "v$VERSION" --state open
@@ -53,7 +54,7 @@ The release alias (`commands.release` in Reverie) handles this:
 
 ```bash
 git push origin main && \
-  VERSION=`node -p "require('./package.json').version"` && \
+  VERSION=`bun -p "require('./package.json').version"` && \
   git tag "v$VERSION" && \
   git push origin "v$VERSION" && \
   echo "🚀 Released v$VERSION"
@@ -61,9 +62,11 @@ git push origin main && \
 
 CI will pick up the tag and build/publish artifacts.
 
+**Release integrity** ([security/release-process.md](security/release-process.md), Leg C). A release tag that already exists locally is a stop signal: check `git tag -l "v$VERSION"` is empty before tagging. After pushing, confirm `git rev-parse "v$VERSION"` equals the intended `main` commit and that the workflow run built that SHA.
+
 ## Post-tag manual smoke
 
-After CI publishes, do these manual checks against the released binary. The exact commands depend on what's in the release — fill in the per-release section below.
+After CI publishes, do these manual checks against the released binary — the published artifact, not a local build. `--version` alone proves little about a compiled binary; exercise real behaviour (a data-dir write, an MCP handshake and tool call). The exact commands depend on what's in the release — fill in the per-release section below.
 
 ### Generic smoke (every release)
 
@@ -126,6 +129,20 @@ the deprecation/error fires.
 - [ ] `rvr config llm-instructions --surface cli` contains no "PREFER MCP TOOLS" and names `rvr` commands
 - [ ] `rvr init` (in a temp dir) writes both `CLAUDE.md` and `AGENTS.md`; `rvr init --no-agents` skips `AGENTS.md`
 - [ ] `rvr --json run <confirm-entry>` (no `--yes`) → `ok:false`, `error.code:"REQUIRES_CONFIRMATION"`, command in `error.preview`
+
+#### v1.4.0
+
+The bootstrap changed shape on both surfaces, and on a shell machine the MCP server gets no everyday use — exercise `reverie_context` through an MCP client, not only the CLI. Extend this list with the behaviour of anything merged after it was written.
+
+- [ ] `rvr context -p` (in a populated repo): the handoff banner is the first thing printed; `project.*`, `commands.*` and `conventions.*` render in full; every other entry is one line, a gist ending in `… [+84B]`-style when it was cut; the last line is `[tier: standard (N entries: X in full, Y indexed) — open an entry with rvr get <key>, or use --tier full for everything]` (#188)
+- [ ] `rvr get <an indexed key>` prints the whole entry; `rvr context -p --tier full` prints everything and has no footer
+- [ ] Budget order (#188, #211). `rvr context --size-only` shows the rendered size; then with `RVR_BOOTSTRAP_MAX_BYTES=<n>` set progressively lower: first a `[demoted to index: …]` notice and nothing dropped; then the footer adds `gists cut to 80 chars`, `40 chars`, then `keys only`, with every key still listed; only below that a `[trimmed: …]` notice. Output stays within `<n>` bytes until `<n>` is too small for even the pinned keys, where a `payload still exceeds budget` warning says so. The notices come after the entries
+- [ ] `rvr config get bootstrap_max_response_bytes` on a fresh data dir → `28672`; a config that still holds an old default (`51200` or `38912`) also reports `28672` (#212)
+- [ ] `rvr context --tier bogus` → `Invalid tier 'bogus'`, exit 1; with `--json`, `error.code:"INVALID_INPUT"`
+- [ ] `rvr --json context --tier full` → `result.handoff.value` holds the handoff text (#205)
+- [ ] Session detection (#207), inside Claude Code with `RVR_SESSION` unset: write an ordinary key three times within 30 minutes with `rvr --json set` — the third envelope carries a `WRITE_AMP` warning, `~/.reverie/sessions/` holds a `<session-id>.json` for that session, and the telemetry rows carry `sessionDetected: true`. With `RVR_SESSION=x` exported, rows carry session `x` and no `sessionDetected`
+- [ ] `_epoch.json` (#187): after `rvr init` in a fresh git repo, `.reverie/.gitignore` lists `_epoch.json`; after an `rvr set`, `git status` shows it neither staged nor untracked. The release notes carry the one-time step for existing repos: `git rm --cached .reverie/_epoch.json`
+- [ ] (via an MCP client) `reverie_context` returns the same front page — handoff first, pinned namespaces in full, index lines — with a footer that names `reverie_get <key>`; `tier:"full"` returns everything
 
 ## Rollback (if a release goes wrong)
 
