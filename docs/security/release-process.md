@@ -17,8 +17,15 @@ was found by the agentic audit, not a scanner.
 Tracked by [#131](https://github.com/seabearDEV/reverie/issues/131). Always-on,
 cheap, catches known classes and regressions:
 
-- **Dependabot** alerts + security updates.
-- **`bun audit`** weekly CI cron (fails on new advisories).
+- **`bun audit`** weekly CI cron (`security-scan.yml`): the only scan that sees
+  the whole dependency tree. It fails on any known advisory and opens an issue
+  titled "Security scan: bun audit reports advisories", or comments on the open
+  one; a green run on main closes it. It failed every week from its first run
+  until #236 and nobody saw it — read the issue, not the tab.
+- **Dependabot** version updates (weekly PRs). Its *alerts* do not cover this
+  tree: GitHub's dependency graph does not read `bun.lock`, so it sees only
+  `package.json`'s direct dependencies as ranges, and the Security tab's
+  Dependabot list stays empty whatever the lockfile holds.
 - **CodeQL** weekly (free for public repos).
 - **Regression tests as permanent tripwires**: every confirmed vulnerability
   gets a test that encodes the exploit. Existing: `safe interpolate() never

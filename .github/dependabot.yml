@@ -1,6 +1,7 @@
 # Leg A continuous scanning (#131, docs/security/release-process.md).
-# Version updates only — security alerts + automated security fixes are
-# repo settings, enabled alongside this file.
+# Version updates only. Security alerts and fixes are repo settings, but they
+# stay empty here: the dependency graph does not read bun.lock. The bun audit
+# cron (security-scan.yml) is what sees advisories.
 version: 2
 updates:
   - package-ecosystem: "bun"

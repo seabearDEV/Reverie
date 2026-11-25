@@ -1,7 +1,13 @@
 # Leg A weekly dependency scan (#131, docs/security/release-process.md).
+# The only scanner that sees the whole dependency tree: GitHub's dependency
+# graph does not read bun.lock, so Dependabot alerts stay empty
+# (context.dependencyScanBlind in the store).
+#
 # Detection is scheduled, patching is event-driven (project.patchPolicy):
-# a failure here files the finding; critical/high → out-of-band patch,
-# moderate/low → next themed minor.
+# critical/high that reaches the binary → out-of-band patch, the rest → the
+# next themed minor. A failed scan opens an issue, or comments on the one
+# already open; a green scan on main closes it. Red runs alone went unread:
+# this scan failed every week from its first run until #236.
 name: Security scan
 
 on:
@@ -15,6 +21,8 @@ permissions:
 jobs:
   bun-audit:
     runs-on: ubuntu-latest
+    outputs:
+      report: ${{ steps.report.outputs.report }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -25,4 +33,73 @@ jobs:
       # Fails on any known advisory in the dependency tree. Transitive-dep
       # remediation playbook: context.bunTransitiveDedup in the store
       # (overrides + fresh resolve — bun install --force does NOT dedupe).
-      - run: bun audit
+      - name: bun audit
+        run: |
+          set -o pipefail
+          bun audit 2>&1 | tee audit.txt
+
+      - name: Keep the report for the issue
+        id: report
+        if: always()
+        run: |
+          delim="AUDIT_$(openssl rand -hex 16)"
+          {
+            echo "report<<$delim"
+            if [ -f audit.txt ]; then sed -E 's/\x1b\[[0-9;]*m//g' audit.txt | head -c 60000; fi
+            echo
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+  # A job of its own so that only this job holds issues: write, and nothing
+  # installed from the registry runs alongside it.
+  issue:
+    needs: bun-audit
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: 'Security scan: bun audit reports advisories'
+      RESULT: ${{ needs.bun-audit.result }}
+      REPORT: ${{ needs.bun-audit.outputs.report }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, update or close the issue
+        run: |
+          num=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq 'map(select(.title == env.TITLE)) | .[0].number // empty')
+
+          if [ "$RESULT" = success ]; then
+            if [ -n "$num" ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+              gh issue close "$num" --comment "\`bun audit\` is clean on main (${GITHUB_SHA::7}): $RUN_URL"
+            fi
+            exit 0
+          fi
+
+          summary=$(printf '%s\n' "$REPORT" | grep -E '^[0-9]+ vulnerabilit' | tail -n 1 || true)
+          {
+            echo "The Security scan failed on \`$GITHUB_REF_NAME\` (${GITHUB_SHA::7}): $RUN_URL"
+            echo
+            if [ -n "$summary" ]; then
+              echo "**$summary**"
+              echo
+              echo '<details><summary>bun audit</summary>'
+              echo
+              echo '```'
+              printf '%s\n' "$REPORT"
+              echo '```'
+              echo '</details>'
+            else
+              echo 'It failed before `bun audit` reported anything: read the run.'
+            fi
+            echo
+            echo 'Triage: `rvr get context.dependencyScanBlind` (what ships in the binary) and `rvr get context.bunTransitiveDedup` (fixing a transitive dependency). A green scan on main closes this issue.'
+          } > body.md
+
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body-file body.md
+          else
+            gh issue create --title "$TITLE" --label dependencies --body-file body.md
+          fi
