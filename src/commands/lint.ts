@@ -1,7 +1,7 @@
 import { getEntriesFlat, Scope } from '../storage';
 import { color } from '../formatting';
 import { findProjectFile } from '../store';
-import { interpolate } from '../utils/interpolate';
+import { interpolate, interpolateForRead, unresolvedWarning } from '../utils/interpolate';
 import { isJsonMode, setResult, failJson } from '../utils/output';
 import { describeUnreadable, displayPath, listUnreadableFiles, markUnreadableShown, resolutionHint } from '../utils/unreadable';
 import fs from 'fs';
@@ -149,6 +149,18 @@ export interface LintResult {
   message: string;
 }
 
+/** Entries whose value has a `\${name}` that does not resolve (#202). Safe pass: never executes. */
+function findUnresolvedReferences(flat: Record<string, string>): { key: string; message: string }[] {
+  const found: { key: string; message: string }[] = [];
+  for (const [key, value] of Object.entries(flat)) {
+    try {
+      const read = interpolateForRead(value);
+      if (read.unresolved) found.push({ key, message: unresolvedWarning(key, read.unresolved) });
+    } catch { /* `:?` or a cycle: reported by the read that hits it, not here */ }
+  }
+  return found;
+}
+
 export function lintEntries(options: { json?: boolean; global?: boolean; seedQuality?: boolean } = {}): void {
   const scope: Scope | undefined = options.global ? 'global' : undefined;
   const flat = getEntriesFlat(scope);
@@ -173,6 +185,12 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
 
   const seedIssues = options.seedQuality ? checkSeedQuality(flat) : [];
 
+  // #202: references that do not resolve, checked on every lint — this was
+  // one heuristic of --seed-quality, so a default lint passed a store whose
+  // entries could not be read. Advice, like the namespace check: a read
+  // returns such a value as written, and only `run` fails on it.
+  const unresolvedRefs = findUnresolvedReferences(flat);
+
   // #215: files that exist but do not parse. Everything else lint reports is
   // advice; this is a broken store, and the one finding that fails the
   // command. getEntriesFlat above scanned the store(s) — no extra read.
@@ -184,6 +202,7 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
       allowed: allowedNamespaces,
     };
     if (options.seedQuality) payload.seedQuality = seedIssues;
+    if (unresolvedRefs.length > 0) payload.unresolvedReferences = unresolvedRefs;
     if (unreadable.length > 0) {
       payload.unreadable = unreadable.map(f => ({
         kind: f.kind,
@@ -235,6 +254,13 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
     }
     console.log(color.gray(`\nAllowed namespaces: ${allowedNamespaces.join(', ')}`));
     console.log(color.gray('Add custom namespaces via _schema.namespaces in the legacy .codexcli.json (directory-format stores do not yet support custom namespaces)'));
+    console.log('');
+  }
+
+  if (unresolvedRefs.length > 0) {
+    console.log(color.bold(`\n${unresolvedRefs.length} ${unresolvedRefs.length === 1 ? 'entry holds' : 'entries hold'} a reference that does not resolve:\n`));
+    for (const { message } of unresolvedRefs) console.log(`  ${color.yellow(message)}`);
+    console.log(color.gray('\nA read returns these values as written; `run` fails on them.'));
     console.log('');
   }
 

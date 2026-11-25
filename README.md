@@ -450,6 +450,14 @@ rvr get paths.myproject --source
 rvr set paths.myproject -p
 ```
 
+A reference that does not resolve — no such key — does not make the entry unreadable. `get` returns the value as written and warns (on stderr; `warnings[]` with code `INTERPOLATION_UNRESOLVED` in JSON), `set` warns when it stores one, and `rvr lint` lists them. `run` still refuses to execute a command with an unresolved reference. For text that only looks like a reference, such as documentation for a tool that uses `${VAR}` itself, escape it:
+
+```bash
+rvr set conventions.robot 'Use \${EMPTY} to clear the field'
+rvr get conventions.robot
+# → Use ${EMPTY} to clear the field
+```
+
 #### Conditional Interpolation
 
 Use bash-style modifiers for fallback values and required-key checks:

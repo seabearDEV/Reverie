@@ -39,7 +39,8 @@ import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
-import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, StrictInterpolationError } from "./utils/interpolate";
+import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, interpolateForRead, unresolvedWarning } from "./utils/interpolate";
+import type { UnresolvedOnRead } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace } from "./utils/telemetry";
 import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
@@ -485,6 +486,14 @@ server.tool(
         `Set: ${resolved} (${byteCount}B${encrypt ? ', encrypted' : ''}) → ${wroteTo}${wroteTo === 'project' && projectFile ? ` (${projectFile})` : ''}`,
       ];
       if (alias) lines.push(`Alias set: ${alias} -> ${resolved}`);
+      // #202: the write stands; say what a reader will get. Safe pass, never
+      // executes; an encrypted value is not inspected.
+      if (!encrypt) {
+        try {
+          const read = interpolateForRead(value);
+          if (read.unresolved) lines.push(`warning: ${unresolvedWarning(resolved, read.unresolved)}`);
+        } catch { /* `:?` or a cycle: the author asked for that failure on read */ }
+      }
 
       // Write-amp guard (#101) — warn when the same key has been written
       // 3+ times in this session within a 30-min window. Informational
@@ -600,6 +609,7 @@ server.tool(
       if (typeof value !== "object" || value === null) {
         const strVal = String(value);
         let display: string | number | boolean;
+        let unresolvedNote = '';
         if (isEncrypted(strVal)) {
           if (decryptOpt) {
             if (!password) {
@@ -615,21 +625,19 @@ server.tool(
             display = '[encrypted]';
           }
         } else if (typeof value === 'string') {
-          try {
-            display = interpolate(strVal);
-          } catch (err) {
-            // StrictInterpolationError = user opted in to fail-loud (`:?`,
-            // circular). Surface those instead of silently rendering the
-            // raw template.
-            if (err instanceof StrictInterpolationError) throw err;
-            display = value;
-          }
+          // StrictInterpolationError = user opted in to fail-loud (`:?`,
+          // circular): it propagates. Anything else that does not resolve
+          // comes back as written, with a line saying so (#202) — it used to
+          // come back as written with no sign that anything was unresolved.
+          const read = interpolateForRead(strVal);
+          display = read.value;
+          if (read.unresolved) unresolvedNote = `\nwarning: ${unresolvedWarning(resolvedKey, read.unresolved)}`;
         } else {
           display = value;
         }
         const getMeta = lookupScope === 'auto' ? loadMetaMerged() : loadMeta(lookupScope);
         const staleTag = getStalenessTag(resolvedKey, getMeta);
-        return textResponse(`${resolvedKey}: ${display}${staleTag}`);
+        return textResponse(`${resolvedKey}: ${display}${staleTag}${unresolvedNote}`);
       }
 
       // Object subtree
@@ -639,11 +647,15 @@ server.tool(
       }
       const flat = flattenObject(value, resolvedKey, depth);
       if (showSubtreeValues) {
-        const interpFlat = interpolateObject(flat);
+        const unresolved: [string, UnresolvedOnRead][] = [];
+        const interpFlat = interpolateObject(flat, (k, u) => { unresolved.push([k, u]); });
         const lines = Object.entries(interpFlat).map(([k, v]) => {
           const strVal = typeof v === 'string' ? v : JSON.stringify(v);
           return `${k}: ${isEncrypted(strVal) ? '[encrypted]' : strVal}`;
         });
+        // #202: name what came back as written; past ten, count the rest.
+        for (const [k, u] of unresolved.slice(0, 10)) lines.push(`warning: ${unresolvedWarning(k, u)}`);
+        if (unresolved.length > 10) lines.push(`warning: ${unresolved.length - 10} more entries hold a reference that does not resolve.`);
         return textResponse(lines.join("\n"));
       }
       return textResponse(Object.keys(flat).join("\n"));

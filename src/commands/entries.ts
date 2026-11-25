@@ -19,13 +19,31 @@ import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
-import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys } from '../utils/interpolate';
+import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, interpolateForRead, unresolvedWarning, UNRESOLVED_WARNING_CODE, UnresolvedOnRead } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
-import { isJsonMode, setResult, failJson } from '../utils/output';
+import { isJsonMode, setResult, failJson, addWarning } from '../utils/output';
 import { markValueStored } from '../utils/writeAmp';
 
 function toScope(global?: boolean  ): Scope | undefined {
   return global ? 'global' : undefined;
+}
+
+/** How many unresolved-reference warnings one command prints before it summarizes. */
+const UNRESOLVED_WARNINGS_CAP = 10;
+
+/**
+ * #202: say that these entries were returned as written because a `\${name}`
+ * in them does not resolve. warnings[] in JSON mode; stderr otherwise, so
+ * stdout stays exactly the value for a caller capturing it.
+ */
+function warnUnresolved(found: [string, UnresolvedOnRead][]): void {
+  const emit = (message: string): void => {
+    if (isJsonMode()) addWarning(message, UNRESOLVED_WARNING_CODE);
+    else console.error(`warning: ${message}`);
+  };
+  for (const [key, unresolved] of found.slice(0, UNRESOLVED_WARNINGS_CAP)) emit(unresolvedWarning(key, unresolved));
+  const rest = found.length - UNRESOLVED_WARNINGS_CAP;
+  if (rest > 0) emit(`${rest} more ${rest === 1 ? 'entry holds' : 'entries hold'} a reference that does not resolve; \`${getBinaryName()} lint\` lists them all.`);
 }
 
 export async function runCommand(keys: string[], options: { yes?: boolean, dry?: boolean, decrypt?: boolean, source?: boolean, capture?: boolean, chain?: boolean, global?: boolean, passwordFile?: string }): Promise<void> {
@@ -401,6 +419,16 @@ export async function setEntry(key: string, value: string | undefined, force = f
     setValue(key, storedValue, scope);
     console.log(`Entry '${key}' set successfully.`);
     markValueStored();
+    // #202: `set` used to accept a value whose \${name} resolves to nothing
+    // without a word, and the first sign was a failed read later. The write
+    // stands; say what a reader will get. Checked with the safe, non-executing
+    // pass. An encrypted value is not inspected.
+    if (!encrypt) {
+      try {
+        const read = interpolateForRead(value);
+        if (read.unresolved) warnUnresolved([[key, read.unresolved]]);
+      } catch { /* `:?` or a cycle: the author asked for that failure on read */ }
+    }
 
     if (alias) {
       setAlias(alias, key, scope);
@@ -427,9 +455,20 @@ function displayFlatEntries(flat: Record<string, string>, aliasMap: Record<strin
     return;
   }
 
-  const entries = options.source
-    ? flat as Record<string, CodexValue>
-    : interpolateObject(flat);
+  const unresolved: [string, UnresolvedOnRead][] = [];
+  let entries: Record<string, CodexValue>;
+  try {
+    entries = options.source
+      ? flat
+      : interpolateObject(flat, (k, u) => { unresolved.push([k, u]); });
+  } catch (err) {
+    // A `:?` or a cycle in one entry of the listing: the one-line error a
+    // get of that entry gives. This used to escape as a stack trace.
+    printError(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+    return;
+  }
+  warnUnresolved(unresolved);
 
   if (options.plain) {
     for (const [k, v] of Object.entries(entries)) {
@@ -445,13 +484,20 @@ function displayFlatEntries(flat: Record<string, string>, aliasMap: Record<strin
 function jsonFlatEntries(data: Record<string, string> | Record<string, CodexValue>): Record<string, string> {
   const flat = flattenObject(data);
   const result: Record<string, string> = {};
+  const unresolved: [string, UnresolvedOnRead][] = [];
   for (const [k, v] of Object.entries(flat)) {
     if (isEncrypted(v)) {
       result[k] = '[encrypted]';
     } else {
-      try { result[k] = interpolate(v); } catch { result[k] = v; }
+      // A `:?` or a cycle keeps the raw value here, as it always has.
+      try {
+        const read = interpolateForRead(v);
+        result[k] = read.value;
+        if (read.unresolved) unresolved.push([k, read.unresolved]);
+      } catch { result[k] = v; }
     }
   }
+  warnUnresolved(unresolved);
   return result;
 }
 
@@ -550,7 +596,12 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
       if (isEncrypted(strVal)) {
         displayVal = '[encrypted]';
       } else {
-        try { displayVal = interpolate(strVal); } catch { displayVal = strVal; }
+        // A `:?` or a cycle keeps the raw value here, as it always has.
+        try {
+          const read = interpolateForRead(strVal);
+          displayVal = read.value;
+          if (read.unresolved) warnUnresolved([[key, read.unresolved]]);
+        } catch { displayVal = strVal; }
       }
       setResult({ [key]: displayVal });
     }
@@ -615,7 +666,10 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
     }
     let decryptedDisplay: string;
     try {
-      decryptedDisplay = interpolate(decrypted);
+      // #202: an unresolved reference is returned as written, with a warning.
+      const read = interpolateForRead(decrypted);
+      decryptedDisplay = read.value;
+      if (read.unresolved) warnUnresolved([[key, read.unresolved]]);
     } catch (err) {
       printError(err instanceof Error ? err.message : String(err));
       process.exitCode = 1;
@@ -642,7 +696,13 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
   let displayValue = strValue;
   if (!isEncrypted(strValue) && !options.source) {
     try {
-      displayValue = interpolate(strValue);
+      // #202: an unresolved reference is returned as written, with a warning —
+      // the same answer `get --json` and a subtree listing give. This used to
+      // fail with exit 1, so an entry documenting a tool with \${VAR} syntax
+      // could not be read at all. Only a `:?` or a cycle still fails here.
+      const read = interpolateForRead(strValue);
+      displayValue = read.value;
+      if (read.unresolved) warnUnresolved([[key, read.unresolved]]);
     } catch (err) {
       printError(err instanceof Error ? err.message : String(err));
       process.exitCode = 1;

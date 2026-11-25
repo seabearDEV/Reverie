@@ -30,6 +30,82 @@ export class StrictInterpolationError extends Error {
   }
 }
 
+
+/**
+ * A `${name}` that cannot be resolved: no such key, a group of entries where
+ * a value is needed, or an encrypted value (#202). Distinct from
+ * StrictInterpolationError, which the author asked for with `:?` or caused
+ * with a cycle.
+ *
+ * `run` still fails on it — a command must not execute with a hole in it. A
+ * read does not: the entry exists and its text is what was stored, so read
+ * paths return it as written and say so (interpolateForRead). The message is
+ * unchanged from when this was a plain Error.
+ */
+export class UnresolvedReferenceError extends Error {
+  readonly ref: string;
+  readonly reason: 'missing' | 'not-a-value' | 'encrypted';
+
+  constructor(message: string, ref: string, reason: 'missing' | 'not-a-value' | 'encrypted') {
+    super(message);
+    this.name = 'UnresolvedReferenceError';
+    this.ref = ref;
+    this.reason = reason;
+  }
+}
+
+/** A read that fell back to the stored text, and why. */
+export interface UnresolvedOnRead {
+  /** The reference as written, without the `${}`; undefined when the failure was not about one reference. */
+  ref?: string;
+  /** One clause: what is wrong with it. Never contains the phrase the MCP miss detector keys on. */
+  why: string;
+}
+
+/**
+ * Interpolate a value for a READ (#202): `get`, a subtree listing, the MCP
+ * read tools. Never executes — the default, safe `interpolate`. A value that
+ * cannot be fully resolved is returned exactly as stored, with the reason, so
+ * every read path gives the same answer and the caller can warn. Before this,
+ * one stored value gave four answers: `set` accepted it silently, plain `get`
+ * failed with exit 1, `get --json` returned it raw without a word, and `lint`
+ * passed.
+ *
+ * StrictInterpolationError still propagates: `${key:?message}` and a cycle
+ * are the author asking for a loud failure.
+ */
+export function interpolateForRead(value: string, execCache = new Map<string, string>()): { value: string; unresolved?: UnresolvedOnRead } {
+  try {
+    return { value: interpolate(value, MAX_DEPTH, new Set<string>(), execCache) };
+  } catch (err) {
+    if (err instanceof StrictInterpolationError) throw err;
+    return { value, unresolved: describeFailure(err) };
+  }
+}
+
+function describeFailure(err: unknown): UnresolvedOnRead {
+  if (err instanceof UnresolvedReferenceError) {
+    const why = err.reason === 'missing' ? 'is not a stored key'
+      : err.reason === 'not-a-value' ? 'is a group of entries, not a value'
+      : 'is encrypted';
+    return { ref: err.ref, why };
+  }
+  return { why: 'nests references too deeply to resolve' };
+}
+
+/**
+ * The warning for an entry whose value was returned as written. Says what to
+ * do in both cases: fix the reference, or escape text that only looks like one.
+ */
+export function unresolvedWarning(key: string, u: UnresolvedOnRead): string {
+  if (u.ref === undefined) return `'${key}' ${u.why}. Its value is returned as written.`;
+  return `'${key}' refers to \${${u.ref}}, which ${u.why}. Its value is returned as written. `
+    + `If that is literal text, store it escaped: \\\${${u.ref}}.`;
+}
+
+/** Envelope warning code for unresolvedWarning. */
+export const UNRESOLVED_WARNING_CODE = 'INTERPOLATION_UNRESOLVED';
+
 /**
  * Parse a ref string for conditional modifiers (`:-` default, `:?` error).
  * Returns the key and optional modifier with its value.
@@ -99,15 +175,15 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should also use generic message
       throw new StrictInterpolationError(modValue || `"${rawKey.trim()}" is required but not set`);
     }
-    throw new Error(`Interpolation failed: "${rawKey.trim()}" not found`);
+    throw new UnresolvedReferenceError(`Interpolation failed: "${rawKey.trim()}" not found`, rawKey.trim(), 'missing');
   }
 
   if (typeof resolved !== 'string') {
-    throw new Error(`Interpolation failed: "${rawKey.trim()}" is not a string value`);
+    throw new UnresolvedReferenceError(`Interpolation failed: "${rawKey.trim()}" is not a string value`, rawKey.trim(), 'not-a-value');
   }
 
   if (isEncrypted(resolved)) {
-    throw new Error(`Interpolation failed: "${rawKey.trim()}" is encrypted`);
+    throw new UnresolvedReferenceError(`Interpolation failed: "${rawKey.trim()}" is encrypted`, rawKey.trim(), 'encrypted');
   }
 
   if (maxDepth <= 0) {
@@ -368,7 +444,10 @@ export function collectReferencedKeys(value: string): Set<string> {
  * SECURITY: safe by default — leaves `$(key)` literal (no execution). Used by
  * read/display paths (`get --values`, MCP subtree); they must never execute.
  */
-export function interpolateObject(obj: Record<string, CodexValue>): Record<string, CodexValue> {
+export function interpolateObject(
+  obj: Record<string, CodexValue>,
+  onUnresolved?: (key: string, unresolved: UnresolvedOnRead) => void,
+): Record<string, CodexValue> {
   const flat = flattenObject(obj);
   const result: Record<string, CodexValue> = {};
   const execCache = new Map<string, string>();
@@ -384,8 +463,9 @@ export function interpolateObject(obj: Record<string, CodexValue>): Record<strin
         if (err instanceof StrictInterpolationError) throw err;
         // For everything else (key not found, not-a-string, encrypted),
         // keep the raw template so a single broken leaf doesn't fail the
-        // whole subtree get.
+        // whole subtree get — and tell the caller, so it can warn (#202).
         result[key] = value;
+        onUnresolved?.(key, describeFailure(err));
       }
     } else {
       result[key] = value;
