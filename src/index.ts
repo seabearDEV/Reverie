@@ -474,6 +474,14 @@ confirmCommand
     await withCliInstrumentation(
       { tool: 'reverie_confirm_set', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
+        // The same check `set <key> --confirm` makes: the flag goes on an
+        // entry, spelled as it is stored. This command used to skip it and
+        // report success for a key that named nothing.
+        const problem = commands.confirmTargetProblem(resolvedKey, scope);
+        if (problem) {
+          printError(problem.message, problem.code);
+          return undefined;
+        }
         setConfirm(resolvedKey, scope);
         console.log(`Entry '${resolvedKey}' now requires confirmation to run.`);
         return { key: resolvedKey, confirm: true };

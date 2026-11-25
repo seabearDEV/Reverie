@@ -171,6 +171,14 @@ vi.mock('../confirm', () => ({
   hasConfirm: vi.fn((key: string) => mockConfirmKeys[key] === true),
   setConfirm: vi.fn((key: string) => { mockConfirmKeys[key] = true; }),
   removeConfirm: vi.fn((key: string) => { delete mockConfirmKeys[key]; }),
+  moveConfirm: vi.fn((oldKey: string, newKey: string) => {
+    for (const k of Object.keys(mockConfirmKeys)) {
+      if (k === oldKey || k.startsWith(oldKey + '.')) {
+        delete mockConfirmKeys[k];
+        mockConfirmKeys[newKey + k.slice(oldKey.length)] = true;
+      }
+    }
+  }),
   loadConfirmKeys: vi.fn(() => ({ ...mockConfirmKeys })),
   saveConfirmKeys: vi.fn((c: any) => {
     Object.keys(mockConfirmKeys).forEach(k => delete mockConfirmKeys[k]);

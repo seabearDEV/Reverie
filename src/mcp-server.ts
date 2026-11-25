@@ -32,7 +32,7 @@ import {
 } from "./utils/paths";
 import { fileURLToPath } from "url";
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
-import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
+import { hasConfirm, moveConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
 import { KeyCollisionError, assertKeysWritable, renameDestinationProblem } from "./utils/keyCollision";
@@ -895,11 +895,8 @@ server.tool(
         saveAliases(aliases, scope);
       }
 
-      // Move confirm metadata
-      if (hasConfirm(resolvedOld)) {
-        removeConfirm(resolvedOld, scope);
-        setConfirm(newKey, scope);
-      }
+      // Move confirm metadata: the flag on the key and on every entry under it.
+      moveConfirm(resolvedOld, newKey, scope);
 
       // Set a new alias on the renamed key
       if (alias) {

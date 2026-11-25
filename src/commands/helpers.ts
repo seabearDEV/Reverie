@@ -55,11 +55,13 @@ export function displayKeys(keys: string[], keyToAliasMap?: Record<string, strin
 
 export function displayEntries(entries: Record<string, string>, keyToAliasMap?: Record<string, string>): void {
   const aliasMap = keyToAliasMap ?? buildKeyToAliasMap();
-  const confirmKeys = loadConfirmKeys();
+  // Lower-cased: the run gate matches a flag under any spelling of the key
+  // (confirm.ts), and the tag has to say what the gate will do.
+  const confirmKeys = new Set(Object.entries(loadConfirmKeys()).filter(([, flag]) => flag === true).map(([k]) => k.toLowerCase()));
   Object.entries(entries).forEach(([key, value]) => {
     const colorizedPath = colorizePathByLevels(key);
     const alias = aliasMap[key];
-    const confirmTag = confirmKeys[key] ? ` ${color.red('[confirm]')}` : '';
+    const confirmTag = confirmKeys.has(key.toLowerCase()) ? ` ${color.red('[confirm]')}` : '';
     const displayed = isEncrypted(value) ? '[encrypted]' : interpretEscapes(value);
     const lines = displayed.split('\n');
 

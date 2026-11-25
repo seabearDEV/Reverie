@@ -264,6 +264,69 @@ describe('MCP Integration (real I/O)', () => {
     });
   });
 
+  // The CLI side is confirm-gate.test.ts. Over MCP a flag can only arrive
+  // from the list on disk — there is no tool that sets one — so these seed
+  // `_confirm.json` the way an older version or an import would have left it.
+  describe('the confirmation gate follows the entry over MCP', () => {
+    const storeFile = (name: string) => path.join(tmpDir, 'store', name);
+    const marker = (name: string) => path.join(tmpDir, `ran-${name}`);
+    const flag = (...keys: string[]) =>
+      fs.writeFileSync(storeFile('_confirm.json'), JSON.stringify(Object.fromEntries(keys.map(k => [k, true]))));
+    const flagged = () => Object.keys(JSON.parse(fs.readFileSync(storeFile('_confirm.json'), 'utf8')) as object).sort();
+    const text = (r: { content: { text: string }[] }) => r.content.map(c => c.text).join('\n');
+
+    beforeEach(() => {
+      callMcpTool('reverie_set', { key: 'commands.deploy', value: `touch ${marker('deploy')}` });
+      callMcpTool('reverie_set', { key: 'commands.status', value: `touch ${marker('status')}` });
+    });
+
+    it('reverie_run: a flag listed in another case than the entry asks for confirmation', () => {
+      flag('commands.DEPLOY');
+      const r = callMcpTool('reverie_run', { key: 'commands.deploy' });
+      expect(text(r)).toContain('requires confirmation before execution');
+      expect(text(r)).toContain('confirm_token');
+      expect(fs.existsSync(marker('deploy'))).toBe(false);
+      // An entry with no flag under any spelling is not caught up in it.
+      callMcpTool('reverie_run', { key: 'commands.status' });
+      expect(fs.existsSync(marker('status'))).toBe(true);
+    });
+
+    it('reverie_run: the same through a reference and through a chain', () => {
+      flag('Commands.Deploy');
+      callMcpTool('reverie_set', { key: 'commands.wrapper', value: '${commands.deploy} && true' });
+      callMcpTool('reverie_set', { key: 'commands.all', value: 'commands.status commands.deploy' });
+      expect(text(callMcpTool('reverie_run', { key: 'commands.wrapper' }))).toContain('requires confirmation before execution');
+      expect(text(callMcpTool('reverie_run', { key: 'commands.all', chain: true }))).toContain('requires confirmation before execution');
+      expect(fs.existsSync(marker('deploy'))).toBe(false);
+      expect(fs.existsSync(marker('status'))).toBe(false);
+    });
+
+    it('reverie_run: a key spelled in another case never runs the flagged command', () => {
+      // Case-insensitive filesystem: the spelling reads the entry and the
+      // gate holds. Case-sensitive: it names nothing. Either way, no run.
+      flag('commands.deploy');
+      callMcpTool('reverie_run', { key: 'commands.DEPLOY' });
+      expect(fs.existsSync(marker('deploy'))).toBe(false);
+    });
+
+    it('reverie_rename: a renamed namespace keeps the flags of the entries under it', () => {
+      flag('commands.deploy');
+      const renamed = callMcpTool('reverie_rename', { oldKey: 'commands', newKey: 'jobs' });
+      expect(renamed.isError).toBeFalsy();
+      expect(flagged()).toEqual(['jobs.deploy']);
+      expect(text(callMcpTool('reverie_run', { key: 'jobs.deploy' }))).toContain('requires confirmation before execution');
+      expect(fs.existsSync(marker('deploy'))).toBe(false);
+    });
+
+    it('reverie_rename: a renamed entry keeps a flag listed in another case', () => {
+      flag('commands.DEPLOY');
+      callMcpTool('reverie_rename', { oldKey: 'commands.deploy', newKey: 'commands.ship' });
+      expect(flagged()).toEqual(['commands.ship']);
+      expect(text(callMcpTool('reverie_run', { key: 'commands.ship' }))).toContain('requires confirmation before execution');
+      expect(fs.existsSync(marker('deploy'))).toBe(false);
+    });
+  });
+
   describe('reverie_copy', () => {
     it('duplicates value on disk', () => {
       callMcpTool('reverie_set', { key: 'src', value: 'copied' });

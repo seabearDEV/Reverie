@@ -13,7 +13,7 @@ import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
 import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAliases, resolveKey, renameAlias } from '../alias';
-import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey } from '../confirm';
+import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey, moveConfirm } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
@@ -348,6 +348,53 @@ async function promptAndEncrypt(value: string, passwordFile?: string): Promise<s
   return encryptValue(value, password);
 }
 
+/**
+ * Why a confirmation flag cannot be set on `key`, or null when it can.
+ *
+ * A flag gates `run`, and `run` takes an entry that holds a command, so the
+ * key has to be one — spelled as it is stored. Each of these used to report
+ * "now requires confirmation" and gate nothing:
+ *
+ *   - a key that is not in the store (a typo): `confirm set` did not look;
+ *   - a namespace: the lookup found the subtree, and `run` never takes one;
+ *   - a key that differs from the entry only by case: on a case-insensitive
+ *     filesystem the lookup is answered by the entry's file, so the flag went
+ *     into the list under a name the entry does not have.
+ *
+ * The gate itself now matches a flag under any spelling (confirm.ts), so the
+ * third is no longer a way past it. It is refused all the same, like the
+ * write it resembles (#216), so the list names entries as they are stored.
+ */
+export function confirmTargetProblem(key: string, scope?: Scope): { message: string; code: 'NOT_FOUND' | 'INVALID_INPUT' } | null {
+  // First, and unguarded: an entry whose file cannot be read is not a miss
+  // (#215), and getValue is what throws for it.
+  const value = getValue(key, scope);
+  if (value !== undefined && typeof value !== 'string') {
+    return {
+      code: 'INVALID_INPUT',
+      message: `'${key}' is a namespace, not an entry. A confirmation flag goes on an entry that holds a command: set it on the entries under '${key}'.`,
+    };
+  }
+  // The lookup above cannot tell the entry from another spelling of it: on a
+  // case-insensitive filesystem either one opens the entry's file. The
+  // store's own key list can.
+  const stored = Object.keys(flattenObject(loadData(scope)));
+  if (!stored.includes(key)) {
+    const lower = key.toLowerCase();
+    const otherSpelling = stored.find(k => k.toLowerCase() === lower);
+    if (otherSpelling !== undefined) {
+      return {
+        code: 'NOT_FOUND',
+        message: `Entry '${key}' not found. The stored key is '${otherSpelling}': keys keep their case, so name it that way.`,
+      };
+    }
+  }
+  if (value === undefined) {
+    return { code: 'NOT_FOUND', message: `Entry '${key}' not found. Cannot update confirm on a non-existent entry.` };
+  }
+  return null;
+}
+
 async function handlePostSetConfirm(key: string, confirm: boolean | undefined, scope?: Scope  ): Promise<void> {
   if (confirm === true) {
     setConfirm(key, scope);
@@ -378,9 +425,9 @@ export async function setEntry(key: string, value: string | undefined, force = f
     if (value === undefined) {
       // Handle --confirm / --no-confirm on an existing entry (no value needed)
       if (confirm !== undefined) {
-        const existing = getValue(key, scope);
-        if (existing === undefined) {
-          printError(`Entry '${key}' not found. Cannot update confirm on a non-existent entry.`, 'NOT_FOUND');
+        const problem = confirmTargetProblem(key, scope);
+        if (problem) {
+          printError(problem.message, problem.code);
           process.exitCode = 1;
           return;
         }
@@ -1060,11 +1107,8 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     saveAliases(aliases, scope);
   }
 
-  // Move confirm metadata
-  if (hasConfirm(oldKey)) {
-    removeConfirm(oldKey, scope);
-    setConfirm(newKey, scope);
-  }
+  // Move confirm metadata: the flag on the key and on every entry under it.
+  moveConfirm(oldKey, newKey, scope);
 
   // Set a new alias on the renamed key
   if (newAlias) {
