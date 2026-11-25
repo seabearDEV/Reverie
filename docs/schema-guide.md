@@ -26,7 +26,7 @@ A store is a directory. Every entry is its own file, named by its key, and a few
 
 The project store lives in `.reverie/` at the project root and is meant to be committed. The global store has the same layout under `~/.reverie/store/`.
 
-You never edit these files by hand — `rvr` and the MCP tools maintain them, along with the timestamps, alias integrity and audit log that hand edits would skip. This section describes the layout so that a diff or a merge makes sense when you see one.
+You never edit the entry files or the two sidecars by hand — `rvr` and the MCP tools maintain them, along with the timestamps, alias integrity and audit log that hand edits would skip. (The one exception is deleting a file that can no longer be parsed: see [When a store file cannot be read](#when-a-store-file-cannot-be-read-merge-conflicts).) This section describes the layout so that a diff or a merge makes sense when you see one.
 
 ### Entries — one file per key
 
@@ -42,9 +42,11 @@ All project knowledge lives in entries, addressed by dot notation: `project.name
 }
 ```
 
-The dots are for addressing; the tools present entries as a tree. `rvr get arch` returns everything under `arch.*`, and a key is either a leaf with a value or a parent of other keys, never both.
+The dots are for addressing; the tools present entries as a tree. `rvr get arch` lists the keys under `arch.*`, and `rvr get arch -v` prints their values too.
 
-One file per entry is what makes a committed store workable for a team: two branches that add or change *different* entries merge without conflict. Two branches that write the *same* entry conflict in that entry's file, like any other file both sides edited.
+A key is either a leaf with a value or a parent of other keys, never both — and the store keeps it that way by replacing, not refusing. Writing a value to a parent (`rvr set arch "…"`) removes every entry under it; writing under a leaf (`rvr set arch.api.v2 "…"` when `arch.api` holds a value) removes the leaf. In a terminal the first asks before overwriting; run from a script or an agent's shell, neither asks. Check that a key is not already a parent before writing a value to it.
+
+One file per entry is what makes a committed store workable for a team: two branches that add or change *different* entries merge without conflict. Two branches that write the *same* entry conflict in that entry's file. Reverie then refuses to read or overwrite the file until one side is chosen — see [When a store file cannot be read](#when-a-store-file-cannot-be-read-merge-conflicts).
 
 ### Timestamps
 
@@ -83,7 +85,7 @@ When `rvr run commands.release` is called, the user gets a confirmation prompt b
 ### The other files
 
 - **`_epoch.json`** — a counter the store bumps on every write so that a reader can tell it overlapped a writer. It is per-clone state: the seeded `.gitignore` keeps it out of commits, and a fresh clone starts without one.
-- **`.gitignore`** and **`_README.md`** — written once when the store is created. Both are safe to extend.
+- **`.gitignore`** and **`_README.md`** — written when the store is created, and again by the next write if either goes missing. An existing file is never overwritten, so both are safe to extend.
 
 ## The namespace schema
 
@@ -247,21 +249,20 @@ If an entry needs multiple paragraphs, it's probably better as a doc file refere
 
 ## Putting it all together
 
-Here's what a minimal store holds for a new project. `rvr init` creates `.reverie/` and fills in what it can detect from the codebase; entries like these are then added with `rvr set`:
+Here's what a minimal store holds for a new project. `rvr init` creates `.reverie/` and fills in what it can detect from the codebase — in a Node project, `project.name`, `project.stack` and the build and test commands. Entries like these are then added with `rvr set`:
 
 ```bash
-rvr set project.name "myapp"
 rvr set project.description "REST API for widget management"
 rvr set commands.check "npm run build && npm run lint && npm test"
 rvr set conventions.errors "All API errors return { error: string, code: number }. Never throw raw strings."
 rvr set context.auth "Auth middleware reads JWT from Authorization header, not cookies. Mobile clients can't use cookies."
 ```
 
-Each command writes one entry file.
+Each command writes one entry file. In a terminal, `rvr set` on a key that `init` already filled in asks before replacing it.
 
-Four namespaces, five entries, and an agent already knows: what the project is, how to build and test it, how errors should look, and why auth works the way it does. That's enough to be useful on day one. Add `arch.*`, `files.*`, and `deps.*` entries as you discover things worth keeping.
+Four entries across four namespaces, on top of what `init` detected, and an agent already knows: what the project is, how to build and test it, how errors should look, and why auth works the way it does. That's enough to be useful on day one. Add `arch.*`, `files.*`, and `deps.*` entries as you discover things worth keeping.
 
-The Reverie project's own [`.reverie/`](../.reverie/) is the reference implementation — entries across all 7 namespaces, with aliases for common lookups and confirm metadata for the release command. Use it as a model for comprehensive coverage.
+The Reverie project's own [`.reverie/`](../.reverie/) is the reference implementation — entries across seven of the eight namespaces (it has no `system.*` entries), with aliases for common lookups and confirm metadata for the release command. Use it as a model for comprehensive coverage.
 
 ## Bootstrap tiers
 

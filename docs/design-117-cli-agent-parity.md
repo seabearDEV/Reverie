@@ -5,7 +5,7 @@
 
 > **Implementation note (2026-06-09, WS3).** Shipped per D8 in v1.2.0:
 > `RVR_SESSION` adopts a shared session id (sanitized — it names the state
-> file), with per-session state at `~/.reverie/store/sessions/<id>.json`
+> file), with per-session state at `~/.reverie/sessions/<id>.json`
 > (atomic + lock-guarded read-modify-write, 24h TTL prune, corrupt files
 > degrade to empty). Write-amp warnings land in the envelope's `warnings[]`
 > as `{code:"WRITE_AMP", message, count}` (stderr in human mode) with the

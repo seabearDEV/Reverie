@@ -70,7 +70,7 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **File Locking**: Advisory locking prevents data corruption from concurrent access
 - **Shell Tab-Completion**: Full tab-completion for Bash and Zsh (commands, flags, keys, aliases)
 - **Staleness Detection**: Track when entries were last updated, find stale knowledge (`rvr stale`), inline `[untracked]` / `[Nd]` warnings on `get` and `context` output
-- **Schema Validation**: Check entries against recommended namespaces (`rvr lint`), customizable via `_schema.namespaces`
+- **Schema Validation**: Check entries against recommended namespaces (`rvr lint`)
 - **MCP Server**: 19 tools for any MCP-compatible AI agent (Claude Code, Copilot, ChatGPT, etc.) via the Model Context Protocol
 - **Telemetry & Audit**: Track usage patterns with scope-aware telemetry (`rvr stats`) and full audit log with before/after diffs, hit/miss tracking, and per-entry metrics (`rvr audit --detailed`). Includes [net token savings with self-calibrating exploration cost estimates](docs/token-savings.md), miss-path tracking, and per-agent breakdown.
 - **Cross-Session Handoff**: `reverie_context` surfaces a top banner from `context.next_session` so the next session reads where things stand before any other work (auto-staled past 7 days)
@@ -78,7 +78,7 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Index-First Bootstrap**: `reverie_context` / `rvr context` is a front page — pinned namespaces (`project.*`, `commands.*`, `conventions.*` by default; override per store with a `system.bootstrap.pinned` entry) render in full, and every other entry is one line: key, first-line gist, and the bytes you get by opening it with `rvr get <key>`. Nothing is hidden, and entries that fit on one line render whole
 - **Bootstrap Size Budget**: when the projected response exceeds `bootstrap_max_response_bytes` (default 28KB — under the 30,000-character inline cap of the Claude Code Bash tool, so the bootstrap arrives in context rather than in a saved file), pinned namespaces are demoted to index lines first (largest first, nothing lost), then every index gist narrows to one shared width (80 → 40 characters → keys only, so every key stays visible), and only then are entries dropped by priority — `files.*`, then `arch.*`, then large `context.*` — with notices naming what changed. `tier:"full"` opts out
 - **Write-Amp Guard**: `reverie_set` / `rvr set` warns on the 3rd+ write of the same key in a session within 30 minutes — informational, the write still succeeds. Helps agents notice when a key is being used as scratch space rather than a stable seed. The `context.next_session` handoff is exempt: it is rewritten by design
-- **CLI Agent Sessions**: export `RVR_SESSION=<any-id>` and separate `rvr` invocations count as one session — the write-amp guard (a `WRITE_AMP` warning in the JSON envelope's `warnings[]`) and miss-path telemetry work across invocations, the same session guardrails MCP agents get
+- **CLI Agent Sessions**: separate `rvr` invocations count as one session — automatically inside Claude Code (its session id is detected), elsewhere by exporting `RVR_SESSION=<any-id>` — so the write-amp guard (a `WRITE_AMP` warning in the JSON envelope's `warnings[]`) and miss-path telemetry work across invocations, the same session guardrails MCP agents get
 - **Size Projection**: `rvr context --size-only` (or MCP `sizeOnly: true`) reports per-namespace entry/byte counts and the effective budget — answers "how big is my bootstrap" without paying for the bootstrap; `find --keys` returns matching keys without their values
 
 ## Installation
@@ -122,6 +122,8 @@ rvr
 
 > **Note:** Installing from source registers the development binary `rvr-dev` (not `rvr`). All examples in this README use `rvr`, but substitute `rvr-dev` if you installed from source. The production `rvr` binary is available via Homebrew or the GitHub Releases download above.
 
+Building and running from source needs [Bun](https://bun.sh) on your PATH: the build output is a Bun script, and the test runner is Bun's.
+
 Ensure npm's global binaries are in your PATH by adding the following to your shell profile (`.bashrc`, `.zshrc`, or equivalent):
 
 ```bash
@@ -131,8 +133,8 @@ export PATH="$(npm config get prefix)/bin:$PATH"
 ```bash
 git clone https://github.com/seabearDEV/reverie.git
 cd reverie
-npm install
-npm run build
+bun install
+bun run build
 npm install -g .
 ```
 
@@ -771,13 +773,7 @@ rvr lint --json
 rvr lint -G
 ```
 
-Default namespaces: `project`, `commands`, `arch`, `conventions`, `context`, `files`, `deps`, `system`. Add custom namespaces in `.reverie/`:
-
-```json
-{
-  "_schema": { "namespaces": ["myapp", "infra"] }
-}
-```
+Default namespaces: `project`, `commands`, `arch`, `conventions`, `context`, `files`, `deps`, `system`. Entries outside them are listed as guidance and `lint` still exits 0. Declaring extra namespaces is not supported for directory stores yet.
 
 ### Shell Wrapper
 
@@ -953,7 +949,7 @@ claude mcp add reverie -- rvr-dev mcp-server
 **From source** (development):
 
 ```bash
-claude mcp add reverie -- node /absolute/path/to/dist/mcp-server.js
+claude mcp add reverie -- bun /absolute/path/to/dist/mcp-server.js
 ```
 
 > The standalone `rvr-dev-mcp` command also still works for npm installs.
@@ -992,7 +988,7 @@ claude mcp add reverie -- node /absolute/path/to/dist/mcp-server.js
 {
   "mcpServers": {
     "reverie": {
-      "command": "node",
+      "command": "bun",
       "args": ["/absolute/path/to/dist/mcp-server.js"]
     }
   }
@@ -1066,7 +1062,7 @@ A successful response will include `"serverInfo":{"name":"reverie"}` in the JSON
 
 | Document | Description |
 |---|---|
-| [Schema Guide](docs/schema-guide.md) | How to structure your `.reverie/` store — namespaces, file anatomy, good vs bad entries, reference examples |
+| [Schema Guide](docs/schema-guide.md) | How to structure your `.reverie/` store — namespaces, store anatomy, good vs bad entries, reference examples |
 | [Token Savings](docs/token-savings.md) | How Reverie measures AI agent efficiency — every metric explained, estimation methodology, limitations |
 | [Roadmap](docs/ROADMAP.md) | Completed features, upcoming milestones, long-term vision |
 | [Dogfooding](docs/dogfooding.md) | How Reverie found and fixed its own bugs using its own MCP tools |
@@ -1074,12 +1070,12 @@ A successful response will include `"serverInfo":{"name":"reverie"}` in the JSON
 ## Development
 
 ```bash
-npm install        # Install dependencies
-npm run build      # Build the project
-npm test           # Run all tests
-npm run test:watch # Run tests in watch mode
-npm run dev:watch  # Watch mode — recompiles on file changes
-npm run lint       # Run ESLint
+bun install        # Install dependencies
+bun run build      # Build the project
+bun run test       # Run all tests (not `bun test`: the script adds the required --isolate)
+bun run test:watch # Run tests in watch mode
+bun run dev:watch  # Watch mode — recompiles on file changes
+bun run lint       # Run ESLint
 ```
 
 ## License
