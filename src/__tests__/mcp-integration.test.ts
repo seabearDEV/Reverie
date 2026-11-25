@@ -865,6 +865,75 @@ describe('MCP Integration (real I/O)', () => {
         expect(row.errorCode, file).toBe('NOT_FOUND');
       }
     });
+
+    // #216 / #224: the CLI reports these refusals as INVALID_INPUT. Over MCP
+    // they were recorded with no code at all, so a row could not tell a
+    // refused collision from any other failed write.
+    const rowCount = (file: string): number => {
+      const p = path.join(tmpDir, file);
+      return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).length : 0;
+    };
+    /** Each refusal appends one row to each log, and that row carries the code. */
+    const expectInvalidInput = (refusals: [string, Record<string, unknown>][]) => {
+      for (const [tool, params] of refusals) {
+        const label = `${tool} ${JSON.stringify(params)}`;
+        // Counted, not just read: consecutive refusals of one tool would
+        // otherwise be satisfied by the row of the call before.
+        const before = { telemetry: rowCount('telemetry.jsonl'), audit: rowCount('audit.jsonl') };
+        const r = callMcpTool(tool, params);
+        expect(r.isError, label).toBe(true);
+        expect(rowCount('telemetry.jsonl'), label).toBe(before.telemetry + 1);
+        expect(rowCount('audit.jsonl'), label).toBe(before.audit + 1);
+        for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+          const row = lastRow(file);
+          expect(row.tool, `${label} ${file}`).toBe(tool);
+          expect(row.success, `${label} ${file}`).toBe(false);
+          expect(row.errorCode, `${label} ${file}`).toBe('INVALID_INPUT');
+        }
+        // The code goes to the rows only: the client payload keeps its shape.
+        expect(Object.keys(r).sort(), label).toEqual(['content', 'isError']);
+      }
+    };
+
+    it('a write refused for a key collision is INVALID_INPUT', () => {
+      callMcpTool('reverie_set', { key: 'rows216.api', value: 'leaf' });
+      callMcpTool('reverie_set', { key: 'rows216.auth', value: 'JWT' });
+      callMcpTool('reverie_set', { key: 'rows216solo', value: 'v' });
+      expectInvalidInput([
+        ['reverie_set', { key: 'rows216', value: 'flat' }],                                   // a value to a parent
+        ['reverie_set', { key: 'rows216.API', value: 'other' }],                              // a case variant
+        ['reverie_copy', { source: 'rows216solo', dest: 'rows216', force: true }],
+        ['reverie_rename', { oldKey: 'rows216solo', newKey: 'rows216.api.moved' }],           // under a leaf
+        ['reverie_rename', { oldKey: 'rows216', newKey: 'rows216.sub' }],                     // under itself
+        ['reverie_rename', { oldKey: 'rows216', newKey: 'constructor' }],                     // not a storable key
+        ['reverie_import', { type: 'entries', data: JSON.stringify({ rows216: 'flat' }), merge: true }],
+      ]);
+    });
+
+    it('an import that fails validation is INVALID_INPUT: colliding keys (merged, replacing, previewed) and a bad section', () => {
+      // The pair is inside the data, so the refusal comes from validation,
+      // not from the store — a different throw, and one that carried no code.
+      const data = JSON.stringify({ notes: { Key: 'one', key: 'two' } });
+      expectInvalidInput([
+        ['reverie_import', { type: 'entries', data, merge: true }],
+        ['reverie_import', { type: 'entries', data, merge: false }],
+        ['reverie_import', { type: 'entries', data, preview: true }],
+        // Validation of the other sections is coded the same way.
+        ['reverie_import', { type: 'aliases', data: JSON.stringify({ short: 5 }) }],
+      ]);
+    });
+
+    it('a rename or copy onto a key that already exists is INVALID_INPUT', () => {
+      callMcpTool('reverie_set', { key: 'rows216.api', value: 'leaf' });
+      callMcpTool('reverie_set', { key: 'rows216solo', value: 'v' });
+      callMcpTool('reverie_alias_set', { alias: 'r216a', key: 'rows216.api' });
+      callMcpTool('reverie_alias_set', { alias: 'r216b', key: 'rows216solo' });
+      expectInvalidInput([
+        ['reverie_rename', { oldKey: 'rows216solo', newKey: 'rows216.api' }],
+        ['reverie_copy', { source: 'rows216solo', dest: 'rows216.api' }],
+        ['reverie_rename', { oldKey: 'r216a', newKey: 'r216b', is_alias: true }],
+      ]);
+    });
   });
 
   // ── #206: a config call is not a lookup ──────────────────────────────
