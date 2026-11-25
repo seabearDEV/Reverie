@@ -15,7 +15,7 @@ import { getDataDirectory } from './paths';
 import { getSessionId, isSharedSession } from './session';
 import { atomicWriteFileSync } from './atomicWrite';
 import { withFileLock } from './fileLock';
-import { recordWrite, pruneAndRecord, WriteAmpResult } from './writeAmp';
+import { recordWrite, pruneAndRecord, hasLiveWrite, isWriteAmpExempt, writeAmpSlot, WriteAmpResult } from './writeAmp';
 import { MissWindowTracker, MissPath, OpenMissWindow } from './telemetry';
 import { debug } from './debug';
 
@@ -25,7 +25,7 @@ const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 export interface SessionStateFile {
   v: 1;
   updatedAt: number;
-  /** key → in-window write timestamps (ms epoch), write-amp guard state. */
+  /** slot (store + key, see writeAmpSlot) → in-window write timestamps (ms epoch), write-amp guard state. */
   writes: Record<string, number[]>;
   /** Open miss windows carried across invocations. */
   missWindows: OpenMissWindow[];
@@ -116,7 +116,8 @@ function updateSessionState<T>(
 
 /**
  * TTL prune: delete session files whose mtime is older than 24h. Called
- * opportunistically — on a session's first touch and on every `set`; the dir
+ * opportunistically — on a session's first touch and on every `set` the
+ * write-amp guard counts (an exempt write returns before the sweep); the dir
  * holds one small file per active agent session, so a readdir sweep is cheap.
  */
 export function pruneStaleSessions(now = Date.now()): void {
@@ -143,16 +144,32 @@ export function pruneStaleSessions(now = Date.now()): void {
 /**
  * Write-amp guard for CLI `set` (#119). Shared session → disk-backed window;
  * otherwise the in-memory per-process guard (never trips for a one-shot CLI
- * process, preserving pre-#119 behavior).
+ * process, preserving pre-#119 behavior). An exempt key (the handoff) is
+ * checked here as well as in recordWrite: the shared-session path goes
+ * straight to pruneAndRecord, which is key-agnostic. Returning early also
+ * skips this function's own locked update of the state file; the invocation
+ * still updates the file once, for miss-path tracking.
+ *
+ * `store` is where the write landed (writeAmpStore): the same key in another
+ * store is another entry, with its own count.
  */
-export function recordCliWrite(key: string, now = Date.now()): WriteAmpResult | null {
+export function recordCliWrite(key: string, now = Date.now(), store = ''): WriteAmpResult | null {
+  if (isWriteAmpExempt(key)) return null;
   if (!isSharedSession()) {
-    return recordWrite(getSessionId(), key, now);
+    return recordWrite(getSessionId(), key, now, store);
   }
+  const slot = writeAmpSlot(key, store);
   pruneStaleSessions(now);
   const result = updateSessionState(getSessionId(), now, (state) => {
-    const { timestamps, result: amp } = pruneAndRecord(state.writes[key] ?? [], now);
-    state.writes[key] = timestamps;
+    // Evict slots with no write left in the window, as the in-memory guard
+    // does. Otherwise the file keeps every entry the session ever set, and
+    // each later invocation parses and rewrites all of them — which also keeps
+    // the mtime fresh, so the 24h prune never reaches a long-lived session id.
+    for (const k of Object.keys(state.writes)) {
+      if (!hasLiveWrite(state.writes[k], now)) delete state.writes[k];
+    }
+    const { timestamps, result: amp } = pruneAndRecord(state.writes[slot] ?? [], now);
+    state.writes[slot] = timestamps;
     return amp;
   });
   return result ?? null;

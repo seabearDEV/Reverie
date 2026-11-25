@@ -1,0 +1,7 @@
+{
+  "value": "Dependabot tracks each github/codeql-action SUBPATH (init, analyze) as a separate dependency, so it opens the same upgrade as two PRs. Merging either alone breaks the analyze job — init and analyze MUST run at the same version:\n\n  Loaded a configuration file for version '4.37.9', but running version '4.37.3'\n  CodeQL job status was configuration error.\n\nmain has NO branch protection, so a split merge goes through green-looking and leaves Leg A static analysis silently misconfigured. Hit 2026-09-04 with #180/#178 (4.37.3->4.37.9); landed as one commit in #181, which also added a dependabot 'groups' block (patterns: github/codeql-action*) so it cannot recur.\n\nGENERALIZES: any action where two subpaths of one repo must version-match needs a groups entry. Contrast softprops/action-gh-release — two USAGES of one dependency, which Dependabot correctly bumps in a single PR.\n\nVETTING A PINNED-SHA ACTION BUMP: tags are annotated, so ref lookup returns a tag object, not the commit. Deref before comparing:\n  gh api repos/OWNER/REPO/git/ref/tags/vX.Y.Z --jq .object.sha   # -> tag obj\n  gh api repos/OWNER/REPO/git/tags/<that sha> --jq .object.sha   # -> commit",
+  "meta": {
+    "created": 1788564601434,
+    "updated": 1788564601434
+  }
+}

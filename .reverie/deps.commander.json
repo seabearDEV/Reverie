@@ -1,7 +1,7 @@
 {
-  "value": "commander ^13 — CLI framework. Handles arg parsing, subcommands, help generation. Every command has a short alias registered via Commander.",
+  "value": "commander — CLI framework: arg parsing, subcommands, help generation. Every command registers a short alias via Commander. Majors 13 -> 15 (#155 and later) landed without API breakage here.",
   "meta": {
     "created": 1775361265842,
-    "updated": 1775361265842
+    "updated": 1788564608876
   }
 }

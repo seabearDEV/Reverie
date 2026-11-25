@@ -1,0 +1,7 @@
+{
+  "value": "rvr context reads the WORKING TREE's store, so a checkout behind origin serves an old handoff as current, and store writes made there stay invisible to every other clone until committed. Hit 2026-11-24: main 16 commits behind, handoff 81d old; five entries and the design notes #186 cites sat uncommitted since September while the remote's project.inFlight called them lost. AT BOOTSTRAP: git fetch, then git rev-list --count main..origin/main and git status --short .reverie — behind means read the real handoff with git show origin/main:.reverie/context.next_session.json; dirty means stranded entries, tell the owner before discarding.",
+  "meta": {
+    "created": 1795571314281,
+    "updated": 1795571314281
+  }
+}

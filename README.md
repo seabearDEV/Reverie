@@ -63,7 +63,7 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Inline Editing**: Open entries in `$EDITOR` / `$VISUAL` for quick edits
 - **Structured Output**: A global `--json` flag — or `RVR_OUTPUT=json` for the whole session — wraps *every* command (reads and mutations) in one versioned envelope (`reverie`/`ok`/`command`/`result`/`warnings`/`error`) with a frozen `error.code` set and a non-zero exit on failure, so AI agents can drive Reverie through the CLI when MCP isn't available
 - **Command Manifest**: `rvr manifest --json` emits the full command/flag tree plus the MCP-tool ↔ CLI-command map — the `tools/list` analog for CLI-driven agents
-- **Stdin Piping**: Pipe values into `set` from other commands
+- **Stdin Values**: Pipe values into `set` from other commands, or feed a multi-line value from a heredoc or a file
 - **Project-Scoped Data**: Opt-in `.reverie/` per project — project entries take precedence, fall through to global
 - **Smart Init**: `rvr init` scans your codebase, populates `.reverie/` with project/commands/files/deps/conventions/context entries, generates `CLAUDE.md` and an agent-agnostic `AGENTS.md`, and seeds the three-file knowledge convention
 - **Auto-Backup**: Automatic timestamped backups with configurable rotation (`max_backups` setting)
@@ -77,7 +77,7 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Project-Resolution Guardrail**: writes refuse with a structured `PROJECT_UNRESOLVED` error when no `.reverie/` resolves and no explicit scope is given — prevents project-shaped data from silently landing in the global store
 - **Index-First Bootstrap**: `reverie_context` / `rvr context` is a front page — pinned namespaces (`project.*`, `commands.*`, `conventions.*` by default; override per store with a `system.bootstrap.pinned` entry) render in full, and every other entry is one line: key, first-line gist, and the bytes you get by opening it with `rvr get <key>`. Nothing is hidden, and entries that fit on one line render whole
 - **Bootstrap Size Budget**: when the projected response exceeds `bootstrap_max_response_bytes` (default 28KB — under the 30,000-character inline cap of the Claude Code Bash tool, so the bootstrap arrives in context rather than in a saved file), pinned namespaces are demoted to index lines first (largest first, nothing lost), then every index gist narrows to one shared width (80 → 40 characters → keys only, so every key stays visible), and only then are entries dropped by priority — `files.*`, then `arch.*`, then large `context.*` — with notices naming what changed. `tier:"full"` opts out
-- **Write-Amp Guard**: `reverie_set` / `rvr set` warns on the 3rd+ write of the same key in a session within 30 minutes — informational, the write still succeeds. Helps agents notice when a key is being used as scratch space rather than a stable seed
+- **Write-Amp Guard**: `reverie_set` / `rvr set` warns on the 3rd+ write of the same key in a session within 30 minutes — informational, the write still succeeds. Helps agents notice when a key is being used as scratch space rather than a stable seed. The `context.next_session` handoff is exempt: it is rewritten by design
 - **CLI Agent Sessions**: export `RVR_SESSION=<any-id>` and separate `rvr` invocations count as one session — the write-amp guard (a `WRITE_AMP` warning in the JSON envelope's `warnings[]`) and miss-path telemetry work across invocations, the same session guardrails MCP agents get
 - **Size Projection**: `rvr context --size-only` (or MCP `sizeOnly: true`) reports per-namespace entry/byte counts and the effective budget — answers "how big is my bootstrap" without paying for the bootstrap; `find --keys` returns matching keys without their values
 
@@ -201,6 +201,12 @@ rvr set a=1 b=2 c=3
 
 # Pipe a value from stdin
 echo "my value" | rvr set mykey
+
+# Multi-line value from a heredoc (or `rvr set mykey < notes.txt`)
+rvr set arch.cache <<'EOF'
+Two layers: in-process LRU, then Redis.
+Invalidate on write, never on read.
+EOF
 
 # Pipe from another command
 curl -s https://api.example.com/token | rvr set api.token

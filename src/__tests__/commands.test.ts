@@ -19,6 +19,7 @@ import { displayAliases } from '../commands/helpers';
 import { encryptValue, decryptValue, isEncrypted } from '../utils/crypto';
 import { copyToClipboard } from '../utils/clipboard';
 import { stripAnsi } from '../utils/wordWrap';
+import { takeValueStored } from '../utils/writeAmp';
 import { clearStoreCaches } from '../store';
 import { clearConfigCache } from '../config';
 import type { CodexData } from '../types';
@@ -271,6 +272,34 @@ describe('Commands', () => {
       expect(saveEntries).not.toHaveBeenCalled();
 
       Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
+    });
+
+    it('marks a stored value for the write-amp guard, and only that (#101)', async () => {
+      // The guard counts a `set` only when a value was stored; the mark is
+      // how the instrumentation wrapper tells that call from the others.
+      takeValueStored();
+
+      await setEntry('app.version', '1.0.0', true);
+      expect(takeValueStored()).toBe(true);
+
+      // Metadata only: --confirm, --no-confirm and -a with no value.
+      await setEntry('app.version', undefined, false, false, undefined, true);
+      await setEntry('app.version', undefined, false, false, undefined, false);
+      await setEntry('app.version', undefined, false, false, 'ver');
+      expect(takeValueStored()).toBe(false);
+
+      // A declined overwrite prompt.
+      const originalIsTTY = process.stdin.isTTY;
+      Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+      const mockRl = {
+        question: vi.fn((_prompt: string, cb: (answer: string) => void) => cb('n')),
+        close: vi.fn(),
+      };
+      (readline.createInterface as Mock).mockReturnValue(mockRl);
+      await setEntry('app.version', '2.0.0');
+      Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
+      expect(storeState.entries.app).toEqual({ version: '1.0.0' });
+      expect(takeValueStored()).toBe(false);
     });
 
     it('creates an alias when alias parameter is provided', async () => {

@@ -1,7 +1,7 @@
 {
-  "value": "chalk ^4 (CJS) — terminal colors. Pinned to v4 for CommonJS compatibility; v5+ is ESM-only.",
+  "value": "chalk — terminal colors. The old 'pinned to v4 for CommonJS compat, v5+ is ESM-only' constraint is DEAD: the project is ESM-only (see context.devWorkflow), and chalk went 4 -> 5 (#154) -> 6 (#162) without incident. No version ceiling; take Dependabot's majors.",
   "meta": {
     "created": 1775361267185,
-    "updated": 1775361267185
+    "updated": 1788564608838
   }
 }
