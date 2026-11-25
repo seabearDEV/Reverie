@@ -254,6 +254,39 @@ function readStoreFile(filePath: string): string {
 }
 
 /**
+ * Is the file that `filePath` opens stored under exactly that name?
+ *
+ * A key maps to its filename verbatim, and a read by key opens that path. On
+ * a filesystem that folds names — default macOS and Windows volumes ignore
+ * case, and APFS also folds Unicode forms, so `ſ` opens `s` and NFD opens
+ * NFC — the path of a key that is not stored opens the file of one that is.
+ * The read then answered for the wrong key: `commands.Deploy` returned the
+ * command stored as `commands.deploy`, under a name that carries none of that
+ * entry's metadata. That is how a command flagged for confirmation ran
+ * without it.
+ *
+ * No comparison done here can reproduce a filesystem's folding rules, so the
+ * filesystem is asked what the file is called. `realpath` reports the stored
+ * name on macOS and Windows; where it reports the name it was given (a
+ * case-sensitive volume, where there is nothing to fold) the answer is yes.
+ * If the names differ, or the name cannot be resolved, the directory listing
+ * decides: it holds stored names only.
+ */
+function isStoredUnderName(filePath: string): boolean {
+  const asked = path.basename(filePath);
+  try {
+    if (path.basename(fs.realpathSync.native(filePath)) === asked) return true;
+  } catch {
+    // Fall through to the listing.
+  }
+  try {
+    return fs.readdirSync(path.dirname(filePath)).includes(asked);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Reads a sidecar file. A missing or empty file is an empty map. A file that
  * does not parse to an object is ALSO returned as an empty map, but flagged
  * `unreadable` (#215): callers must not mistake it for "no aliases" / "no
@@ -865,7 +898,8 @@ export function createDirectoryStore(
    *
    * Returns `undefined` on ENOENT (no entry, or `key` is a parent of multiple
    * stored leaves — the slow path via `load()` is required to materialize a
-   * subtree). Throws StoreUnreadableError when the file exists but does not
+   * subtree), and when the file that opens is stored under another name (see
+   * isStoredUnderName). Throws StoreUnreadableError when the file exists but does not
    * parse (#215): that is not a miss, and reporting it as one is what sends a
    * caller off to write a fresh entry over a git conflict.
    */
@@ -885,6 +919,14 @@ export function createDirectoryStore(
       if (!isENOENT(err)) {
         debug(`getOne(${key}) failed: ${String(err)}`);
       }
+      return undefined;
+    }
+    // The file opened; is it this key's? Another spelling of a stored key is
+    // a miss, as it is for load(), which reads names from the listing. Before
+    // the parse: another spelling of an unreadable entry is a miss too, not
+    // that entry's error.
+    if (!isStoredUnderName(filePath)) {
+      debug(`getOne(${key}): the file that opened is stored under another name`);
       return undefined;
     }
     const wrapper = parseEntryWrapper(raw);
