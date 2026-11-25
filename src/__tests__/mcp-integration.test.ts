@@ -758,6 +758,29 @@ describe('MCP Integration (real I/O)', () => {
       stillThere();
     });
 
+    it('reverie_rename refuses a destination under the source or an invalid one, and removes nothing', () => {
+      seed();
+      const under = callMcpTool('reverie_rename', { oldKey: 'col', newKey: 'col.sub' });
+      expect(under.isError).toBe(true);
+      expect(text(under)).toContain('the new key is under the old one');
+      const invalid = callMcpTool('reverie_rename', { oldKey: 'col', newKey: 'constructor' });
+      expect(invalid.isError).toBe(true);
+      expect(text(invalid)).toContain('not a valid key');
+      stillThere();
+    });
+
+    it('reverie_set compares against the other casing of a branch, and an empty import group deletes nothing', () => {
+      callMcpTool('reverie_set', { key: 'mix.x', value: 'one' });
+      callMcpTool('reverie_set', { key: 'MIX.y', value: 'two' });
+      const twin = callMcpTool('reverie_set', { key: 'MIX.x', value: 'three' });
+      expect(twin.isError).toBe(true);
+      expect(text(twin)).toContain("differs only by case from the existing key 'mix.x'");
+      expect(text(callMcpTool('reverie_get', { key: 'mix.x' }))).toContain('one');
+      const empty = callMcpTool('reverie_import', { type: 'entries', data: JSON.stringify({ mix: { x: {} } }), merge: true });
+      expect(empty.isError).toBeUndefined();
+      expect(text(callMcpTool('reverie_get', { key: 'mix.x' }))).toContain('one');
+    });
+
     it('reverie_import (merge) is refused when a leaf would flatten a subtree', () => {
       seed();
       const r = callMcpTool('reverie_import', { type: 'entries', data: JSON.stringify({ col: 'flat' }), merge: true });

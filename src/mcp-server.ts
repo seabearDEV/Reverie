@@ -35,7 +35,7 @@ import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMet
 import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
-import { KeyCollisionError, assertKeyWritable } from "./utils/keyCollision";
+import { KeyCollisionError, assertKeysWritable, renameDestinationProblem } from "./utils/keyCollision";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
@@ -744,12 +744,16 @@ server.tool(
         // otherwise be missed.
         const writeScope = resolveScopeForWrite(scope);
         const data = loadEntries(writeScope);
-        for (const [flatKey, flatVal] of Object.entries(flattenObject({ [resolvedSource]: value }))) {
-          const leafKey = dest + flatKey.slice(resolvedSource.length);
-          // #216 / #224: refuse before the first leaf is set; nothing is saved.
-          assertKeyWritable(data, leafKey);
-          setNestedValue(data, leafKey, String(flatVal));
-        }
+        // This path does not go through setValue: validate the destination
+        // here, or an unsafe segment is dropped silently and the copy
+        // reports success having written nothing.
+        if (!isValidEntryKey(dest)) return errorResponse(`Invalid key: ${JSON.stringify(dest)}`);
+        const leaves = Object.entries(flattenObject({ [resolvedSource]: value }))
+          .map(([flatKey, flatVal]): [string, string] => [dest + flatKey.slice(resolvedSource.length), String(flatVal)]);
+        // #216 / #224: every destination leaf is checked against the store
+        // as it stands, before the first is set. A refusal saves nothing.
+        assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
+        for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
         saveEntriesAndTouchMeta(data, dest, writeScope);
       }
 
@@ -801,6 +805,12 @@ server.tool(
         return errorResponse(`Key '${oldKey}' not found.`);
       }
 
+      // #224: the move writes the new keys and then removes the old key with
+      // everything under it. Refuse a destination that would be removed with
+      // it, or that cannot be stored at all.
+      const destinationProblem = renameDestinationProblem(resolvedOld, newKey, isValidEntryKey);
+      if (destinationProblem) return errorResponse(destinationProblem);
+
       const existing = readForWrite<CodexValue | undefined, Scope>(s => getValue(newKey, s), scope, () => resolveScopeForWrite(scope)); // #215, as reverie_copy
       if (existing !== undefined) {
         return errorResponse(`Key '${newKey}' already exists. Remove it first or choose a different key.`);
@@ -819,12 +829,12 @@ server.tool(
         // scope so the project-resolution guard fires here too (#99).
         const writeScope = resolveScopeForWrite(scope);
         const data = loadEntries(writeScope);
-        for (const [flatKey, flatVal] of Object.entries(flattenObject({ [resolvedOld]: value }))) {
-          const leafKey = newKey + flatKey.slice(resolvedOld.length);
-          // #216 / #224: refuse before the first leaf is set; nothing is saved.
-          assertKeyWritable(data, leafKey);
-          setNestedValue(data, leafKey, String(flatVal));
-        }
+        const leaves = Object.entries(flattenObject({ [resolvedOld]: value }))
+          .map(([flatKey, flatVal]): [string, string] => [newKey + flatKey.slice(resolvedOld.length), String(flatVal)]);
+        // #216 / #224: checked against the store as it stands, before the
+        // first leaf is set. A refusal saves nothing and the source stays.
+        assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
+        for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
         saveEntriesAndTouchMeta(data, newKey, writeScope);
       }
       removeValue(resolvedOld, scope);
@@ -1447,6 +1457,17 @@ server.tool(
           entries: () => loadData(scope),
           aliases: () => loadAliases(scope),
           confirm: () => loadConfirmKeys(scope),
+          // The collision check is against the one store the import writes
+          // to. If that store cannot be resolved here, the check uses the
+          // merged view and the save below reports the resolution failure as
+          // it always has — the check must not add a failure of its own.
+          targetEntries: () => {
+            try {
+              return loadEntries(resolveScopeForWrite(scope));
+            } catch {
+              return loadData(scope);
+            }
+          },
         },
       );
 

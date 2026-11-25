@@ -73,51 +73,61 @@ export class KeyCollisionError extends Error {
   }
 }
 
-function isBranch(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object';
+/**
+ * What a leaf value written at `key` would collide with among `existingKeys`
+ * (the store's leaf keys), or null.
+ *
+ * The comparison is flat, over every stored key, and case-insensitive. A walk
+ * down the tree is not enough: it follows one branch per segment, and a store
+ * can hold both `a.*` and `A.*` — then `A.x` has to be compared with `a.x`,
+ * which sits in the other branch.
+ *
+ * Writing over a key that already exists, spelled the same way, is an
+ * ordinary overwrite and never a collision, whatever else is in the store: a
+ * pair that already differs only by case is `lint`'s to report, and refusing
+ * here would leave the entry unwritable.
+ */
+export function findKeyCollisionAmong(existingKeys: Iterable<string>, key: string): KeyCollision | null {
+  const lower = key.toLowerCase();
+  const under: string[] = [];
+  let leafAbove: string | undefined;
+  let caseTwin: string | undefined;
+  for (const other of existingKeys) {
+    if (other === key) return null;
+    const otherLower = other.toLowerCase();
+    if (otherLower === lower) caseTwin ??= other;
+    else if (otherLower.startsWith(lower + '.')) under.push(other);
+    else if (lower.startsWith(otherLower + '.')) leafAbove ??= other;
+  }
+  if (leafAbove !== undefined) return { kind: 'child', key, existing: [leafAbove] };
+  // Sorted: the store's load order is not stable, and the message names these.
+  if (under.length > 0) return { kind: 'parent', key, existing: under.sort() };
+  if (caseTwin !== undefined) return { kind: 'case', key, existing: [caseTwin] };
+  return null;
 }
 
-/**
- * What a leaf value written at `key` would collide with in `data`, or null.
- * Writing over the same key, spelled the same way, is an ordinary overwrite
- * and not a collision.
- */
+/** findKeyCollisionAmong against the leaf keys of a loaded tree. */
 export function findKeyCollision(data: CodexData, key: string): KeyCollision | null {
-  const parts = key.split('.');
-  const stored: string[] = [];   // the path as the store spells it
-  let node: Record<string, unknown> = data;
-
-  for (let i = 0; i < parts.length; i++) {
-    const segment = parts[i];
-    const match = Object.prototype.hasOwnProperty.call(node, segment)
-      ? segment
-      : Object.keys(node).find(k => k.toLowerCase() === segment.toLowerCase());
-    if (match === undefined) return null;   // nothing stored here: the rest of the path is new
-    stored.push(match);
-    const value = node[match];
-
-    if (i < parts.length - 1) {
-      // An ancestor of `key`. A leaf here would be replaced by a subtree.
-      if (!isBranch(value)) return { kind: 'child', key, existing: [stored.join('.')] };
-      node = value;
-      continue;
-    }
-
-    // The key itself.
-    const storedKey = stored.join('.');
-    if (isBranch(value)) {
-      // Sorted: the store's load order is not stable, and the message names these.
-      return { kind: 'parent', key, existing: Object.keys(flattenObject({ [storedKey]: value })).sort() };
-    }
-    return storedKey === key ? null : { kind: 'case', key, existing: [storedKey] };
-  }
-  return null;
+  return findKeyCollisionAmong(Object.keys(flattenObject(data)), key);
 }
 
 /** Throw the refusal for `key` if writing a leaf there collides with `data`. */
 export function assertKeyWritable(data: CodexData, key: string): void {
-  const collision = findKeyCollision(data, key);
-  if (collision) throw new KeyCollisionError(collision);
+  assertKeysWritable(data, [key]);
+}
+
+/**
+ * The same check for several keys about to be written together — the leaves
+ * of a copied or renamed subtree, or of a merge import. Checked against the
+ * store as it stands, before any of them is set, so a refusal leaves nothing
+ * half-written. Flattens the tree once.
+ */
+export function assertKeysWritable(data: CodexData, keys: Iterable<string>): void {
+  const existing = Object.keys(flattenObject(data));
+  for (const key of keys) {
+    const collision = findKeyCollisionAmong(existing, key);
+    if (collision) throw new KeyCollisionError(collision);
+  }
 }
 
 /**
@@ -142,7 +152,9 @@ export function collidesWithAny(key: string, existingKeys: Iterable<string>): bo
  * import file checked against itself.
  */
 export function findCollidingPairs(keys: Iterable<string>): [string, string][] {
-  const sorted = [...keys].sort((a, b) => {
+  // A key listed twice is one key, not a pair (an import file can name the
+  // same entry flat and nested: {"a.b": …, "a": {"b": …}}).
+  const sorted = [...new Set(keys)].sort((a, b) => {
     const la = a.toLowerCase(), lb = b.toLowerCase();
     return la < lb ? -1 : la > lb ? 1 : a < b ? -1 : a > b ? 1 : 0;
   });
@@ -159,4 +171,30 @@ export function findCollidingPairs(keys: Iterable<string>): [string, string][] {
     }
   }
   return pairs;
+}
+
+/**
+ * Why `oldKey` cannot be renamed to `newKey`, or null when it can be tried.
+ *
+ * A rename writes the new keys and then removes the old key with everything
+ * under it. So a destination under the source (`arch` → `arch.sub`) wrote the
+ * subtree and then deleted it along with the original, and a destination that
+ * is not a storable key wrote nothing and still removed the source — both
+ * reporting success. A destination that differs from the source only by case
+ * is the same file on a case-insensitive filesystem.
+ *
+ * `isValidKey` is passed in so this module keeps no store imports.
+ */
+export function renameDestinationProblem(oldKey: string, newKey: string, isValidKey: (key: string) => boolean): string | null {
+  if (!isValidKey(newKey)) return `Cannot rename '${oldKey}' to '${newKey}': that is not a valid key.`;
+  const oldLower = oldKey.toLowerCase();
+  const newLower = newKey.toLowerCase();
+  if (newKey === oldKey) return `Cannot rename '${oldKey}' to itself.`;
+  if (newLower === oldLower) {
+    return `Cannot rename '${oldKey}' to '${newKey}': they differ only by case, which is one file on a case-insensitive filesystem. Rename through a temporary key.`;
+  }
+  if (newLower.startsWith(oldLower + '.')) {
+    return `Cannot rename '${oldKey}' to '${newKey}': the new key is under the old one. Rename through a temporary key.`;
+  }
+  return null;
 }

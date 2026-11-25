@@ -12,7 +12,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { assertDistHonorsDataDir } from './helpers/spawnGuard';
-import { findKeyCollision, assertKeyWritable, collidesWithAny, findCollidingPairs, KeyCollisionError } from '../utils/keyCollision';
+import { findKeyCollision, findKeyCollisionAmong, assertKeyWritable, assertKeysWritable, collidesWithAny, findCollidingPairs, renameDestinationProblem, KeyCollisionError } from '../utils/keyCollision';
 import type { CodexData } from '../types';
 
 describe('findKeyCollision', () => {
@@ -60,6 +60,30 @@ describe('findKeyCollision', () => {
     expect(findKeyCollision(data(), 'Arch.deep.three')).toBeNull();
   });
 
+  it('a store holding both casings of a branch is compared across both', () => {
+    // A walk down the tree follows one branch per segment and would miss these:
+    // the colliding key sits under the other casing.
+    const mixed = { a: { x: '1', b: { x: '2' } }, A: { y: '3' }, Api: { one: '4' }, api: { two: '5' } } as CodexData;
+    expect(findKeyCollision(mixed, 'A.x')).toEqual({ kind: 'case', key: 'A.x', existing: ['a.x'] });
+    expect(findKeyCollision(mixed, 'API.one')).toEqual({ kind: 'case', key: 'API.one', existing: ['Api.one'] });
+    expect(findKeyCollision(mixed, 'A.b')).toEqual({ kind: 'parent', key: 'A.b', existing: ['a.b.x'] });
+    expect(findKeyCollision(mixed, 'A.x.z')).toEqual({ kind: 'child', key: 'A.x.z', existing: ['a.x'] });
+    expect(findKeyCollision(mixed, 'A.z')).toBeNull();
+    expect(findKeyCollision(mixed, 'api.three')).toBeNull();
+  });
+
+  it('overwriting a key that exists is never a collision, even when a twin differing by case already exists', () => {
+    // The pair predates the check (lint reports it). Refusing would leave the entry unwritable.
+    expect(findKeyCollisionAmong(['a.x', 'A.x', 'a.y'], 'a.x')).toBeNull();
+    expect(findKeyCollisionAmong(['a.x', 'A.x', 'a.y'], 'A.x')).toBeNull();
+    expect(findKeyCollisionAmong(['A.x', 'a.y'], 'a.x')).toEqual({ kind: 'case', key: 'a.x', existing: ['A.x'] });
+  });
+
+  it('assertKeysWritable checks every key against the store as it stands and throws on the first collision', () => {
+    expect(() => assertKeysWritable(data(), ['fresh.one', 'fresh.two'])).not.toThrow();
+    expect(() => assertKeysWritable(data(), ['fresh.one', 'solo.under'])).toThrow(/'solo' holds a value/);
+  });
+
   it('assertKeyWritable throws a KeyCollisionError with an existing envelope code and a message naming both keys', () => {
     let thrown: unknown;
     try { assertKeyWritable(data(), 'arch'); } catch (e) { thrown = e; }
@@ -96,6 +120,31 @@ describe('collidesWithAny and findCollidingPairs', () => {
     expect(findCollidingPairs(['arch.authFlow', 'arch.authflow', 'arch.api', 'solo'])).toEqual([['arch.authFlow', 'arch.authflow']]);
     expect(findCollidingPairs(['arch.API', 'arch.api.v2', 'arch.api-x'])).toEqual([['arch.API', 'arch.api.v2']]);
     expect(findCollidingPairs(['a.b', 'a.c', 'ab'])).toEqual([]);
+  });
+
+  it('findCollidingPairs does not pair a key with itself', () => {
+    // An import file can name one entry twice: {"a.b": …, "a": {"b": …}}.
+    expect(findCollidingPairs(['a.b', 'a.b', 'a.c'])).toEqual([]);
+    expect(findCollidingPairs(['a.b', 'a.b', 'A.B'])).toEqual([['A.B', 'a.b']]);
+  });
+});
+
+describe('renameDestinationProblem', () => {
+  const valid = (k: string) => !k.includes('/') && k !== 'constructor';
+
+  it('refuses a destination under the source, one differing only by case, the same key, and an invalid key', () => {
+    expect(renameDestinationProblem('arch', 'arch.sub', valid)).toContain('the new key is under the old one');
+    expect(renameDestinationProblem('arch', 'ARCH.sub', valid)).toContain('the new key is under the old one');
+    expect(renameDestinationProblem('arch.api', 'arch.API', valid)).toContain('differ only by case');
+    expect(renameDestinationProblem('arch', 'arch', valid)).toContain('to itself');
+    expect(renameDestinationProblem('arch', 'constructor', valid)).toContain('not a valid key');
+    expect(renameDestinationProblem('arch', '../escape', valid)).toContain('not a valid key');
+  });
+
+  it('allows a sibling, a new namespace, and a key that only shares a prefix', () => {
+    expect(renameDestinationProblem('arch', 'design', valid)).toBeNull();
+    expect(renameDestinationProblem('arch.api', 'arch.rest', valid)).toBeNull();
+    expect(renameDestinationProblem('arch', 'archive', valid)).toBeNull();
   });
 });
 
@@ -230,8 +279,32 @@ describe('a write that would remove or overwrite another entry is refused (#216,
     const r = rvr('rename', 'solo', 'arch.api.moved');
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("'arch.api' holds a value");
+    // One line, not a stack trace: the refusal is caught and reported.
+    expect(r.stderr.trim().split('\n')).toHaveLength(1);
+    expect(r.stderr).not.toContain('KeyCollisionError');
+    expect(json('rename', 'solo', 'arch.api.moved').error?.code).toBe('INVALID_INPUT');
     expect(keys()).toEqual(['arch.api', 'arch.auth', 'solo']);
     expect(value('solo')).toBe('value');
+  });
+
+  it('rename: a subtree to a key under itself is refused, and nothing is removed', () => {
+    // The move wrote arch.sub.* and then removed arch with everything under
+    // it — reporting success with every arch.* entry gone.
+    const r = rvr('rename', 'arch', 'arch.sub');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("Cannot rename 'arch' to 'arch.sub': the new key is under the old one");
+    expect(json('rename', 'arch', 'arch.sub').error?.code).toBe('INVALID_INPUT');
+    expect(keys()).toEqual(['arch.api', 'arch.auth']);
+  });
+
+  it('rename: to a key that cannot be stored is refused, and the source stays', () => {
+    // setNestedValue dropped the unsafe segment silently, then the source was removed.
+    for (const dest of ['constructor', '../escape', '__proto__']) {
+      const r = rvr('rename', 'arch', dest);
+      expect(r.status, dest).toBe(1);
+      expect(r.stderr, dest).toContain('not a valid key');
+    }
+    expect(keys()).toEqual(['arch.api', 'arch.auth']);
   });
 
   it('rename: to a key differing only by case from another entry is refused', () => {
@@ -239,12 +312,16 @@ describe('a write that would remove or overwrite another entry is refused (#216,
     const r = rvr('rename', 'solo', 'arch.API');
     expect(r.status).toBe(1);
     expect(keys()).toEqual(['arch.api', 'arch.auth', 'solo']);
+    expect(value('solo')).toBe('value');
     expect(value('arch.api')).toBe('leaf value');
   });
 
   it('rename: changing only the case of a key is refused on any filesystem, and the entry stays', () => {
     const r = rvr('rename', 'arch.api', 'arch.API');
     expect(r.status).toBe(1);
+    // Refused by the key check, with its own message — not by the filesystem
+    // happening to find the other spelling.
+    expect(r.stderr).toContain("Cannot rename 'arch.api' to 'arch.API': they differ only by case");
     expect(keys()).toEqual(['arch.api', 'arch.auth']);
     expect(value('arch.api')).toBe('leaf value');
   });
@@ -253,6 +330,58 @@ describe('a write that would remove or overwrite another entry is refused (#216,
     expect(rvr('rename', 'arch.api', 'arch.rest').status).toBe(0);
     expect(rvr('rename', 'arch', 'design').status).toBe(0);
     expect(keys()).toEqual(['design.auth', 'design.rest']);
+  });
+
+  // ── a store that holds both casings of a branch ──────────────────────
+
+  it('set / copy: a key that collides with one under the other casing of its parent is refused', () => {
+    expect(rvr('set', 'a.x', '1').status).toBe(0);
+    expect(rvr('set', 'A.y', '2').status).toBe(0);          // allowed: a.x and A.y are two files everywhere
+    const twin = rvr('set', 'A.x', '3');
+    expect(twin.status).toBe(1);
+    expect(twin.stderr).toContain("differs only by case from the existing key 'a.x'");
+    expect(value('a.x')).toBe('1');
+
+    expect(rvr('set', 'a.b.x', 'deep').status).toBe(0);
+    expect(rvr('set', 'src', 'v').status).toBe(0);
+    const copy = rvr('copy', 'src', 'A.b');
+    expect(copy.status).toBe(1);
+    expect(copy.stderr).toContain("Refusing to write 'A.b'");
+    expect(value('a.b.x')).toBe('deep');
+
+    const under = rvr('set', 'A.x.z', 'child');
+    expect(under.status).toBe(1);
+    expect(under.stderr).toContain("'a.x' holds a value");
+    expect(value('a.x')).toBe('1');
+  });
+
+  // ── an unreadable file, in another casing ────────────────────────────
+
+  it('a write that collides with an unreadable entry only by case is refused as STORE_UNREADABLE', () => {
+    // Leave the unreadable file as the only thing in the way: a readable
+    // arch.auth would (rightly) refuse `set arch` first, with INVALID_INPUT.
+    expect(rvr('remove', 'arch.auth', '-f').status).toBe(0);
+    fs.writeFileSync(path.join(projectDir, '.reverie', 'arch.api.json'), '<<<<<<< ours\n=======\n>>>>>>> theirs\n');
+    for (const key of ['arch.API.v2', 'ARCH', 'arch.api.v2', 'arch']) {
+      const env = json('set', key, 'x');
+      expect(env.ok, key).toBe(false);
+      expect(env.error?.code, key).toBe('STORE_UNREADABLE');
+    }
+    expect(fs.readFileSync(path.join(projectDir, '.reverie', 'arch.api.json'), 'utf8')).toContain('<<<<<<<');
+    expect(keys()).toEqual(['arch.api']);
+  });
+
+  // ── init ─────────────────────────────────────────────────────────────
+
+  it('init: a seed whose key collides with an entry is skipped with a warning, and init finishes', () => {
+    // beforeEach ran `init --no-scan`, which seeds nothing. A leaf named
+    // `context` is in the way of the context.initialized seed.
+    expect(rvr('set', 'context', 'a leaf where init wants a namespace').status).toBe(0);
+    const r = rvr('init', '--no-claude', '--no-agents');
+    expect(r.status).toBe(0);
+    expect(r.stdout + r.stderr).toContain('Skipped context.initialized');
+    expect(r.stderr).not.toContain('KeyCollisionError');
+    expect(value('context')).toBe('a leaf where init wants a namespace');
   });
 
   // ── import ───────────────────────────────────────────────────────────
@@ -281,6 +410,33 @@ describe('a write that would remove or overwrite another entry is refused (#216,
     const f = importFile({ notes: { Key: 'one', key: 'two' } });
     expect(rvr('data', 'import', 'entries', f, '--merge', '-f').status).toBe(1);
     expect(rvr('data', 'import', 'entries', f, '-f').status).toBe(1);
+    expect(keys()).toEqual(['arch.api', 'arch.auth']);
+  });
+
+  it('import --merge: an empty group is a no-op, not a deletion', () => {
+    expect(rvr('set', 'solo', 'value').status).toBe(0);
+    const r = rvr('data', 'import', 'entries', importFile({ solo: {}, nested: { empty: {} } }), '--merge', '-f');
+    expect(r.status).toBe(0);
+    expect(keys()).toEqual(['arch.api', 'arch.auth', 'solo']);
+    expect(value('solo')).toBe('value');
+  });
+
+  it('import --merge: a key that exists only in the global store is not in the way of the project store', () => {
+    expect(rvr('set', '--global', 'gonly', 'global leaf').status).toBe(0);
+    const r = rvr('data', 'import', 'entries', importFile({ gonly: { child: 'p' } }), '--merge', '-f');
+    expect(r.status).toBe(0);
+    expect(keys()).toContain('gonly.child');
+  });
+
+  it('import: a file that names one entry flat and nested is not a colliding pair', () => {
+    const r = rvr('data', 'import', 'entries', importFile({ 'fresh.k': 'one', fresh: { k: 'two' } }), '--merge', '-f');
+    expect(r.status).toBe(0);
+    expect(keys()).toContain('fresh.k');
+  });
+
+  it('import: a refusal carries INVALID_INPUT in the envelope', () => {
+    expect(json('data', 'import', 'entries', importFile({ arch: 'flat' }), '--merge', '-f').error?.code).toBe('INVALID_INPUT');
+    expect(json('data', 'import', 'entries', importFile({ notes: { Key: 'one', key: 'two' } }), '--merge', '-f').error?.code).toBe('INVALID_INPUT');
     expect(keys()).toEqual(['arch.api', 'arch.auth']);
   });
 
