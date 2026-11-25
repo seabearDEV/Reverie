@@ -83,10 +83,16 @@ reverie
     // Batch mode: `set a=1 b=2 c=3`
     if (key.includes('=')) {
       const pairs = [key, ...valueArray];
+      // #202: the unresolved-reference check runs once, over every pair
+      // stored, after the last one — a pair may refer to a later pair. It
+      // runs inside the last pair's instrumented call so that in JSON mode
+      // its warnings are in the batch's one envelope.
+      const stored: [string, string][] = [];
       for (let i = 0; i < pairs.length; i++) {
         const pair = pairs[i];
         const eqIdx = pair.indexOf('=');
         if (eqIdx === -1) {
+          commands.warnUnresolvedReferences(stored);
           printError(`Invalid batch pair '${pair}'. Expected key=value format.`);
           process.exitCode = 1;
           return;
@@ -94,6 +100,7 @@ reverie
         const k = pair.slice(0, eqIdx);
         const v = pair.slice(eqIdx + 1);
         if (!k) {
+          commands.warnUnresolvedReferences(stored);
           printError(`Invalid batch pair '${pair}'. Key cannot be empty.`);
           process.exitCode = 1;
           return;
@@ -105,7 +112,12 @@ reverie
         const deferEnvelope = i < pairs.length - 1;
         await withCliInstrumentation(
           { tool: 'reverie_set', key: rk, rawKey: k, scope, writeValue: v, params: { key: rk, value: v }, deferEnvelope },
-          () => commands.setEntry(rk, v, options.force, undefined, undefined, undefined, options.global)
+          async () => {
+            const result = await commands.setEntry(rk, v, options.force, undefined, undefined, undefined, options.global, undefined, false);
+            if (result) stored.push([rk, v]);
+            if (!deferEnvelope) commands.warnUnresolvedReferences(stored);
+            return result;
+          }
         );
       }
       return;

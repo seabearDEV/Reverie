@@ -1,6 +1,8 @@
 import type { Mock } from 'bun:test';
 import { execSync } from 'child_process';
-import { interpolate, interpolateExec, interpolateObject, StrictInterpolationError } from '../utils/interpolate';
+import { interpolate, interpolateExec, interpolateForRead, interpolateObject, StrictInterpolationError, unresolvedWarning, unresolvedOverflowNote } from '../utils/interpolate';
+import type { UnresolvedOnRead } from '../utils/interpolate';
+import { StoreUnreadableError } from '../utils/unreadable';
 import { getValue } from '../storage';
 import { resolveKey } from '../alias';
 
@@ -274,6 +276,155 @@ describe('interpolateObject', () => {
 // interpolate() (safe default) must NEVER execute — see the dedicated
 // "safe interpolate() never executes $(key)" block below. These tests exercise
 // the exec engine through its only entry point, interpolateExec().
+// #202: a read returns the stored text when a reference does not resolve. Only
+// that falls back, and the scan goes on past it. Two earlier versions of this
+// got it wrong: one caught every error and called it a chain nested too
+// deeply; one stopped at the first unresolved reference, so a `:?` after it
+// no longer failed the read.
+describe('what a read falls back on (#202)', () => {
+  const conflicted = () => new StoreUnreadableError(
+    [{ kind: 'entry', path: '/repo/.reverie/paths.home.json', key: 'paths.home', reason: 'conflict' }], 'read');
+  const stored = (entries: Record<string, string>) => {
+    mockGetValue.mockImplementation((key: string) => entries[key]);
+  };
+
+  it('a reference with no such key: the stored text, and the reference named', () => {
+    stored({});
+    expect(interpolateForRead('cd ${paths.home}')).toEqual({
+      value: 'cd ${paths.home}',
+      unresolved: { ref: 'paths.home', why: 'is not a stored key' },
+    });
+  });
+
+  it('names the reference exactly as written, spaces and modifier included', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'group' ? { child: 'x' } : undefined));
+    expect(interpolateForRead('a ${ SPACED } b').unresolved?.ref).toBe(' SPACED ');
+    expect(interpolateForRead('a ${group:-fallback} b').unresolved).toEqual({ ref: 'group:-fallback', why: 'is a group of entries, not a value' });
+  });
+
+  it('a reference inside a `:-` default is one written in this entry', () => {
+    stored({});
+    expect(interpolateForRead('${a:-${b}}').unresolved).toEqual({ ref: 'b', why: 'is not a stored key' });
+  });
+
+  it('a failure in another entry names the reference that leads there', () => {
+    stored({ 'arch.inner': 'inner uses ${MISSING2}' });
+    expect(interpolateForRead('see ${arch.inner} here')).toEqual({
+      value: 'see ${arch.inner} here',
+      unresolved: { via: 'arch.inner', ref: 'MISSING2', why: 'is not a stored key' },
+    });
+  });
+
+  it('a chain past the depth limit: the stored text, and no entry down the chain blamed', () => {
+    // Every key resolves to a reference to a new key: never a cycle, never an end.
+    mockGetValue.mockImplementation((key: string) => `\${${key}x}`);
+    expect(interpolateForRead('${a}')).toEqual({
+      value: '${a}',
+      unresolved: { via: 'a', why: 'nests references too deeply to resolve' },
+    });
+  });
+
+  it('a reference to an entry whose file cannot be read: the stored text, and that entry named', () => {
+    mockGetValue.mockImplementation(() => { throw conflicted(); });
+    expect(interpolateForRead('cd ${paths.home}')).toEqual({
+      value: 'cd ${paths.home}',
+      unresolved: { why: "refers to entry 'paths.home', whose store file cannot be read" },
+    });
+  });
+
+  it('interpolateObject hands each of those to its callback and keeps the other leaves', () => {
+    mockGetValue.mockImplementation((key: string) => {
+      if (key === 'ok') return 'fine';
+      if (key === 'broken') throw conflicted();
+      return undefined;
+    });
+    const seen: [string, UnresolvedOnRead][] = [];
+    const result = interpolateObject(
+      { a: '${ok}', b: '${nope}', c: '${broken}' },
+      (key, unresolved) => { seen.push([key, unresolved]); },
+    );
+    expect(result).toEqual({ a: 'fine', b: '${nope}', c: '${broken}' });
+    expect(seen).toEqual([
+      ['b', { ref: 'nope', why: 'is not a stored key' }],
+      ['c', { why: "refers to entry 'paths.home', whose store file cannot be read" }],
+    ]);
+  });
+
+  it('an error it does not recognize propagates: a fault is not an unresolved reference', () => {
+    mockGetValue.mockImplementation(() => { throw new TypeError('store exploded'); });
+    expect(() => interpolateForRead('${a}')).toThrow('store exploded');
+    expect(() => interpolateObject({ k: '${a}' })).toThrow('store exploded');
+  });
+
+  it('`:?` and a cycle still fail the read', () => {
+    stored({});
+    expect(() => interpolateForRead('${a:?must be set}')).toThrow(StrictInterpolationError);
+    stored({ a: '${b}', b: '${a}' });
+    expect(() => interpolateForRead('${a}')).toThrow(/Circular/);
+  });
+
+  it('…also when an unresolved reference comes first, here or in an entry it reaches', () => {
+    stored({});
+    expect(() => interpolateForRead('first ${MISSING} then ${nope:?must be set}')).toThrow('must be set');
+    expect(() => interpolateObject({ k: 'first ${MISSING} then ${nope:?must be set}' })).toThrow('must be set');
+    stored({ a: '${b}', b: '${a}' });
+    expect(() => interpolateForRead('first ${MISSING} then ${a}')).toThrow(/Circular/);
+    stored({ inner: '${MISSING} then ${nope:?inner guard}' });
+    expect(() => interpolateForRead('see ${inner}')).toThrow('inner guard');
+  });
+
+  it('never executes a $(key), alone or after a reference that does not resolve', () => {
+    stored({ cmd: 'touch /tmp/should-not-exist' });
+    expect(interpolateForRead('before $(cmd) after')).toEqual({ value: 'before $(cmd) after' });
+    expect(interpolateForRead('${MISSING} then $(cmd)').value).toBe('${MISSING} then $(cmd)');
+    expect(interpolateForRead('${nope:-$(cmd)}').value).toBe('$(cmd)');
+    expect(interpolateObject({ k: '$(cmd)', j: '${MISSING} $(cmd)' })).toEqual({ k: '$(cmd)', j: '${MISSING} $(cmd)' });
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('unresolvedWarning', () => {
+  it('a reference written in the entry: named, with the escape', () => {
+    expect(unresolvedWarning('conventions.rfvar', { ref: 'EMPTY', why: 'is not a stored key' }))
+      .toBe("'conventions.rfvar' refers to ${EMPTY}, which is not a stored key. Its value is returned as written. "
+        + 'If that is literal text, store it escaped: \\${EMPTY}.');
+  });
+
+  it('a failure in another entry: the way there, and no escape advice — escaping here would fix nothing', () => {
+    expect(unresolvedWarning('arch.outer', { via: 'arch.inner', ref: 'MISSING2', why: 'is not a stored key' }))
+      .toBe("'arch.outer' refers to ${arch.inner}, which leads to ${MISSING2}, and that is not a stored key. Its value is returned as written.");
+    expect(unresolvedWarning('k', { via: 'a', why: 'nests references too deeply to resolve' }))
+      .toBe("'k' refers to ${a}, which nests references too deeply to resolve. Its value is returned as written.");
+  });
+
+  it('no one reference at fault', () => {
+    expect(unresolvedWarning('k', { why: "refers to entry 'x.y', whose store file cannot be read" }))
+      .toBe("'k' refers to entry 'x.y', whose store file cannot be read. Its value is returned as written.");
+  });
+
+  it('whatever the cause, its own words never say "not found": the MCP hit detector reads that as a miss', () => {
+    // Driven through interpolateForRead, so a reworded clause is caught here.
+    const causes: [string, () => void][] = [
+      ['missing', () => { mockGetValue.mockImplementation(() => undefined); }],
+      ['a group', () => { mockGetValue.mockImplementation(() => ({ child: 'x' })); }],
+      ['encrypted', () => { mockGetValue.mockImplementation(() => 'encrypted::v1:abc'); }],
+      ['too deep', () => { mockGetValue.mockImplementation((key: string) => `\${${key}x}`); }],
+      ['unreadable', () => { mockGetValue.mockImplementation(() => { throw new StoreUnreadableError([{ kind: 'entry', path: '/r/.reverie/a.json', key: 'a', reason: 'parse' }], 'read'); }); }],
+    ];
+    for (const [name, arrange] of causes) {
+      arrange();
+      const read = interpolateForRead('${a}');
+      expect(read.unresolved, name).toBeDefined();
+      expect(unresolvedWarning('k', read.unresolved!).toLowerCase(), name).not.toContain('not found');
+    }
+  });
+
+  it('the overflow note agrees in number', () => {
+    expect(unresolvedOverflowNote(1)).toBe('1 more entry holds a reference that does not resolve');
+    expect(unresolvedOverflowNote(2)).toBe('2 more entries hold a reference that does not resolve');
+  });
+});
+
 describe('exec interpolation $(key) — via interpolateExec', () => {
   it('executes stored command and returns stdout', () => {
     mockGetValue.mockReturnValueOnce('echo hello');

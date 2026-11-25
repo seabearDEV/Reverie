@@ -80,12 +80,18 @@ describe('checkSeedQuality', () => {
     expect(checkSeedQuality(flat)).toEqual([]);
   });
 
-  it('flags interpolation landmines (unresolved refs would error)', () => {
-    const flat = { 'arch.example': 'The interp syntax is ${missing_key} which fails resolution.' };
+  it('flags interpolation landmines: a `:?` reference that is not met fails every read', () => {
+    const flat = { 'arch.example': 'The deploy host is ${missing_key:?set the host first} and that fails resolution.' };
     const issues = checkSeedQuality(flat);
     const landmine = issues.find(i => i.code === 'interp-landmine');
     expect(landmine).toBeDefined();
     expect(landmine?.message).toMatch(/Interpolation would fail/);
+  });
+
+  it('does not flag a plain reference that does not resolve: a read returns it as written (#202)', () => {
+    // Every lint lists these on its own; flagging them here listed the entry twice.
+    const flat = { 'arch.example': 'The interp syntax is ${missing_key} which a read returns as written.' };
+    expect(checkSeedQuality(flat).find(i => i.code === 'interp-landmine')).toBeUndefined();
   });
 
   it('does not flag backslash-escaped interpolation syntax', () => {

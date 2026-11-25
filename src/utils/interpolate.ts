@@ -3,6 +3,7 @@ import { resolveKey } from '../alias';
 import { getValue } from '../storage';
 import { flattenObject } from './objectPath';
 import { isEncrypted } from './crypto';
+import { StoreUnreadableError } from './unreadable';
 import { CodexValue } from '../types';
 
 const MAX_DEPTH = 10;
@@ -29,6 +30,144 @@ export class StrictInterpolationError extends Error {
     this.name = 'StrictInterpolationError';
   }
 }
+
+
+/** Why a `${name}` does not resolve. */
+export type UnresolvedReason = 'missing' | 'not-a-value' | 'encrypted' | 'too-deep';
+
+/**
+ * A `${name}` that cannot be resolved: no such key, a group of entries where
+ * a value is needed, an encrypted value, or a chain of references longer than
+ * the depth limit (#202). Distinct from StrictInterpolationError, which the
+ * author asked for with `:?` or caused with a cycle.
+ *
+ * `run` still fails on it — a command must not execute with a hole in it. A
+ * read does not: the entry exists and its text is what was stored, so read
+ * paths return it as written and say so (interpolateForRead). The messages
+ * are unchanged from when these were plain Errors.
+ */
+export class UnresolvedReferenceError extends Error {
+  /** The reference exactly as written between `\${` and `}`: spaces and any modifier included. */
+  readonly ref: string;
+  readonly reason: UnresolvedReason;
+
+  constructor(message: string, ref: string, reason: UnresolvedReason) {
+    super(message);
+    this.name = 'UnresolvedReferenceError';
+    this.ref = ref;
+    this.reason = reason;
+  }
+}
+
+/** A read that fell back to the stored text, and why. */
+export interface UnresolvedOnRead {
+  /**
+   * The reference that does not resolve, as written, without the `${}`.
+   * Undefined when no one reference is at fault: the chain is too deep, or
+   * the entry it names exists and its file cannot be read.
+   */
+  ref?: string;
+  /**
+   * Set when the failure is in another entry: the reference written in the
+   * value being read that leads there. Escaping `ref` in this entry would
+   * fix nothing, so the warning does not suggest it.
+   */
+  via?: string;
+  /** One clause: what is wrong. Never contains the phrase the MCP miss detector keys on. */
+  why: string;
+}
+
+/**
+ * A reference a read kept as written instead of failing on. `nested` is true
+ * when it was found in another entry's value, reached through a reference.
+ */
+interface Tolerated {
+  err: UnresolvedReferenceError | StoreUnreadableError;
+  nested: boolean;
+  via?: string;
+}
+
+/**
+ * The two failures that mean "this reference does not resolve", which a read
+ * answers with the stored text: an UnresolvedReferenceError, and a reference
+ * to an entry whose file exists but cannot be read (#215). Nothing else:
+ * StrictInterpolationError is the author asking for a loud failure, and any
+ * other error is a fault.
+ */
+function fallsBackOnRead(err: unknown): err is UnresolvedReferenceError | StoreUnreadableError {
+  return err instanceof UnresolvedReferenceError || err instanceof StoreUnreadableError;
+}
+
+/**
+ * Interpolate a value for a READ (#202): `get`, a subtree listing, the MCP
+ * read tools. Never executes — the default, safe `interpolate`. A value that
+ * cannot be fully resolved is returned exactly as stored, with the reason, so
+ * every read path gives the same answer and the caller can warn. Before this,
+ * one stored value gave four answers: `set` accepted it silently, plain `get`
+ * failed with exit 1, `get --json` returned it raw without a word, and `lint`
+ * passed.
+ *
+ * Only a reference that does not resolve falls back (fallsBackOnRead), and
+ * the scan goes on past it. So a `${key:?message}` or a cycle anywhere in the
+ * value, or in an entry it reaches, still fails the read — also when a plain
+ * unresolved reference comes first. Any other error propagates too: a fault
+ * is not a value to return with a warning that guesses at the cause.
+ */
+export function interpolateForRead(value: string, execCache = new Map<string, string>()): { value: string; unresolved?: UnresolvedOnRead } {
+  const tolerated: Tolerated[] = [];
+  // allowExec stays false: this is a read.
+  const resolved = interpolate(value, MAX_DEPTH, new Set<string>(), execCache, false, undefined, false, tolerated);
+  if (tolerated.length === 0) return { value: resolved };
+  return { value, unresolved: describeFallback(tolerated[0]) };
+}
+
+function describeFallback({ err, via }: Tolerated): UnresolvedOnRead {
+  const through = via === undefined ? {} : { via };
+  if (err instanceof StoreUnreadableError) {
+    // The unreadable file is reported in full, with its fix, by the command
+    // itself (a warning on every surface). This only says why the value came
+    // back as written, and names the entry so the two can be matched up.
+    const entry = err.files.find(f => f.key !== undefined)?.key;
+    return { ...through, why: entry === undefined
+      ? 'refers to an entry whose store file cannot be read'
+      : `refers to entry '${entry}', whose store file cannot be read` };
+  }
+  switch (err.reason) {
+    case 'missing': return { ...through, ref: err.ref, why: 'is not a stored key' };
+    case 'not-a-value': return { ...through, ref: err.ref, why: 'is a group of entries, not a value' };
+    case 'encrypted': return { ...through, ref: err.ref, why: 'is encrypted' };
+    // err.ref is the reference the limit was reached on, ten levels down:
+    // naming it would point at an entry that is fine.
+    case 'too-deep': return { ...through, why: 'nests references too deeply to resolve' };
+  }
+}
+
+/**
+ * The warning for an entry whose value was returned as written. For a
+ * reference written in that entry it says what to do in both cases: fix the
+ * reference, or escape text that only looks like one.
+ */
+export function unresolvedWarning(key: string, u: UnresolvedOnRead): string {
+  const tail = 'Its value is returned as written.';
+  if (u.ref === undefined) {
+    return u.via === undefined
+      ? `'${key}' ${u.why}. ${tail}`
+      : `'${key}' refers to \${${u.via}}, which ${u.why}. ${tail}`;
+  }
+  if (u.via !== undefined) {
+    return `'${key}' refers to \${${u.via}}, which leads to \${${u.ref}}, and that ${u.why}. ${tail}`;
+  }
+  return `'${key}' refers to \${${u.ref}}, which ${u.why}. ${tail} `
+    + `If that is literal text, store it escaped: \\\${${u.ref}}.`;
+}
+
+/** What follows the warnings a listing prints, when more entries than it names hold an unresolved reference. */
+export function unresolvedOverflowNote(rest: number): string {
+  return `${rest} more ${rest === 1 ? 'entry holds' : 'entries hold'} a reference that does not resolve`;
+}
+
+/** Envelope warning code for unresolvedWarning. */
+export const UNRESOLVED_WARNING_CODE = 'INTERPOLATION_UNRESOLVED';
 
 /**
  * Parse a ref string for conditional modifiers (`:-` default, `:?` error).
@@ -70,7 +209,7 @@ function parseRef(ref: string): { key: string; modifier?: ':-' | ':?'; modValue?
  *   `${key:-default}` — use default if key is not found
  *   `${key:?error}`   — throw custom error if key is not found
  */
-function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>, allowExec: boolean, visited?: Set<string>, noExec = false): string {
+function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>, allowExec: boolean, visited?: Set<string>, noExec = false, tolerated?: Tolerated[]): string {
   const { key: rawKey, modifier, modValue } = parseRef(ref);
   const resolvedKey = resolveKey(rawKey.trim());
   // #158: record every key reached through interpolation so the run-path
@@ -91,7 +230,7 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
   if (resolved === undefined) {
     if (modifier === ':-') {
       // Default value — interpolate it in case it contains ${} references
-      return interpolate(modValue ?? '', maxDepth, seen, execCache, allowExec, visited, noExec);
+      return interpolate(modValue ?? '', maxDepth, seen, execCache, allowExec, visited, noExec, tolerated);
     }
     if (modifier === ':?') {
       // Strict: the user opted in to fail-loud by writing `:?`. If we
@@ -99,19 +238,19 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should also use generic message
       throw new StrictInterpolationError(modValue || `"${rawKey.trim()}" is required but not set`);
     }
-    throw new Error(`Interpolation failed: "${rawKey.trim()}" not found`);
+    throw new UnresolvedReferenceError(`Interpolation failed: "${rawKey.trim()}" not found`, ref, 'missing');
   }
 
   if (typeof resolved !== 'string') {
-    throw new Error(`Interpolation failed: "${rawKey.trim()}" is not a string value`);
+    throw new UnresolvedReferenceError(`Interpolation failed: "${rawKey.trim()}" is not a string value`, ref, 'not-a-value');
   }
 
   if (isEncrypted(resolved)) {
-    throw new Error(`Interpolation failed: "${rawKey.trim()}" is encrypted`);
+    throw new UnresolvedReferenceError(`Interpolation failed: "${rawKey.trim()}" is encrypted`, ref, 'encrypted');
   }
 
   if (maxDepth <= 0) {
-    throw new Error(`Interpolation depth limit exceeded`);
+    throw new UnresolvedReferenceError(`Interpolation depth limit exceeded`, ref, 'too-deep');
   }
 
   const nextSeen = new Set(seen);
@@ -120,7 +259,7 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
   // stays in collect mode. Dropping it here left the nested exec ref literal
   // during enumeration while the real run (allowExec) still executed it — the
   // exact enumeration≠execution divergence the confirm gate must not have.
-  return interpolate(resolved, maxDepth - 1, nextSeen, execCache, allowExec, visited, noExec);
+  return interpolate(resolved, maxDepth - 1, nextSeen, execCache, allowExec, visited, noExec, tolerated);
 }
 
 /**
@@ -226,6 +365,7 @@ export function interpolate(
   allowExec = false,
   visited?: Set<string>,
   noExec = false,
+  tolerated?: Tolerated[],
 ): string {
   // Early return if no interpolation markers present
   if (!value.includes('${') && !value.includes('$(')) return value;
@@ -266,7 +406,31 @@ export function interpolate(
         }
         if (depth === 0) {
           const ref = result.slice(i + 2, j);
-          out += ref === '' ? '${}' : resolveRef(ref, maxDepth, seen, execCache, allowExec, visited, noExec);
+          if (ref === '') {
+            out += '${}';
+          } else if (tolerated === undefined) {
+            out += resolveRef(ref, maxDepth, seen, execCache, allowExec, visited, noExec);
+          } else {
+            // A read (interpolateForRead): a reference that does not resolve
+            // is kept as written and the scan goes on, so that a `:?` or a
+            // cycle after it — here or further down the chain — still throws.
+            const before = tolerated.length;
+            try {
+              out += resolveRef(ref, maxDepth, seen, execCache, allowExec, visited, noExec, tolerated);
+            } catch (err) {
+              if (!fallsBackOnRead(err)) throw err;
+              tolerated.push({ err, nested: seen.size > 0 });
+              out += result.slice(i, j + 1);
+            }
+            // `seen` is empty only while scanning the value being read (and
+            // its `:-` defaults). Whatever failed further down was reached
+            // through this reference.
+            if (seen.size === 0) {
+              for (const t of tolerated.slice(before)) {
+                if (t.nested) t.via ??= ref;
+              }
+            }
+          }
           i = j + 1;
         } else {
           // Unclosed brace — leave as-is
@@ -368,25 +532,23 @@ export function collectReferencedKeys(value: string): Set<string> {
  * SECURITY: safe by default — leaves `$(key)` literal (no execution). Used by
  * read/display paths (`get --values`, MCP subtree); they must never execute.
  */
-export function interpolateObject(obj: Record<string, CodexValue>): Record<string, CodexValue> {
+export function interpolateObject(
+  obj: Record<string, CodexValue>,
+  onUnresolved?: (key: string, unresolved: UnresolvedOnRead) => void,
+): Record<string, CodexValue> {
   const flat = flattenObject(obj);
   const result: Record<string, CodexValue> = {};
   const execCache = new Map<string, string>();
 
   for (const [key, value] of Object.entries(flat)) {
     if (typeof value === 'string' && !isEncrypted(value)) {
-      try {
-        result[key] = interpolate(value, MAX_DEPTH, new Set<string>(), execCache);
-      } catch (err) {
-        // StrictInterpolationError signals load-bearing failures (`:?`
-        // required check, circular reference) — the user explicitly opted
-        // in to fail loudly, so don't swallow them under the subtree fallback.
-        if (err instanceof StrictInterpolationError) throw err;
-        // For everything else (key not found, not-a-string, encrypted),
-        // keep the raw template so a single broken leaf doesn't fail the
-        // whole subtree get.
-        result[key] = value;
-      }
+      // The read rule, one leaf at a time (interpolateForRead): a reference
+      // that does not resolve keeps the raw template, so a single broken
+      // leaf doesn't fail the whole subtree get — and the caller is told, so
+      // it can warn (#202). A `:?`, a cycle or a fault propagates.
+      const read = interpolateForRead(value, execCache);
+      result[key] = read.value;
+      if (read.unresolved) onUnresolved?.(key, read.unresolved);
     } else {
       result[key] = value;
     }

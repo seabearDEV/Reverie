@@ -192,6 +192,44 @@ describe('MCP Integration (real I/O)', () => {
     });
   });
 
+  // ── #202: a reference that does not resolve ──────────────────────────
+  describe('unresolved references over MCP (#202)', () => {
+    const text = (r: { content: { text: string }[] }) => r.content.map(c => c.text).join('\n');
+
+    it('reverie_set stores the value and says what a reader will get', () => {
+      const r = callMcpTool('reverie_set', { key: 'unres202.rfvar', value: 'Use ${EMPTY} then Read Until' });
+      expect(r.isError).toBeUndefined();
+      expect(text(r)).toContain("warning: 'unres202.rfvar' refers to ${EMPTY}, which is not a stored key");
+    });
+
+    it('reverie_get returns the value as written with a warning line, and it still counts as a hit', () => {
+      callMcpTool('reverie_set', { key: 'unres202.rfvar', value: 'Use ${EMPTY} then Read Until' });
+      const leaf = callMcpTool('reverie_get', { key: 'unres202.rfvar' });
+      expect(leaf.isError).toBeUndefined();
+      expect(text(leaf)).toContain('unres202.rfvar: Use ${EMPTY} then Read Until');
+      expect(text(leaf)).toContain('warning:');
+      const rows = fs.readFileSync(path.join(tmpDir, 'telemetry.jsonl'), 'utf8').trim().split('\n');
+      const last = JSON.parse(rows[rows.length - 1]) as { tool: string; hit?: boolean };
+      expect(last.tool).toBe('reverie_get');
+      expect(last.hit).toBe(true);
+      // One entry was read: the warning line is not counted as a second.
+      const audit = fs.readFileSync(path.join(tmpDir, 'audit.jsonl'), 'utf8').trim().split('\n');
+      const lastAudit = JSON.parse(audit[audit.length - 1]) as { tool: string; entryCount?: number };
+      expect(lastAudit.tool).toBe('reverie_get');
+      expect(lastAudit.entryCount).toBe(1);
+      const subtree = callMcpTool('reverie_get', { key: 'unres202', values: true });
+      expect(text(subtree).split('\n').filter(l => l.startsWith('warning:'))).toHaveLength(1);
+    });
+
+    it('a `:?` behind a reference that does not resolve still fails reverie_get', () => {
+      // The fallback stopped at the first unresolved reference and returned the value.
+      callMcpTool('reverie_set', { key: 'unres202.masked', value: 'first ${MISSING} then ${nope:?guard after}' });
+      const leaf = callMcpTool('reverie_get', { key: 'unres202.masked' });
+      expect(leaf.isError).toBe(true);
+      expect(text(leaf)).toContain('guard after');
+    });
+  });
+
   describe('reverie_remove', () => {
     it('removes an entry from disk', () => {
       callMcpTool('reverie_set', { key: 'temp.key', value: 'temp' });

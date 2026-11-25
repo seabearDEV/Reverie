@@ -381,6 +381,6 @@ rvr lint -G
 rvr lint --json
 ```
 
-In JSON mode the lint payload (`issues`, `allowed`, optional `seedQuality`) is nested inside the standard envelope's `result` field — parse `.result.issues`, and branch on the top-level `ok` / exit code. See the README's [Structured JSON Output](../README.md#structured-json-output) for the full envelope contract and error codes.
+In JSON mode the lint payload (`issues`, `allowed`, optional `seedQuality`, and `unresolvedReferences` when an entry holds a `${name}` that does not resolve) is nested inside the standard envelope's `result` field — parse `.result.issues`, and branch on the top-level `ok` / exit code. See the README's [Structured JSON Output](../README.md#structured-json-output) for the full envelope contract and error codes.
 
 For namespaces, lint is guidance, not a gate: it lists entries outside the recommended set and still exits 0. Declaring extra namespaces is not supported for directory stores yet, so a project that genuinely needs one will see it listed — that is expected, not an error.

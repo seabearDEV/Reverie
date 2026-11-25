@@ -40,6 +40,7 @@ const mockDefaultLLMInstructions = 'default instructions';
 function setupMocks() {
   vi.mock('../commands', () => ({
     setEntry: mockSetEntry,
+    warnUnresolvedReferences: vi.fn(),
     getEntry: mockGetEntry,
     runCommand: mockRunCommand,
     searchEntries: mockSearchEntries,
