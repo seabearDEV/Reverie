@@ -1,6 +1,7 @@
 import { getEntriesFlat, Scope } from '../storage';
 import { loadAliases } from '../alias';
 import { loadMeta, loadMetaMerged, getStalenessTag } from '../store';
+import { UnreadableFile, bootstrapListed, bootstrapUnreadableLines, displayPath, listUnreadableFiles, markUnreadableShown } from '../utils/unreadable';
 import { isEncrypted } from '../utils/crypto';
 import { color } from '../formatting';
 import { getBinaryName } from '../utils/binaryName';
@@ -185,6 +186,8 @@ export interface ComposeOptions {
   hints: SurfaceHints;
   /** Surface-specific fixed bytes outside the shared estimate (MCP header line). */
   extraOverheadBytes?: number | undefined;
+  /** Store files that exist but do not parse (#215). Rendered first, counted against the budget. */
+  unreadable?: UnreadableFile[] | undefined;
 }
 
 export interface ContextPayload {
@@ -211,6 +214,10 @@ export interface ContextPayload {
   /** True when the budget changed the shape: demoted, gists narrowed, shed,
    *  or overflow. */
   degraded: boolean;
+  /** Store files that exist but do not parse (#215), and the lines that
+   *  announce them at the top of the bootstrap. Both empty when none. */
+  unreadable: UnreadableFile[];
+  unreadableLines: string[];
 }
 
 const ENCRYPTED_DISPLAY = '[encrypted]';
@@ -224,6 +231,12 @@ export function composeContext(flat: Record<string, string>, opts: ComposeOption
   const entries: Record<string, string> = { ...flat };
   const handoffValue = handoff ? flat[HANDOFF_KEY] : undefined;
   if (handoff) delete entries[HANDOFF_KEY];
+
+  const unreadable = opts.unreadable ?? [];
+  const unreadableLines = bootstrapUnreadableLines(unreadable);
+  // The block leads the output on both surfaces; a blank line follows it.
+  const unreadableBytes = unreadableLines.length === 0 ? 0
+    : unreadableLines.reduce((n, l) => n + Buffer.byteLength(`${l}\n`, 'utf8'), 1);
 
   const pinned = resolvePinnedNamespaces(entries);
   const { full: fullRaw, rest } = partitionByTier(entries, opts.tier, pinned.prefixes);
@@ -255,7 +268,7 @@ export function composeContext(flat: Record<string, string>, opts: ComposeOption
       if (k in full) display[k] = full[k];
       else if (k in index) display[k] = formatIndexText(index[k]);
     }
-    const overhead = (opts.extraOverheadBytes ?? 0)
+    const overhead = (opts.extraOverheadBytes ?? 0) + unreadableBytes
       + estimateBootstrapOverheadBytes(handoff?.lines, opts.aliases, opts.tier, Object.keys(display).length, opts.hints);
 
     const demotion = demoteToFitBudget(
@@ -310,6 +323,8 @@ export function composeContext(flat: Record<string, string>, opts: ComposeOption
     gistChars,
     gistShrunk,
     degraded: demoted.length > 0 || gistShrunk || shed.length > 0 || pathologicalOverflow,
+    unreadable,
+    unreadableLines,
   };
 }
 
@@ -394,6 +409,14 @@ export function contextJsonResult(payload: ContextPayload): Record<string, unkno
     if (payload.gistShrunk) result.gistChars = payload.gistChars;
   }
   if (payload.pathologicalOverflow) result.pathologicalOverflow = true;
+  if (payload.unreadable.length > 0) {
+    result.unreadable = payload.unreadable.map(f => ({
+      kind: f.kind,
+      ...(f.key !== undefined && { key: f.key }),
+      file: displayPath(f.path),
+      reason: f.reason,
+    }));
+  }
   return result;
 }
 
@@ -540,9 +563,11 @@ export function showContext(options: ContextOptions = {}): void {
     budgetBytes: resolveBootstrapBudget(),
     gistChars: resolveGistChars(),
     hints,
+    // The loads above scanned the store(s); this reports what they found.
+    unreadable: listUnreadableFiles(),
   });
 
-  if (!payload.handoff && payload.order.length === 0 && Object.keys(aliases).length === 0) {
+  if (!payload.handoff && payload.order.length === 0 && Object.keys(aliases).length === 0 && payload.unreadable.length === 0) {
     if (!options.plain) {
       console.log(color.gray(`No entries stored. Add one with "${getBinaryName()} set <key> <value>"`));
     }
@@ -568,6 +593,19 @@ export function showContext(options: ContextOptions = {}): void {
 
   if (payload.pinnedWarning) {
     console.error(`warning: ${payload.pinnedWarning}`);
+  }
+
+  // Unreadable store files lead everything (#215): the usual casualty is the
+  // handoff itself, and what is said first is what survives a 2 KB preview.
+  // JSON mode carries them in result.unreadable and warnings[].
+  if (payload.unreadableLines.length > 0) {
+    for (const line of payload.unreadableLines) {
+      console.log(options.plain ? line : color.red(line));
+    }
+    console.log('');
+    // Only what the block named. Past its cap it says "… and N more"; the
+    // wrapper names those on stderr.
+    markUnreadableShown(bootstrapListed(payload.unreadable));
   }
 
   // Handoff banner first (#212): when the harness persists a large result

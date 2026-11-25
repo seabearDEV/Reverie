@@ -370,6 +370,32 @@ With a shared id (1 or 2), every invocation counts as one session, with state pe
 
 The warning is advisory and never fails the write. Writes are counted per entry: the same key in another project, or in the global store, has its own count. Only a stored value counts: `rvr set <key> --confirm`, `--no-confirm` or `-a <alias>` without a value updates metadata and is not a write. One key is exempt on both surfaces: the handoff, `context.next_session`, is never counted. It is rewritten as a session progresses by design, so the guard's question — has this entry stabilized? — does not apply to it. The exemption is that exact key, including when it is written through an alias; nothing else under `context.*` is exempt, and there is no setting to add keys.
 
+## When a store file cannot be read (merge conflicts)
+
+`.reverie/` is committed, so two people who write the **same** key on parallel branches get a git conflict in that entry's file at the next merge (different keys merge cleanly). The keys every session rewrites — the handoff above all — are where this happens. A file with conflict markers in it is not valid JSON.
+
+Reverie treats a store file that exists but does not parse as an error, never as a missing entry ([#215](https://github.com/seabearDEV/reverie/issues/215)):
+
+- **Reading it fails** with error code `STORE_UNREADABLE` (not `NOT_FOUND`), naming the file and the reason.
+- **Writing over it is refused** — `set`, `copy`, `rename`, `import`, and for the sidecars `alias set` / `confirm set`. Nothing is written: a command that touches several files checks them all first. While `_aliases.json` or `_confirm.json` is unreadable, `rename` and `rm` are refused for every key (they have to carry aliases and confirm flags along), and so are `set -a` / `set --confirm`. Plain `set` and `copy` on other keys keep working.
+- **What the file hides is not acted on.** `alias remove` / `alias rename` and `confirm remove` are refused while their sidecar is unreadable (it would read as empty). `rm` and `rename` of a parent key are refused while an entry under it is unreadable, and so is a write to a child or a parent of an unreadable entry. A broken file in the global store does not block writes to the project store.
+- **The bootstrap opens with the list** of unreadable files, ahead of the handoff banner; `--json` adds `result.unreadable`. Other commands warn (`warnings[]` code `STORE_UNREADABLE`, stderr in text mode).
+- **`rvr lint` fails** and lists each file.
+- **`rvr run` fails closed**: while `_confirm.json` is unreadable every entry requires confirmation.
+
+To resolve, keep one side of the file whole, then mark it resolved:
+
+```bash
+git checkout --ours -- .reverie/context.next_session.json     # or --theirs
+git add .reverie/context.next_session.json
+```
+
+A file that is not a conflict but simply invalid — truncated, emptied — is reported the same way, with a different fix: restore it from version control or a backup, or delete the file by hand. `rvr rm` does not remove a file it cannot read.
+
+Any way of repairing the file works, including an editor save or `cp` over it; a running MCP server picks the repair up on its next call.
+
+Which side to keep is a human decision — an agent that picks one to unblock itself discards the other committer's entry. Combining the two sides by editing the JSON is not supported (see `_README.md` in the store). If you are an agent and hit `STORE_UNREADABLE`: do not write a replacement entry under another key and do not resolve the conflict yourself; report it.
+
 ## Validation
 
 Run `rvr lint` to check that all entries follow the namespace schema:

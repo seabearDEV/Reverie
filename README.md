@@ -556,7 +556,7 @@ Available settings:
 
 ### Project-Scoped Data
 
-Reverie supports per-project knowledge stores that live alongside your code. The `.reverie/` directory is designed to be committed to version control, creating a shared knowledge base that persists across sessions, team members, and AI agents. As of v1.10.0, each entry is its own JSON file inside the directory (`.reverie/arch.storage.json`, `.reverie/commands.build.json`, etc.) — this eliminates merge conflict churn when multiple devs add different entries on parallel branches. Use CLI or MCP tools to edit; hand-editing the wrapper files is unsupported. The store seeds its own `.gitignore` for per-clone state (`_epoch.json`, the crash-safety counter) so only entries and shared sidecars are committed; repos created before that landed untrack it once with `git rm --cached .reverie/_epoch.json`.
+Reverie supports per-project knowledge stores that live alongside your code. The `.reverie/` directory is designed to be committed to version control, creating a shared knowledge base that persists across sessions, team members, and AI agents. As of v1.10.0, each entry is its own JSON file inside the directory (`.reverie/arch.storage.json`, `.reverie/commands.build.json`, etc.) — this eliminates merge conflict churn when multiple devs add different entries on parallel branches. Two branches that write the *same* entry still conflict in that entry's file; Reverie reports such a file instead of reading or overwriting it (see "When a store file cannot be read" in [the schema guide](docs/schema-guide.md)). Use CLI or MCP tools to edit; hand-editing the wrapper files is unsupported. The store seeds its own `.gitignore` for per-clone state (`_epoch.json`, the crash-safety counter) so only entries and shared sidecars are committed; repos created before that landed untrack it once with `git rm --cached .reverie/_epoch.json`.
 
 ```bash
 # Initialize a project — scans codebase, creates .reverie/ and CLAUDE.md
@@ -877,7 +877,7 @@ rvr --json get missing.key
 # { "reverie": "1", "ok": false, "command": "get", "error": { "code": "NOT_FOUND", "message": "Entry 'missing.key' not found" } }
 ```
 
-Error codes: `PROJECT_UNRESOLVED`, `NOT_FOUND`, `INVALID_INPUT`, `REQUIRES_CONFIRMATION`, `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, `COMMAND_FAILED`, `INPUT_REQUIRED`, `IO`, `RUNTIME`. (Note: `--json` on reads nests the value under `result` — a deliberate break from the pre-1.1.0 bare-value shape.) Non-fatal notices (e.g. context `[trimmed]`) appear in `warnings[]`; `run` on a `--confirm` entry without `--yes` returns `REQUIRES_CONFIRMATION` with the resolved command in `error.preview`.
+Error codes: `PROJECT_UNRESOLVED`, `NOT_FOUND`, `INVALID_INPUT`, `REQUIRES_CONFIRMATION`, `ENCRYPTED_NO_PASSWORD`, `DECRYPT_FAILED`, `COMMAND_FAILED`, `INPUT_REQUIRED`, `IO`, `STORE_UNREADABLE`, `RUNTIME`. (Note: `--json` on reads nests the value under `result` — a deliberate break from the pre-1.1.0 bare-value shape.) Non-fatal notices (e.g. context `[trimmed]`) appear in `warnings[]`; `run` on a `--confirm` entry without `--yes` returns `REQUIRES_CONFIRMATION` with the resolved command in `error.preview`.
 
 ### Debugging
 

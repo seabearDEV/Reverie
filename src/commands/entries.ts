@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadData, handleError, getValue, setValue, removeValue, Scope } from '../storage';
+import { loadData, handleError, getValue, getValueForWrite, setValue, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
@@ -14,6 +14,7 @@ import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAli
 import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
+import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
 import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
@@ -123,6 +124,10 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
         try {
           value = interpolate(value);
         } catch (err) {
+          // #215: a `${key}` that names an unreadable entry. The outer catch
+          // reports it as STORE_UNREADABLE and marks the file as shown;
+          // printError here would call it RUNTIME and name the file twice.
+          if (err instanceof StoreUnreadableError) throw err;
           printError(err instanceof Error ? err.message : String(err));
           process.exitCode = 1;
           return;
@@ -145,7 +150,10 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     // gate on any of them carrying confirm metadata.
     const confirmKeys = new Set<string>(resolvedKeys);
     for (const k of collectReferencedKeys(rawValue)) confirmKeys.add(k);
-    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k));
+    // #215: fail closed. An unreadable confirmation list loads as empty, so
+    // while one is unreadable every entry is gated. hasConfirm runs first —
+    // it does the scan the second check reads.
+    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || confirmListUnreadable();
 
     // SECURITY: produce the real shell command ONLY when actually executing —
     // this is the single place `$(key)` exec refs run. Callers invoke it past
@@ -155,6 +163,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       try {
         return interpolateExec(rawValue);
       } catch (err) {
+        if (err instanceof StoreUnreadableError) throw err; // #215, as above
         printError(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
         return undefined;
@@ -298,6 +307,13 @@ async function handlePostSetConfirm(key: string, confirm: boolean | undefined, s
   } else if (confirm === false) {
     removeConfirm(key, scope);
   } else if (process.stdin.isTTY) {
+    // #215: with the confirmation list unreadable the answer could not be
+    // saved — the value is already written, so do not ask.
+    let confirmUnreadable = false;
+    try {
+      confirmUnreadable = listUnreadableFiles(resolveScopeForWrite(scope)).some(f => f.kind === 'confirm');
+    } catch { /* unresolvable scope: nothing was scanned, nothing to skip for */ }
+    if (confirmUnreadable) return;
     const answer = await askConfirmation('Require confirmation to run? [y/N] ');
     if (answer.toLowerCase() === 'y') {
       setConfirm(key, scope);
@@ -321,6 +337,10 @@ export async function setEntry(key: string, value: string | undefined, force = f
           process.exitCode = 1;
           return;
         }
+        // #215: the confirmation list, then (with -a) the alias map. Check
+        // both before the first write, as the value path does below — and
+        // refuse a --no-confirm that cannot see the flag it is asked to drop.
+        assertSidecarsWritable(() => resolveScopeForWrite(scope), alias ? ['confirm', 'aliases'] : ['confirm']);
         if (confirm) {
           setConfirm(key, scope);
           printSuccess(`Entry '${key}' now requires confirmation to run.`);
@@ -350,7 +370,7 @@ export async function setEntry(key: string, value: string | undefined, force = f
       return { key, alias };
     }
 
-    const existing = getValue(key, scope);
+    const existing = getValueForWrite(key, scope);
     if (existing !== undefined && !force && process.stdin.isTTY) {
       const displayVal = typeof existing === 'object'
         ? JSON.stringify(existing)
@@ -369,6 +389,14 @@ export async function setEntry(key: string, value: string | undefined, force = f
       if (encrypted === null) return;
       storedValue = encrypted;
     }
+
+    // #215: this command writes up to three files — the value, then the
+    // alias map, then the confirmation list. Check the sidecars it will touch
+    // before the value lands, so a refusal leaves nothing half-written.
+    const sidecars: ('aliases' | 'confirm')[] = [];
+    if (alias) sidecars.push('aliases');
+    if (confirm !== undefined) sidecars.push('confirm');
+    if (sidecars.length > 0) assertSidecarsWritable(() => resolveScopeForWrite(scope), sidecars);
 
     setValue(key, storedValue, scope);
     console.log(`Entry '${key}' set successfully.`);
@@ -741,6 +769,12 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   debug('removeEntry called', { key, force, global });
   const scope = toScope(global);
 
+  // #215: an entry under this key that cannot be read is invisible to the
+  // removal — it would stay on disk while the cascade below drops its alias
+  // and its confirmation flag. Checked before the lookup: a key whose only
+  // children are unreadable looks absent, and "not found" is the wrong answer.
+  assertSubtreeReadable(() => resolveScopeForWrite(scope), key, 'remove');
+
   const existing = getValue(key, scope);
   if (existing === undefined) {
     printWarning(`Entry '${key}' not found.`);
@@ -755,7 +789,20 @@ export async function removeEntry(key: string, force = false, global?: boolean):
     }
   }
 
-  removeValue(key, scope);
+  // #215: removal cascades to the alias map and the confirmation list. If
+  // either cannot be read the cascade cannot see what points at this key, so
+  // refuse before the entry is gone rather than leave them dangling.
+  assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
+
+  if (!removeValue(key, scope)) {
+    // The lookup above falls through from the project store to the global
+    // one; the removal deliberately does not (#99). So a key that exists
+    // only in the global store was found, not removed, and reported as
+    // "removed successfully". Say what happened, and skip the cascade.
+    printError(`Entry '${key}' not found in the project store. It exists in the global store: pass --global to remove it there.`, 'NOT_FOUND');
+    process.exitCode = 1;
+    return;
+  }
 
   // Cascade delete: remove any aliases pointing to this key or its children
   removeAliasesForKey(key, scope);
@@ -778,7 +825,7 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
       return;
     }
 
-    const existing = getValue(destKey, scope);
+    const existing = getValueForWrite(destKey, scope);
     if (existing !== undefined && !force && process.stdin.isTTY) {
       const displayVal = typeof existing === 'object'
         ? JSON.stringify(existing)
@@ -834,6 +881,9 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   }
 
   // Entry key rename
+  // #215: an unreadable entry under the old key would be left behind while
+  // its alias and its confirmation flag move to the new name.
+  assertSubtreeReadable(() => resolveScopeForWrite(scope), oldKey, 'rename');
   const value = getValue(oldKey, scope);
   if (value === undefined) {
     printError(`Entry '${oldKey}' not found.`, 'NOT_FOUND');
@@ -841,12 +891,17 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     return;
   }
 
-  const existing = getValue(newKey, scope);
+  const existing = getValueForWrite(newKey, scope);
   if (existing !== undefined) {
     printError(`Entry '${newKey}' already exists. Remove it first or choose a different key.`, 'INVALID_INPUT');
     process.exitCode = 1;
     return;
   }
+
+  // #215: a rename moves the value, re-points aliases and moves the confirm
+  // flag. With either sidecar unreadable it cannot know what to carry over —
+  // refuse before the value moves.
+  assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
   // Move the value
   if (typeof value === 'string') {

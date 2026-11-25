@@ -28,6 +28,7 @@ export const ERROR_CODES = [
   'COMMAND_FAILED',
   'INPUT_REQUIRED',
   'IO',
+  'STORE_UNREADABLE',
   'RUNTIME',
 ] as const;
 

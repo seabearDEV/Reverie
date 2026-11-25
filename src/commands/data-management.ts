@@ -16,6 +16,7 @@ import { wrapExport, tryUnwrapImport } from '../utils/envelope';
 import { version as pkgVersion } from '../../package.json';
 import { getConfigSetting } from '../config';
 import { getBinaryName } from '../utils/binaryName';
+import { StoreUnreadableError, describeUnreadable, markUnreadableShown } from '../utils/unreadable';
 
 function resolveImportMaxBytes(): number {
   const configured = Number(getConfigSetting('import_max_bytes'));
@@ -602,15 +603,13 @@ export function handleProjectFile(options: {
 
   // Seed conventions.persistence (unless --no-scan or it already exists)
   if (shouldScan && !options.dryRun) {
-    const existing = getValue('conventions.persistence', 'project');
-    if (existing === undefined) {
+    if (!seedKeyTaken('conventions.persistence')) {
       setValue('conventions.persistence', PERSISTENCE_VALUE, 'project');
       console.log(`  ${color.green('+')} conventions.persistence: ${color.white(PERSISTENCE_VALUE)}`);
     }
 
     // Seed context.initialized marker for agents to detect fresh scaffold
-    const initMarker = getValue('context.initialized', 'project');
-    if (initMarker === undefined) {
+    if (!seedKeyTaken('context.initialized')) {
       const markerValue = 'scaffold — arch.* and context.* namespaces need deep analysis by an AI agent';
       setValue('context.initialized', markerValue, 'project');
       console.log(`  ${color.green('+')} context.initialized: ${color.white(markerValue)}`);
@@ -645,6 +644,24 @@ export function handleProjectFile(options: {
   }
 }
 
+/**
+ * init's "is this seed key already there?" probe. A file that exists but does
+ * not parse (#215) is taken: init must not write over it — setValue would
+ * refuse anyway — and must not stop half-way either, with some seeds written
+ * and CLAUDE.md / AGENTS.md never generated. Two branches both running the
+ * first-session bootstrap is exactly how `context.initialized` conflicts.
+ */
+function seedKeyTaken(key: string): boolean {
+  try {
+    return getValue(key, 'project') !== undefined;
+  } catch (err) {
+    if (!(err instanceof StoreUnreadableError)) throw err;
+    printWarning(`Skipped ${key}: ${describeUnreadable(err.files[0])}.`);
+    markUnreadableShown(err.files);
+    return true;
+  }
+}
+
 function mergeScaffoldEntries(discovered: ScaffoldEntry[]): number {
   if (discovered.length === 0) {
     printWarning('No project information detected.');
@@ -662,8 +679,7 @@ function mergeScaffoldEntries(discovered: ScaffoldEntry[]): number {
   // Merge into existing project data (skip keys that already exist)
   let count = 0;
   for (const { key, value } of unique) {
-    const existing = getValue(key, 'project');
-    if (existing !== undefined) continue;
+    if (seedKeyTaken(key)) continue;
     setValue(key, value, 'project');
     console.log(`  ${color.green('+')} ${key}: ${color.white(value)}`);
     count++;

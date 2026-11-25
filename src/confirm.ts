@@ -1,6 +1,7 @@
 import { debug } from './utils/debug';
 import { Scope, loadConfirmMap, saveConfirmMap, loadConfirmMapMerged } from './store';
 import { resolveScopeForWrite } from './projectResolution';
+import { assertSidecarsWritable } from './utils/unreadable';
 
 
 export function loadConfirmKeys(scope?: Scope  ): Record<string, true> {
@@ -30,6 +31,9 @@ export function removeConfirm(key: string, scope?: Scope  ): void {
   // fails (#99). The pre-#99 project-then-global fallthrough is dropped for
   // consistency with set/remove on entries and aliases.
   const effectiveScope = resolveScopeForWrite(scope);
+  // #215: an unreadable list loads as empty, so "the key is not in it" would
+  // be reported as a removal that happened. Refuse instead.
+  assertSidecarsWritable(() => effectiveScope, ['confirm']);
   const keys = loadConfirmMap(effectiveScope);
   if (key in keys) {
     delete keys[key];
@@ -38,7 +42,10 @@ export function removeConfirm(key: string, scope?: Scope  ): void {
   }
 }
 
-// Check if a key requires confirmation (checks merged)
+// Check if a key carries the confirm flag (checks merged). Literal: an
+// unreadable confirmation list (#215) loads as empty and this answers false.
+// The run gates add confirmListUnreadable() so they fail closed; rename asks
+// this to decide whether there is a flag to move, and must get the truth.
 export function hasConfirm(key: string): boolean {
   const keys = loadConfirmMapMerged();
   return keys[key] === true;
