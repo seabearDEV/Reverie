@@ -13,8 +13,7 @@ import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
 import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAliases, resolveKey, renameAlias } from '../alias';
-import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey, moveConfirm, flagsGating } from '../confirm';
-import { keysOpeningSameEntry } from '../utils/entryIdentity';
+import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey, moveConfirm, flagsGating, gatedAmong } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
@@ -350,33 +349,23 @@ async function promptAndEncrypt(value: string, passwordFile?: string): Promise<s
 }
 
 /**
- * Does `key` still read after a rename moved it? Asked of both stores,
- * whatever scope the rename had: the same key in the other store is not
- * touched by the rename, and the flag being moved gated that entry too. An
- * entry that cannot be read is still there.
- */
-function stillReads(key: string): boolean {
-  try {
-    return getValue(key) !== undefined;
-  } catch {
-    return true;
-  }
-}
-
-/**
  * What still gates `key` after a command cleared a flag from it, as a
  * message, or null when nothing does. Clearing takes the flag listed under
  * the name given, in the list of the store it is given for — nothing else,
  * or it would take the flag of another entry. So the key can still be gated,
- * and reporting it cleared would be false.
+ * and reporting it cleared would be false. `removed` says whether the named
+ * flag was there to remove.
  */
-export function stillGatedNote(key: string): string | null {
+export function stillGatedNote(key: string, removed: boolean): string | null {
   const held = flagsGating(key);
   if (held.length === 0) return null;
   const bin = getBinaryName();
   const where = held.map(h => `'${h.key}' in the ${h.scope} list`).join(' and ');
   const fix = held.map(h => `\`${bin} confirm remove ${h.scope === 'global' ? '-G ' : ''}${h.key}\``).join(', ');
-  return `'${key}' still requires confirmation: it is flagged as ${where}. A flag is removed only under the name and in the list it is in: ${fix}.`;
+  const lead = removed
+    ? `The flag listed as '${key}' was removed, but '${key}' still requires confirmation`
+    : `'${key}' still requires confirmation`;
+  return `${lead}: it is flagged as ${where}. A flag is removed only under the name and in the list it is in: ${fix}.`;
 }
 
 /**
@@ -396,59 +385,61 @@ function storedKeys(scope?: Scope): string[] {
  * Why a confirmation flag cannot be set on `key` (or, with `setting` false,
  * cleared from it), or null when it can.
  *
- * A flag gates `run`, and `run` takes an entry that holds a command, so the
- * key has to be one — spelled as it is stored. Each of these used to report
- * "now requires confirmation" and gate nothing:
+ * A flag gates `run`, and `run` takes an entry that holds a command. Two
+ * requests used to report "now requires confirmation" and gate nothing, and
+ * are refused:
  *
- *   - a key that is not in the store (a typo): `confirm set` did not look;
- *   - a namespace: the lookup found the subtree, and `run` never takes one;
- *   - a key that differs from the entry only by case: on a case-insensitive
- *     filesystem the lookup was answered by the entry's file, so the flag
- *     went into the list under a name the entry does not have.
+ *   - a key that names no entry (a typo): `confirm set` did not look;
+ *   - a namespace: the lookup found the subtree, and `run` never takes one.
+ *
+ * Another spelling of an entry is accepted. The gate matches a flag by name,
+ * case aside, and by the file the name opens (confirm.ts), so a flag listed
+ * as `commands.Deploy` does gate the entry stored as `commands.deploy`.
+ * Refusing it would leave unflagged what the user asked to flag.
  *
  * Clearing is looser about one thing: a namespace is accepted, so a flag
  * that an older version put on one can be taken off again.
+ *
+ * `unreadableIsEntry`: an entry whose file cannot be read (#215) is still an
+ * entry. `confirm set` flags it; the flag-only `set` keeps refusing, as it
+ * does for every other write to such a key, by letting the read throw.
  */
-export function confirmTargetProblem(key: string, scope?: Scope, setting = true): { message: string; code: 'NOT_FOUND' | 'INVALID_INPUT' } | null {
-  // First, and unguarded: an entry whose file cannot be read is not a miss
-  // (#215), and getValue is what throws for it.
-  const value = getValue(key, scope);
-  if (setting && value !== undefined && typeof value !== 'string') {
-    return {
+export function confirmTargetProblem(
+  key: string,
+  scope?: Scope,
+  setting = true,
+  unreadableIsEntry = false,
+): { message: string; code: 'NOT_FOUND' | 'INVALID_INPUT' } | null {
+  let value: CodexValue | undefined;
+  try {
+    value = getValue(key, scope);
+  } catch (err) {
+    if (unreadableIsEntry && err instanceof StoreUnreadableError) return null;
+    throw err;
+  }
+  if (value !== undefined && typeof value !== 'string') {
+    return !setting ? null : {
       code: 'INVALID_INPUT',
       message: `'${key}' is a namespace, not an entry. A confirmation flag goes on an entry that holds a command: set it on the entries under '${key}'.`,
     };
   }
-  // The lookup above cannot tell the entry from another spelling of it: on a
-  // filesystem that folds names either one opens the entry's file. The
-  // store's key list can. Unicode normalization is not a different spelling
-  // here: HFS+ and exFAT list an NFC key back in NFD, and refusing the form
-  // the user typed would leave them no way to name the entry.
-  const stored = storedKeys(scope);
-  const nfc = key.normalize('NFC');
-  if (typeof value !== 'object' && !stored.some(k => k === key || k.normalize('NFC') === nfc)) {
-    const lower = key.toLowerCase();
-    const otherSpelling = stored.find(k => k.toLowerCase() === lower) ?? keysOpeningSameEntry(key, stored)[0];
-    if (otherSpelling !== undefined) {
-      return {
-        code: 'NOT_FOUND',
-        message: `Entry '${key}' not found. The stored key is '${otherSpelling}': keys keep their spelling, so name it that way.`,
-      };
-    }
-  }
-  if (value === undefined) {
-    return { code: 'NOT_FOUND', message: `Entry '${key}' not found. Cannot update confirm on a non-existent entry.` };
-  }
-  return null;
+  // An entry reads under this key: stored under it, or under a spelling the
+  // filesystem folds onto it.
+  if (value !== undefined) return null;
+  // Nothing reads. On a filesystem that folds nothing, another case of a
+  // stored key lands here, and it names an entry all the same.
+  const lower = key.toLowerCase();
+  if (storedKeys(scope).some(k => k.toLowerCase() === lower)) return null;
+  return { code: 'NOT_FOUND', message: `Entry '${key}' not found. Cannot update confirm on a non-existent entry.` };
 }
 
 async function handlePostSetConfirm(key: string, confirm: boolean | undefined, scope?: Scope  ): Promise<void> {
   if (confirm === true) {
     setConfirm(key, scope);
   } else if (confirm === false) {
-    removeConfirm(key, scope);
+    const removed = removeConfirm(key, scope);
     // The value is stored either way; say so if the key is still gated.
-    const note = stillGatedNote(key);
+    const note = stillGatedNote(key, removed);
     if (note) printWarning(note);
   } else if (process.stdin.isTTY) {
     // #215: with the confirmation list unreadable the answer could not be
@@ -489,8 +480,8 @@ export async function setEntry(key: string, value: string | undefined, force = f
           setConfirm(key, scope);
           printSuccess(`Entry '${key}' now requires confirmation to run.`);
         } else {
-          removeConfirm(key, scope);
-          const note = stillGatedNote(key);
+          const removed = removeConfirm(key, scope);
+          const note = stillGatedNote(key, removed);
           if (note) {
             printError(note, 'INVALID_INPUT');
             process.exitCode = 1;
@@ -1111,7 +1102,9 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
 
   // Which of the entries about to move does the gate ask about? Asked now:
   // it looks at their files, and afterwards those are gone.
-  const gatedLeaves = renamedLeaves(oldKey, newKey, value).filter(([from]) => hasConfirm(from));
+  const leaves = renamedLeaves(oldKey, newKey, value);
+  const gatedNow = gatedAmong(leaves.map(([from]) => from));
+  const gatedLeaves = leaves.filter(([from]) => gatedNow.has(from));
 
   // Move the value. A refused collision (#216 / #224) is thrown before
   // anything is written; report it and leave the source where it is.
@@ -1167,8 +1160,10 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     saveAliases(aliases, scope);
   }
 
-  // Move confirm metadata: each gated entry that moved is flagged under its new key.
-  moveConfirm(gatedLeaves, scope, stillReads);
+  // Confirm metadata: each gated entry that moved is flagged under its new
+  // key. The old name keeps its flag — it may be what gates an entry of that
+  // name somewhere this rename cannot see.
+  moveConfirm(gatedLeaves, scope);
 
   // Set a new alias on the renamed key
   if (newAlias) {

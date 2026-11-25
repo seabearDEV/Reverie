@@ -15,7 +15,7 @@ vi.mock('../utils/paths', () => ({
   getGlobalStoreDirPath: vi.fn(() => globalDir),
 }));
 
-import { keysOpeningSameEntry } from '../utils/entryIdentity';
+import { keysOpeningSameEntry, entriesOpenedBy } from '../utils/entryIdentity';
 
 describe('keysOpeningSameEntry', () => {
   let root: string;
@@ -58,15 +58,20 @@ describe('keysOpeningSameEntry', () => {
   // Each spelling is one the filesystem under this temp dir may or may not
   // fold. Whatever it does, the answer has to agree with it: the same entry
   // exactly when the spelling opens the stored key's file.
+  //
+  // The letters are built from code points. Two forms of one letter look the
+  // same in an editor, and one that normalizes would make them the same.
+  const cp = (...points: number[]) => String.fromCodePoint(...points);
   const spellings: [label: string, asked: string, stored: string][] = [
     ['another case', 'commands.DEPLOY', 'commands.deploy'],
-    ['U+017F LONG S for s', 'commandſ.deploy', 'commands.deploy'],
-    ['U+FB01 ligature for fi', 'commands.ﬁx', 'commands.fix'],
-    ['sharp s for ss', 'jobs.paß', 'jobs.pass'],
-    ['NFD for NFC', 'café.go', 'café.go'],
+    ['U+017F LONG S for s', `command${cp(0x17f)}.deploy`, 'commands.deploy'],
+    ['U+FB01 ligature for fi', `commands.${cp(0xfb01)}x`, 'commands.fix'],
+    ['U+00DF sharp s for ss', `jobs.pa${cp(0xdf)}`, 'jobs.pass'],
+    ['NFD for NFC', `cafe${cp(0x301)}.go`, `caf${cp(0xe9)}.go`],
   ];
   for (const [label, asked, stored] of spellings) {
     it(`${label}: the same entry exactly when the filesystem opens the stored file for it`, () => {
+      expect(asked).not.toBe(stored);
       put(globalDir, stored);
       const opensStored = folds(globalDir, asked, stored);
       expect(keysOpeningSameEntry(asked, [stored, 'unrelated.key'])).toEqual(opensStored ? [stored] : []);
@@ -75,12 +80,26 @@ describe('keysOpeningSameEntry', () => {
     });
   }
 
+  it('entriesOpenedBy: answers for many keys at once, each as keysOpeningSameEntry would', () => {
+    for (const [, , stored] of spellings) put(globalDir, stored);
+    put(globalDir, 'plain.key');
+    const asked = spellings.map(([, a]) => a);
+    const candidates = [...new Set(spellings.map(([, , st]) => st)), 'plain.key', 'no.such.entry'];
+    const all = entriesOpenedBy([...asked, 'plain.key', 'nothing.here'], candidates);
+    for (const key of [...asked, 'plain.key', 'nothing.here']) {
+      expect(all.get(key) ?? [], key).toEqual(keysOpeningSameEntry(key, candidates));
+    }
+    // A key that is itself a candidate is not matched with itself.
+    expect(all.has('plain.key')).toBe(false);
+    expect(all.has('nothing.here')).toBe(false);
+  });
+
   it('still agrees after the entry is rewritten through the other spelling', () => {
     // An atomic write replaces the file. On APFS the filesystem then reports
     // the spelling the rename was given as the file's name (realpath), while
     // the listing keeps the old one — the state that defeated a name check.
     put(globalDir, 'commands.deploy');
-    const asked = 'commandſ.deploy';
+    const asked = `command${String.fromCodePoint(0x17f)}.deploy`;
     const opensStored = folds(globalDir, asked, 'commands.deploy');
     const tmp = path.join(globalDir, '.tmp-write');
     fs.writeFileSync(tmp, JSON.stringify({ value: 'rewritten' }));
@@ -108,7 +127,11 @@ describe('keysOpeningSameEntry', () => {
 
   it('a hard link to an entry file is the same entry: the gate errs toward asking', () => {
     put(globalDir, 'commands.deploy');
-    fs.linkSync(path.join(globalDir, 'commands.deploy.json'), path.join(globalDir, 'commands.alias.json'));
+    try {
+      fs.linkSync(path.join(globalDir, 'commands.deploy.json'), path.join(globalDir, 'commands.alias.json'));
+    } catch {
+      return;   // exFAT and FAT have no hard links
+    }
     expect(keysOpeningSameEntry('commands.alias', ['commands.deploy'])).toEqual(['commands.deploy']);
   });
 });

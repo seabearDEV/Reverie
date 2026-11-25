@@ -11,13 +11,17 @@
 //      other one — given to `run`, in a ${reference} or $(exec ref) in
 //      another entry, or behind an alias. A key is now gated by its name,
 //      case aside, or by any flagged name that opens the same entry file.
-//   2. `confirm set` did not look the key up. A typo, a namespace or another
-//      spelling reported "now requires confirmation" and gated nothing.
+//   2. `confirm set` did not look the key up. A typo or a namespace reported
+//      "now requires confirmation" and gated nothing. Both are refused.
+//      Another spelling of an entry is accepted: the gate now reaches it.
 //   3. Renaming a namespace moved the entries and left their flags behind.
+//      A rename flags the new key of every gated entry it moves.
 //
 // And the rule that keeps the fix from opening the same hole elsewhere:
-// nothing takes a flag off an entry that is still there. Every entry `main`
-// gates is still gated here, after any command.
+// every entry `main` gates is still gated here, after any command. So a
+// rename never removes a flag — the old name's may be what gates an entry of
+// that name in another project — and a removal takes only the flag listed
+// under the removed entry's own name.
 //
 // Spawns the built dist/index.js (assumes `bun run build` has run) against a
 // project store and a global store in temp directories. Nothing here depends
@@ -34,7 +38,6 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { assertDistHonorsDataDir } from './helpers/spawnGuard';
-import { readDirectoryStore } from './helpers/readStoreState';
 
 interface Envelope {
   ok: boolean;
@@ -67,8 +70,13 @@ describe('the confirmation gate follows the entry', () => {
   const marker = (name: string) => path.join(projectDir, `ran-${name}`);
   const touch = (name: string) => `touch ${marker(name)}`;
   const ran = (name: string) => fs.existsSync(marker(name));
-  const projectFlags = () => Object.keys(readDirectoryStore(path.join(projectDir, '.reverie')).confirm).sort();
-  const globalFlags = () => Object.keys(readDirectoryStore(path.join(dataDir, 'store')).confirm).sort();
+  // Read from the list file alone: some tests leave an entry file unparseable on purpose.
+  const flagsIn = (storeDir: string): string[] => {
+    const file = path.join(storeDir, '_confirm.json');
+    return fs.existsSync(file) ? Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')) as object).sort() : [];
+  };
+  const projectFlags = () => flagsIn(path.join(projectDir, '.reverie'));
+  const globalFlags = () => flagsIn(path.join(dataDir, 'store'));
   const projectKeys = () => fs.readdirSync(path.join(projectDir, '.reverie'))
     .filter(f => f.endsWith('.json') && !f.startsWith('_')).map(f => f.slice(0, -'.json'.length)).sort();
   /** Put flags in the project list exactly as spelled — the state a store written by 1.3.0 or earlier can be in. */
@@ -247,6 +255,22 @@ describe('the confirmation gate follows the entry', () => {
       expect(ran('deploy')).toBe(true);
     });
 
+    it('confirm remove: says so too when it did remove the named flag and another still gates the key', () => {
+      listFlags('commands.deploy', 'commands.DEPLOY');
+      const r = rvr('confirm', 'remove', 'commands.deploy');
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("The flag listed as 'commands.deploy' was removed, but 'commands.deploy' still requires confirmation: it is flagged as 'commands.DEPLOY' in the project list");
+      expect(projectFlags()).toEqual(['commands.DEPLOY']);
+    });
+
+    it('confirm remove: a key with no flag anywhere is reported as such, not as removed', () => {
+      const r = rvr('confirm', 'remove', 'commands.nosuch');
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("'commands.nosuch' did not require confirmation: no flag is listed for it.");
+      expect(r.stdout).not.toContain('Confirmation removed');
+      expect(projectFlags()).toEqual(['Commands.Status', 'commands.DEPLOY']);
+    });
+
     it('set --no-confirm: the same', () => {
       const r = rvr('set', 'commands.deploy', '--no-confirm');
       expect(r.status).toBe(1);
@@ -288,7 +312,7 @@ describe('the confirmation gate follows the entry', () => {
       expect(projectFlags()).toEqual(['commands.deploy', 'commands.status']);
     });
 
-    it('refuses a key that is not in the store, and lists nothing', () => {
+    it('refuses a key that names no entry, and lists nothing', () => {
       const r = rvr('confirm', 'set', 'commands.statsu');
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("Entry 'commands.statsu' not found.");
@@ -297,39 +321,66 @@ describe('the confirmation gate follows the entry', () => {
       expect(projectFlags()).toEqual(['commands.deploy']);
     });
 
-    it('refuses another spelling of an entry, and names the stored key when only the case differs', () => {
-      const r = rvr('confirm', 'set', 'commands.STATUS');
-      expect(r.status).toBe(1);
-      expect(r.stderr).toContain("Entry 'commands.STATUS' not found. The stored key is 'commands.status'");
-      expect(json('confirm', 'set', 'commands.STATUS').error?.code).toBe('NOT_FOUND');
-      // A spelling only the filesystem connects to the entry (U+017F for
-      // the `s`): found by the file it opens, where it opens one.
-      const longS = `command${String.fromCodePoint(0x17f)}.status`;
-      const refused = json('confirm', 'set', longS);
-      expect(refused.error?.code).toBe('NOT_FOUND');
-      if (json('get', longS).ok) expect(refused.error?.message).toContain("The stored key is 'commands.status'");
-      expect(projectFlags()).toEqual(['commands.deploy']);
-    });
-
-    it('refuses another spelling of a global entry too, when the project has entries in that namespace', () => {
-      // The default view replaces the global `gcmds` namespace with the
-      // project's, which hid the stored key from this check.
-      expect(rvr('set', '-G', 'gcmds.deploy', touch('gdeploy')).status).toBe(0);
-      expect(rvr('set', 'gcmds.build', 'true').status).toBe(0);
-      const r = rvr('confirm', 'set', 'gcmds.DEPLOY');
-      expect(r.status).toBe(1);
-      expect(r.stderr).toContain("The stored key is 'gcmds.deploy'");
-      expect(json('set', 'gcmds.DEPLOY', '--confirm').error?.code).toBe('NOT_FOUND');
-      expect(projectFlags()).toEqual(['commands.deploy']);
-      expect(globalFlags()).toEqual([]);
-    });
-
     it('refuses a namespace: run never takes one, so the flag would gate nothing', () => {
       const r = rvr('confirm', 'set', 'commands');
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("'commands' is a namespace, not an entry.");
       expect(json('confirm', 'set', 'commands').error?.code).toBe('INVALID_INPUT');
       expect(projectFlags()).toEqual(['commands.deploy']);
+    });
+
+    it('accepts another case of an entry, and the entry is gated', () => {
+      // It listed the flag before too, and the flag gated nothing: the list
+      // was matched by exact spelling. Refusing it now would leave unflagged
+      // what the user asked to flag.
+      const r = rvr('confirm', 'set', 'commands.STATUS');
+      expect(r.status).toBe(0);
+      expect(projectFlags()).toEqual(['commands.STATUS', 'commands.deploy']);
+      const gated = rvr('run', 'commands.status');
+      expect(gated.status).toBe(1);
+      expect(gated.stderr).toContain(REFUSAL);
+      expect(ran('status')).toBe(false);
+    });
+
+    it('a spelling only the filesystem connects to an entry: accepted where it opens the entry, not found where it does not', () => {
+      const longS = `command${String.fromCodePoint(0x17f)}.status`;   // U+017F for the `s`
+      const opens = json('get', longS).ok;
+      const env = json('confirm', 'set', longS);
+      if (opens) {
+        expect(env.ok).toBe(true);
+        expect(rvr('run', 'commands.status').stderr).toContain(REFUSAL);
+      } else {
+        expect(env.error?.code).toBe('NOT_FOUND');
+        expect(projectFlags()).toEqual(['commands.deploy']);
+      }
+      expect(ran('status')).toBe(false);
+    });
+
+    it('accepts another case of a global entry when the project has entries in that namespace', () => {
+      // The default view replaces the global `gcmds` namespace with the
+      // project's, which hides the stored key from a lookup in that view.
+      expect(rvr('set', '-G', 'gcmds.deploy', touch('gdeploy')).status).toBe(0);
+      expect(rvr('set', 'gcmds.build', 'true').status).toBe(0);
+      expect(rvr('confirm', 'set', 'gcmds.DEPLOY').status).toBe(0);
+      expect(projectFlags()).toEqual(['commands.deploy', 'gcmds.DEPLOY']);
+      expect(rvr('run', 'gcmds.deploy').stderr).toContain(REFUSAL);
+      expect(ran('gdeploy')).toBe(false);
+      // A key that names nothing in either store is still refused there.
+      expect(json('confirm', 'set', 'gcmds.nosuch').error?.code).toBe('NOT_FOUND');
+    });
+
+    it('flags an entry whose file cannot be read: it is still an entry', () => {
+      const file = path.join(projectDir, '.reverie', 'commands.status.json');
+      const good = fs.readFileSync(file, 'utf8');
+      fs.writeFileSync(file, '{\n<<<<<<< ours\n=======\n>>>>>>> theirs\n}\n');
+      expect(rvr('confirm', 'set', 'commands.status').status).toBe(0);
+      expect(projectFlags()).toEqual(['commands.deploy', 'commands.status']);
+      // The flag-only `set` refuses every write to such a key, this one included.
+      expect(json('set', 'commands.status', '--confirm').error?.code).toBe('STORE_UNREADABLE');
+      // Once the file is repaired the entry is gated.
+      fs.writeFileSync(file, good);
+      expect(rvr('run', 'commands.status').stderr).toContain(REFUSAL);
+      expect(ran('status')).toBe(false);
     });
   });
 
@@ -341,28 +392,40 @@ describe('the confirmation gate follows the entry', () => {
       expect(projectFlags()).toEqual(['commands.deploy']);
     });
 
-    it('--confirm refuses another spelling, a namespace and a missing key', () => {
-      const cases: [string, string, string][] = [
-        ['commands.STATUS', 'NOT_FOUND', "The stored key is 'commands.status'"],
+    it('--confirm refuses a namespace and a key that names no entry, and accepts another case of an entry', () => {
+      const refused: [string, string, string][] = [
         ['commands', 'INVALID_INPUT', 'is a namespace, not an entry'],
         ['commands.statsu', 'NOT_FOUND', 'Cannot update confirm on a non-existent entry'],
       ];
-      for (const [key, code, text] of cases) {
+      for (const [key, code, text] of refused) {
         const r = rvr('set', key, '--confirm');
         expect(r.status).toBe(1);
         expect(r.stderr).toContain(text);
         expect(json('set', key, '--confirm').error?.code).toBe(code);
       }
       expect(projectFlags()).toEqual(['commands.deploy']);
+      expect(rvr('set', 'commands.STATUS', '--confirm').status).toBe(0);
+      expect(projectFlags()).toEqual(['commands.STATUS', 'commands.deploy']);
+      expect(rvr('run', 'commands.status').stderr).toContain(REFUSAL);
     });
 
-    it('--no-confirm under another spelling is refused, and the entry stays gated', () => {
+    it('--no-confirm under another case clears nothing, says the entry is still gated, and leaves it gated', () => {
       const r = rvr('set', 'commands.DEPLOY', '--no-confirm');
       expect(r.status).toBe(1);
-      expect(r.stderr).toContain("The stored key is 'commands.deploy'");
+      expect(r.stderr).toContain("'commands.DEPLOY' still requires confirmation: it is flagged as 'commands.deploy' in the project list");
       expect(projectFlags()).toEqual(['commands.deploy']);
       expect(rvr('run', 'commands.deploy').stderr).toContain(REFUSAL);
       expect(ran('deploy')).toBe(false);
+    });
+
+    it('--no-confirm under the spelling a flag is listed as clears it, though the entry is spelled another way', () => {
+      // What 1.3.0 could leave behind: a flag listed as commands.DEPLOY for
+      // the entry commands.deploy. Clearing it under that name still works.
+      listFlags('commands.DEPLOY');
+      const r = rvr('set', 'commands.DEPLOY', '--no-confirm');
+      expect(r.status).toBe(0);
+      expect(projectFlags()).toEqual([]);
+      expect(rvr('run', 'commands.deploy').status).toBe(0);
     });
 
     it('--no-confirm still clears a flag an older version put on a namespace', () => {
@@ -377,11 +440,12 @@ describe('the confirmation gate follows the entry', () => {
   // ── 3. rename ────────────────────────────────────────────────────────
 
   describe('rename', () => {
-    it('a renamed namespace keeps the flags of the entries under it', () => {
+    it('a renamed namespace: every gated entry under it is flagged under its new key', () => {
       expect(rvr('set', 'commands.db.wipe', touch('wipe'), '--confirm').status).toBe(0);
       const r = rvr('rename', 'commands', 'jobs');
       expect(r.status).toBe(0);
-      expect(projectFlags()).toEqual(['jobs.db.wipe', 'jobs.deploy']);
+      // The old names stay listed: a rename removes no flag.
+      expect(projectFlags()).toEqual(['commands.db.wipe', 'commands.deploy', 'jobs.db.wipe', 'jobs.deploy']);
       for (const key of ['jobs.deploy', 'jobs.db.wipe']) {
         const gated = rvr('run', key);
         expect(gated.status).toBe(1);
@@ -394,10 +458,11 @@ describe('the confirmation gate follows the entry', () => {
       expect(ran('status')).toBe(true);
     });
 
-    it('a renamed entry keeps its flag, and a key sharing its prefix is untouched', () => {
+    it('a renamed entry: flagged under its new key, and a key sharing its prefix is untouched', () => {
       expect(rvr('set', 'commands.deploy2', touch('two'), '--confirm').status).toBe(0);
       expect(rvr('rename', 'commands.deploy', 'commands.ship').status).toBe(0);
-      expect(projectFlags()).toEqual(['commands.deploy2', 'commands.ship']);
+      expect(projectFlags()).toEqual(['commands.deploy', 'commands.deploy2', 'commands.ship']);
+      expect(rvr('run', 'commands.ship').stderr).toContain(REFUSAL);
     });
 
     it('a renamed entry with no flag gains none', () => {
@@ -405,6 +470,33 @@ describe('the confirmation gate follows the entry', () => {
       expect(projectFlags()).toEqual(['commands.deploy']);
       expect(rvr('run', 'commands.state').status).toBe(0);
       expect(ran('status')).toBe(true);
+    });
+
+    it('an entry gated only by a flag under another spelling is flagged under its new key', () => {
+      // Which entries are gated is asked before anything moves: afterwards
+      // the file the other spelling opened is gone, and so is the match.
+      const longS = `command${String.fromCodePoint(0x17f)}.status`;   // U+017F for the `s`
+      listFlags(longS);
+      const gatedBefore = json('run', 'commands.status').error?.code === 'REQUIRES_CONFIRMATION';
+      expect(rvr('rename', 'commands.status', 'commands.state').status).toBe(0);
+      const after = json('run', 'commands.state');
+      if (gatedBefore) expect(after.error?.code).toBe('REQUIRES_CONFIRMATION');
+      else expect(after.ok).toBe(true);   // the spelling opened no file here: nothing was gated, nothing is
+      expect(ran('status')).toBe(!gatedBefore);
+    });
+
+    it('the old name stays gated: an entry created there later, and a reference to it with a default', () => {
+      expect(rvr('set', 'x.run', '${commands.deploy:-' + touch('fallback') + '}').status).toBe(0);
+      expect(rvr('rename', 'commands', 'jobs').status).toBe(0);
+      const viaDefault = rvr('run', 'x.run');
+      expect(viaDefault.status).toBe(1);
+      expect(viaDefault.stderr).toContain(REFUSAL);
+      expect(rvr('set', 'commands.deploy', touch('recreated')).status).toBe(0);
+      const recreated = rvr('run', 'commands.deploy');
+      expect(recreated.status).toBe(1);
+      expect(recreated.stderr).toContain(REFUSAL);
+      expect(ran('fallback')).toBe(false);
+      expect(ran('recreated')).toBe(false);
     });
   });
 
@@ -467,6 +559,34 @@ describe('the confirmation gate follows the entry', () => {
       expect(ran('gdeploy')).toBe(false);
     });
 
+    it('an entry of the same name in another project, gated by the global list: a global rename run from elsewhere', () => {
+      // The global list is read in every project. The rename runs where the
+      // other project's entry cannot be seen, so it cannot tell that the
+      // flag it would move is still needed. It moves nothing: it adds.
+      const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-gate-else-'));
+      try {
+        expect(rvrIn(elsewhere, 'set', '-G', 'shared.deploy', touch('shared-global')).status).toBe(0);
+        expect(rvrIn(elsewhere, 'confirm', 'set', '-G', 'shared.deploy').status).toBe(0);
+        expect(rvr('set', 'shared.deploy', touch('shared-project')).status).toBe(0);
+        expect(rvr('run', 'shared.deploy').stderr).toContain(REFUSAL);
+
+        expect(rvrIn(elsewhere, 'rename', '-G', 'shared', 'moved').status).toBe(0);
+        expect(globalFlags()).toEqual(['moved.deploy', 'shared.deploy']);
+        const r = rvr('run', 'shared.deploy');
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain(REFUSAL);
+        expect(rvrIn(elsewhere, 'run', '-G', 'moved.deploy').stderr).toContain(REFUSAL);
+
+        // The leaf form too.
+        expect(rvrIn(elsewhere, 'rename', '-G', 'moved.deploy', 'moved.ship').status).toBe(0);
+        expect(globalFlags()).toEqual(['moved.deploy', 'moved.ship', 'shared.deploy']);
+        expect(ran('shared-project')).toBe(false);
+        expect(ran('shared-global')).toBe(false);
+      } finally {
+        fs.rmSync(elsewhere, { recursive: true, force: true });
+      }
+    }, SLOW_TEST_MS);
+
     it('remove: a flag spelled another way than the removed entry stays in the list', () => {
       // It is not this entry's name, and it may be another entry's.
       listFlags('commands.DEPLOY');
@@ -522,7 +642,6 @@ describe('the confirmation gate follows the entry', () => {
       });
 
       it('a rename keeps the old flag when the same key in the other store cannot be read', () => {
-        // Whether it is still there cannot be told, so it is.
         expect(rvr('confirm', 'set', 'both.deploy').status).toBe(0);
         fs.writeFileSync(path.join(dataDir, 'store', 'both.deploy.json'), '{\n<<<<<<< ours\n=======\n>>>>>>> theirs\n}\n');
         expect(rvr('rename', 'both.deploy', 'both.ship').status).toBe(0);

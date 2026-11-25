@@ -50,20 +50,48 @@ function entryFileId(dir: string, key: string): string | undefined {
 }
 
 /**
- * The keys among `candidates` that open the same entry file as `key` in some
- * store. `key` itself is not reported. Costs one stat per store for `key`,
- * and one per candidate in each store where `key` opens a file.
+ * For each of `keys`, the `candidates` that open the same entry file in some
+ * store. A key is never matched with itself, and a key with no match is left
+ * out of the result.
+ *
+ * One pass: each candidate's file is looked up once per store, then each key's
+ * once. Asking key by key instead costs keys × candidates lookups, which a
+ * rename of a large namespace turned into seconds.
  */
-export function keysOpeningSameEntry(key: string, candidates: Iterable<string>): string[] {
-  const same = new Set<string>();
-  const others = [...candidates].filter(c => c !== key);
-  if (others.length === 0) return [];
+export function entriesOpenedBy(keys: Iterable<string>, candidates: Iterable<string>): Map<string, string[]> {
+  const matches = new Map<string, string[]>();
+  const wanted = [...candidates];
+  if (wanted.length === 0) return matches;
+  const asked = [...keys];
   for (const dir of storeDirs()) {
-    const id = entryFileId(dir, key);
-    if (id === undefined) continue;
-    for (const candidate of others) {
-      if (entryFileId(dir, candidate) === id) same.add(candidate);
+    const byFile = new Map<string, string[]>();
+    for (const candidate of wanted) {
+      const id = entryFileId(dir, candidate);
+      if (id === undefined) continue;
+      const names = byFile.get(id);
+      if (names) names.push(candidate);
+      else byFile.set(id, [candidate]);
+    }
+    if (byFile.size === 0) continue;
+    for (const key of asked) {
+      // A candidate under this very name needs no lookup, and is not a match.
+      const id = entryFileId(dir, key);
+      if (id === undefined) continue;
+      for (const candidate of byFile.get(id) ?? []) {
+        if (candidate === key) continue;
+        const found = matches.get(key);
+        if (!found) matches.set(key, [candidate]);
+        else if (!found.includes(candidate)) found.push(candidate);
+      }
     }
   }
-  return [...same];
+  return matches;
+}
+
+/**
+ * The keys among `candidates` that open the same entry file as `key` in some
+ * store. `key` itself is not reported.
+ */
+export function keysOpeningSameEntry(key: string, candidates: Iterable<string>): string[] {
+  return entriesOpenedBy([key], candidates).get(key) ?? [];
 }

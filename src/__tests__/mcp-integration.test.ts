@@ -337,7 +337,8 @@ describe('MCP Integration (real I/O)', () => {
       flag('commands.deploy');
       const renamed = callMcpTool('reverie_rename', { oldKey: 'commands', newKey: 'jobs' });
       expect(renamed.isError).toBeFalsy();
-      expect(flagged()).toEqual(['jobs.deploy']);
+      // The old name stays listed: a rename removes no flag.
+      expect(flagged()).toEqual(['commands.deploy', 'jobs.deploy']);
       expect(text(callMcpTool('reverie_run', { key: 'jobs.deploy' }))).toContain('requires confirmation before execution');
       expect(fs.existsSync(marker('deploy'))).toBe(false);
     });
@@ -345,10 +346,21 @@ describe('MCP Integration (real I/O)', () => {
     it('reverie_rename: a renamed entry is flagged when its flag was listed in another case', () => {
       flag('commands.DEPLOY');
       callMcpTool('reverie_rename', { oldKey: 'commands.deploy', newKey: 'commands.ship' });
-      // The old spelling is not the renamed entry's name; it stays.
       expect(flagged()).toEqual(['commands.DEPLOY', 'commands.ship']);
       expect(text(callMcpTool('reverie_run', { key: 'commands.ship' }))).toContain('requires confirmation before execution');
       expect(fs.existsSync(marker('deploy'))).toBe(false);
+    });
+
+    it('reverie_rename: an entry gated only by a flag under another spelling is flagged under its new key', () => {
+      // Which entries are gated is asked before anything moves: afterwards
+      // the file the other spelling opened is gone, and so is the match.
+      const longS = `command${String.fromCodePoint(0x17f)}.deploy`;   // U+017F for the `s`
+      flag(longS);
+      const gatedBefore = text(callMcpTool('reverie_run', { key: 'commands.deploy' })).includes('requires confirmation before execution');
+      callMcpTool('reverie_rename', { oldKey: 'commands.deploy', newKey: 'commands.ship' });
+      const after = text(callMcpTool('reverie_run', { key: 'commands.ship' }));
+      if (gatedBefore) expect(after).toContain('requires confirmation before execution');
+      expect(fs.existsSync(marker('deploy'))).toBe(!gatedBefore);
     });
 
     it('reverie_rename through another spelling of the source: no flagged command comes out unflagged', () => {

@@ -171,12 +171,9 @@ vi.mock('../confirm', () => ({
   hasConfirm: vi.fn((key: string) => mockConfirmKeys[key] === true),
   setConfirm: vi.fn((key: string) => { mockConfirmKeys[key] = true; }),
   removeConfirm: vi.fn((key: string) => { delete mockConfirmKeys[key]; }),
-  moveConfirm: vi.fn((moved: [string, string][]) => {
-    for (const [from, to] of moved) {
-      if (mockConfirmKeys[from] !== true) continue;
-      delete mockConfirmKeys[from];
-      mockConfirmKeys[to] = true;
-    }
+  gatedAmong: vi.fn((keys: string[]) => new Set(keys.filter(k => mockConfirmKeys[k] === true))),
+  moveConfirm: vi.fn((gated: [string, string][]) => {
+    for (const [, to] of gated) mockConfirmKeys[to] = true;
   }),
   loadConfirmKeys: vi.fn(() => ({ ...mockConfirmKeys })),
   saveConfirmKeys: vi.fn((c: any) => {
@@ -489,13 +486,21 @@ describe('MCP Server Tools', () => {
       expect(mockAliases.shortcut).toBe('new');
     });
 
-    it('moves confirm metadata to new key', async () => {
+    it('carries confirm metadata to the new key, and leaves the old name flagged', async () => {
+      // A rename removes no flag: the old name's may be what gates an entry
+      // of that name in another project (confirm.ts).
       Object.assign(mockData, { old: 'echo dangerous' });
       Object.assign(mockConfirmKeys, { old: true as const });
       const result = await toolHandlers['reverie_rename']({ oldKey: 'old', newKey: 'new' });
       expect(result.content[0].text).toContain('Renamed: old -> new');
-      expect(mockConfirmKeys.old).toBeUndefined();
       expect(mockConfirmKeys.new).toBe(true);
+      expect(mockConfirmKeys.old).toBe(true);
+    });
+
+    it('gives an unflagged entry no flag under its new key', async () => {
+      Object.assign(mockData, { plain: 'echo fine' });
+      await toolHandlers['reverie_rename']({ oldKey: 'plain', newKey: 'renamed' });
+      expect(mockConfirmKeys.renamed).toBeUndefined();
     });
 
     it('renames an alias when is_alias is true', async () => {

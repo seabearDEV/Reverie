@@ -474,10 +474,10 @@ confirmCommand
     await withCliInstrumentation(
       { tool: 'reverie_confirm_set', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
-        // The same check `set <key> --confirm` makes: the flag goes on an
-        // entry, spelled as it is stored. This command used to skip it and
-        // report success for a key that named nothing.
-        const problem = commands.confirmTargetProblem(resolvedKey, scope);
+        // The check `set <key> --confirm` makes: the key has to name an entry.
+        // This command used to skip it and report success for a key that
+        // named nothing.
+        const problem = commands.confirmTargetProblem(resolvedKey, scope, true, true);
         if (problem) {
           printError(problem.message, problem.code);
           return undefined;
@@ -499,16 +499,18 @@ confirmCommand
     await withCliInstrumentation(
       { tool: 'reverie_confirm_remove', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
-        removeConfirm(resolvedKey, scope);
+        const removed = removeConfirm(resolvedKey, scope);
         // Removal is exact, so the key can still be gated: by a flag under
         // another spelling, or in the other store's list. This used to
         // print "removed" whatever had happened.
-        const note = commands.stillGatedNote(resolvedKey);
+        const note = commands.stillGatedNote(resolvedKey, removed);
         if (note) {
           printError(note, 'INVALID_INPUT');
           return undefined;
         }
-        console.log(`Confirmation removed from '${resolvedKey}'.`);
+        console.log(removed
+          ? `Confirmation removed from '${resolvedKey}'.`
+          : `'${resolvedKey}' did not require confirmation: no flag is listed for it.`);
         return { key: resolvedKey, confirm: false };
       }
     );
