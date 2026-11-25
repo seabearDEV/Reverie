@@ -136,6 +136,11 @@ export interface CliToolContext {
   params?: Record<string, unknown> | undefined;
   writeValue?: string | undefined;        // explicit after-value for set operations
   copySourceKey?: string | undefined;     // for reverie_copy: source key to pre-capture
+  /** JSON mode: leave the envelope to a later call of this invocation. A
+   *  batch `set` runs one call per pair and writes one envelope, after the
+   *  last, so its `ok` and `error` cover every pair. A deferring call's row
+   *  records no response bytes: it wrote none. */
+  deferEnvelope?: boolean | undefined;
 }
 
 /**
@@ -432,7 +437,9 @@ export async function withCliInstrumentation<T>(
     // has been added by this point.
     let envelopeLine: string | undefined;
     let responseSize = measuredResponseSize;
-    if (jsonMode && !alreadyEmitted()) {
+    if (jsonMode && ctx.deferEnvelope) {
+      responseSize = 0;
+    } else if (jsonMode && !alreadyEmitted()) {
       try {
         envelopeLine = serializeEnvelope();
         responseSize = Buffer.byteLength(envelopeLine, 'utf8');
@@ -525,7 +532,7 @@ export async function withCliInstrumentation<T>(
     // the envelope reaches the real stdout regardless of patch state. ok and
     // any error are derived inside buildEnvelope from exitCode + recorded
     // failure. Idempotent: a no-op if something already emitted.
-    if (jsonMode) {
+    if (jsonMode && !ctx.deferEnvelope) {
       emitEnvelope((s) => { (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(s); }, envelopeLine);
     }
   }

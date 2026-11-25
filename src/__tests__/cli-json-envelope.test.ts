@@ -553,6 +553,35 @@ describe('CLI JSON envelope (#117)', () => {
     }
   });
 
+  it('a batch --json set writes one envelope, and it agrees with the exit status', () => {
+    const { stdout, status } = run('--json set rows.b1=1 __proto__=2 rows.b3=3');
+    expect(status).toBe(1);
+    const env = parse(stdout); // one envelope: the whole of stdout parses
+    expect(env.ok).toBe(false);
+    expect(env.error.code).toBe('RUNTIME');
+    expect(env.error.message).toContain('__proto__');
+    expect(env.result).toEqual({ key: 'rows.b1' });
+    const rows = lastRows('telemetry.jsonl', 3);
+    expect(rows.map(outcome)).toEqual([[true, undefined], [false, 'RUNTIME'], [true, undefined]]);
+    // Written once, after the last pair: that row carries its bytes.
+    expect(rows.map(r => r.responseSize)).toEqual([0, 0, Buffer.byteLength(stdout, 'utf8')]);
+  });
+
+  it('a batch --json set that stops at a malformed pair still reports the failure', () => {
+    const { stdout, status } = run('--json set rows.c1=1 notapair');
+    expect(status).toBe(1);
+    const env = parse(stdout);
+    expect(env.ok).toBe(false);
+    expect(env.error.message).toContain('notapair');
+  });
+
+  it('a batch --json set whose pairs are all stored is ok', () => {
+    const { stdout, status } = run('--json set rows.d1=1 rows.d2=2');
+    expect(status).toBe(0);
+    expect(parse(stdout)).toMatchObject({ ok: true, result: { key: 'rows.d1' } });
+    expect(parse(run('--json get rows.d2').stdout).result).toEqual({ 'rows.d2': '2' });
+  });
+
   it('#206: a config read is not fed to the miss tracker', () => {
     const env = { RVR_SESSION: 'rows-206' };
     expect(run('get rows.nowhere', env).status).toBe(1);                 // opens a window on `rows`

@@ -83,7 +83,8 @@ reverie
     // Batch mode: `set a=1 b=2 c=3`
     if (key.includes('=')) {
       const pairs = [key, ...valueArray];
-      for (const pair of pairs) {
+      for (let i = 0; i < pairs.length; i++) {
+        const pair = pairs[i];
         const eqIdx = pair.indexOf('=');
         if (eqIdx === -1) {
           printError(`Invalid batch pair '${pair}'. Expected key=value format.`);
@@ -98,8 +99,12 @@ reverie
           return;
         }
         const rk = resolveKey(k);
+        // JSON mode: one envelope for the batch, written by the last pair, so
+        // a pair refused after the first still shows in `ok` and `error`. A
+        // malformed pair returns above and leaves it to the finalize step.
+        const deferEnvelope = i < pairs.length - 1;
         await withCliInstrumentation(
-          { tool: 'reverie_set', key: rk, rawKey: k, scope, writeValue: v, params: { key: rk, value: v } },
+          { tool: 'reverie_set', key: rk, rawKey: k, scope, writeValue: v, params: { key: rk, value: v }, deferEnvelope },
           () => commands.setEntry(rk, v, options.force, undefined, undefined, undefined, options.global)
         );
       }
