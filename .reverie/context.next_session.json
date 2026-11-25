@@ -1,7 +1,7 @@
 {
-  "value": "2026-11-24 (9) — Hold lifted: #220–#223 merged, no open PRs, main is the only branch; docs brought current in 53e52ab (direct on main, unreviewed). NEXT: (1) #216 from fresh main; (2) #189 design pass. Three items wait on the owner — see OPEN FOR THE OWNER in project.inFlight. Until 1.4.0 is installed, pipe values or pass \"$(cat f)\".",
+  "value": "2026-11-24 (10) — Tracker organized: milestone 'v1.4.0 — Forum' is the release gate, 13 open (list and order in project.inFlight); 'v1.4.0 — Find' deleted; new #224–#227. NEXT: (1) #216 from fresh main, then the other ready bugs (#224, #225, #202, stats #192 #203 #204 #206); (2) #189 design pass — #215 steps 2–3, #226 and #227 wait on it. Until 1.4.0 is installed, pipe values or pass \"$(cat f)\".",
   "meta": {
     "created": 1777392524252,
-    "updated": 1795577626031
+    "updated": 1795578349384
   }
 }
