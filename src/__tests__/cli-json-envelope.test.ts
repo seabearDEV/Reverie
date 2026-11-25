@@ -410,4 +410,76 @@ describe('CLI JSON envelope (#117)', () => {
       expect(env.result !== undefined, `${cmd}: ok envelope without result`).toBe(true);
     }
   });
+
+  // ── What a row records about the call (#192, #203, #206) ─────────────
+
+  interface Row { tool: string; ns?: string; success?: boolean; errorCode?: string; responseSize?: number; hit?: boolean }
+  const lastRow = (file: string): Row => {
+    const lines = fs.readFileSync(path.join(testDir, file), 'utf8').trim().split('\n');
+    return JSON.parse(lines[lines.length - 1]) as Row;
+  };
+
+  it('#192: a --json read records the bytes of the envelope it wrote, not 0', () => {
+    run('set rows.sized "a value long enough to be worth measuring"');
+    const { stdout } = run('--json get rows.sized');
+    const bytes = Buffer.byteLength(stdout, 'utf8');
+    expect(bytes).toBeGreaterThan(0);
+    expect(lastRow('telemetry.jsonl').responseSize).toBe(bytes);
+    expect(lastRow('audit.jsonl').responseSize).toBe(bytes);
+  });
+
+  it('#192: a --json failure records the bytes of its error envelope', () => {
+    const { stdout } = run('--json get rows.absent');
+    expect(parse(stdout).ok).toBe(false);
+    expect(lastRow('telemetry.jsonl').responseSize).toBe(Buffer.byteLength(stdout, 'utf8'));
+  });
+
+  it('#203: a read of a missing key is recorded as NOT_FOUND, in text and JSON mode', () => {
+    for (const args of ['get rows.absent', '--json get rows.absent']) {
+      expect(run(args).status, args).toBe(1);
+      for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+        const row = lastRow(file);
+        expect(row.tool, `${args} ${file}`).toBe('reverie_get');
+        expect(row.success, `${args} ${file}`).toBe(false);
+        expect(row.errorCode, `${args} ${file}`).toBe('NOT_FOUND');
+      }
+    }
+  });
+
+  it('#203: a different failure carries a different code', () => {
+    expect(run('context --tier bogus').status).toBe(1);
+    expect(lastRow('telemetry.jsonl').errorCode).toBe('INVALID_INPUT');
+    expect(lastRow('audit.jsonl').errorCode).toBe('INVALID_INPUT');
+  });
+
+  it('#203: a refused write keeps its code in text mode', () => {
+    // No --global and no project: the write is refused (#99). `run` would add
+    // --global, so spawn directly.
+    let status = 0;
+    try {
+      execSync('bun dist/index.js set rows.refused "v"', { env: baseEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e: unknown) {
+      status = (e as { status?: number }).status ?? 1;
+    }
+    expect(status).toBe(1);
+    expect(lastRow('telemetry.jsonl').errorCode).toBe('PROJECT_UNRESOLVED');
+    expect(lastRow('audit.jsonl').errorCode).toBe('PROJECT_UNRESOLVED');
+  });
+
+  it('#203: a call that succeeds carries no error code', () => {
+    run('set rows.fine "v"');
+    expect(run('get rows.fine').status).toBe(0);
+    for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+      const row = lastRow(file);
+      expect(row.success, file).toBe(true);
+      expect('errorCode' in row, file).toBe(false);
+    }
+  });
+
+  it('#206: a config setting name is not recorded as a namespace', () => {
+    expect(run('config set bootstrap_gist_chars 120').status).toBe(0);
+    const row = lastRow('telemetry.jsonl');
+    expect(row.tool).toBe('reverie_config_set');
+    expect(row.ns).toBe('*');
+  });
 });

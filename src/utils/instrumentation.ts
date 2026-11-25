@@ -13,7 +13,7 @@ import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
 import { color } from '../formatting';
 import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, takeWriteRefused, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
-import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError, takeSignals } from './output';
+import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError, takeSignals, takeErrorCode, envelopeByteLength, alreadyEmitted } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
@@ -254,11 +254,15 @@ export async function withCliInstrumentation<T>(
   let success = true;
   let errorMsg: string | undefined;
   let refusedReason: string | undefined;
+  let thrownCode: string | undefined;
   try {
     result = await Promise.resolve(fn());
   } catch (err) {
     success = false;
     errorMsg = String(err);
+    thrownCode = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
+      : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
+      : 'RUNTIME';
     if (err instanceof ProjectResolutionError) {
       refusedReason = 'project_unresolved';
     } else if (err instanceof StoreUnreadableError) {
@@ -319,12 +323,13 @@ export async function withCliInstrumentation<T>(
       after = captureBulkCount(scope);
     }
 
-    // Compute metrics. responseSize is the actual stdout byte count
-    // captured by the wrapper above (matches the MCP wrapper's "bytes
-    // returned to caller" semantic). Falls back to undefined if no
-    // measurement happened (shouldn't occur in practice — every code
-    // path through this wrapper installs a measurement).
-    const responseSize = measuredResponseSize;
+    // The code the failure was reported with (#203): what the handler passed
+    // to printError / failJson, else the class of what it threw, else RUNTIME
+    // for an exit code set with no report — the same fallback the envelope
+    // uses. Always taken, so a code never outlives its invocation.
+    const reportedCode = takeErrorCode();
+    const errorCode = success ? undefined : (reportedCode ?? thrownCode ?? 'RUNTIME');
+
     const requestSize = ctx.params ? Buffer.byteLength(JSON.stringify(ctx.params), 'utf8') : undefined;
 
     // Hit detection for reads
@@ -392,6 +397,24 @@ export async function withCliInstrumentation<T>(
       }
     }
 
+    // #120: derive the envelope result from the handler's return value.
+    // Populating `result` stops being per-site setResult discipline —
+    // a handler that returns its payload gets it into the envelope.
+    // Explicit setResult/failJson still win (handlers that need a result
+    // alongside an error, or a result shaped differently from the value
+    // they return to the wrapper for hit detection, e.g. searchEntries).
+    // Done before the rows are written so the envelope can be measured.
+    if (jsonMode && success && !hasError() && result !== undefined && !hasResult()) {
+      setResult(result);
+    }
+
+    // Bytes returned to the caller, the MCP wrapper's semantic. In text mode
+    // that is what the handler wrote to stdout. In JSON mode the handler's
+    // stdout is swallowed and the caller receives the envelope, which is
+    // written below, after the rows — so measure it here (#192). Every
+    // warning has been added by this point.
+    const responseSize = jsonMode && !alreadyEmitted() ? envelopeByteLength() : measuredResponseSize;
+
     // Telemetry
     const projectFile = findProjectFile();
     const resolvedScope: 'project' | 'global' | undefined = scope === 'auto'
@@ -409,6 +432,8 @@ export async function withCliInstrumentation<T>(
       hit,
       redundant,
       responseSize,
+      success,
+      ...(errorCode !== undefined && { errorCode }),
       project: projectFile ? path.dirname(projectFile) : undefined,
       refusedReason,
       rescuedByExplicitGlobal,
@@ -430,6 +455,7 @@ export async function withCliInstrumentation<T>(
       before: isWrite ? before : undefined,
       after: isWrite ? after : undefined,
       error: errorMsg,
+      ...(errorCode !== undefined && { errorCode }),
       duration,
       aliasResolved,
       responseSize,
@@ -471,15 +497,6 @@ export async function withCliInstrumentation<T>(
     // any error are derived inside buildEnvelope from exitCode + recorded
     // failure. Idempotent: a no-op if something already emitted.
     if (jsonMode) {
-      // #120: derive the envelope result from the handler's return value.
-      // Populating `result` stops being per-site setResult discipline —
-      // a handler that returns its payload gets it into the envelope.
-      // Explicit setResult/failJson still win (handlers that need a result
-      // alongside an error, or a result shaped differently from the value
-      // they return to the wrapper for hit detection, e.g. searchEntries).
-      if (success && !hasError() && result !== undefined && !hasResult()) {
-        setResult(result);
-      }
       emitEnvelope((s) => { (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(s); });
     }
   }

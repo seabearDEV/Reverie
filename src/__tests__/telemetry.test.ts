@@ -11,7 +11,7 @@ vi.mock('../utils/paths', () => ({
 }));
 
 // Import after mocks
-import { logToolCall, loadTelemetry, computeStats, TelemetryEntry } from '../utils/telemetry';
+import { logToolCall, loadTelemetry, computeStats, TelemetryEntry, BYTES_PER_TOKEN } from '../utils/telemetry';
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-telemetry-'));
@@ -503,10 +503,10 @@ describe('computeStats', () => {
       { ts: now - 80, tool: 'reverie_get', session: 's1', op: 'read', ns: 'b', hit: false, responseSize: 100 },
     ]);
     const stats = computeStats();
-    // hits: 400 + 2000 = 2400 bytes / 4 = 600 tokens
-    expect(stats.estimatedTokensSaved).toBe(600);
-    // bootstrap: 2000 / 4 = 500 tokens
-    expect(stats.estimatedTokensSavedBootstrap).toBe(500);
+    // hits: 400 + 2000 = 2400 bytes / BYTES_PER_TOKEN (3) = 800 tokens
+    expect(stats.estimatedTokensSaved).toBe(800);
+    // bootstrap: 2000 / 3 = 666.7, rounded
+    expect(stats.estimatedTokensSavedBootstrap).toBe(667);
   });
 
   it('computes exploration tokens saved by namespace', () => {
@@ -591,5 +591,55 @@ describe('computeStats', () => {
     expect(stats.mcpSessions).toBe(0);
     expect(stats.bootstrapRate).toBe(0);
     expect(stats.writeBackRate).toBe(0);
+  });
+});
+
+describe('what a row is counted as (#203, #204, #206)', () => {
+  const seed = (rows: Partial<TelemetryEntry>[]) => {
+    const now = Date.now();
+    const lines = rows.map((r, i) => JSON.stringify({ ts: now - 1000 + i, session: 's1', op: 'read', ns: 'arch', tool: 'reverie_get', ...r }));
+    fs.writeFileSync(path.join(tmpDir, 'telemetry.jsonl'), lines.join('\n') + '\n');
+  };
+
+  it('#206: logToolCall files a config tool under no namespace', async () => {
+    await logToolCall('reverie_config_set', 'bootstrap_max_response_bytes', 'cli');
+    await logToolCall('reverie_config_get', 'bootstrap_gist_chars', 'cli');
+    const rows = fs.readFileSync(path.join(tmpDir, 'telemetry.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as TelemetryEntry);
+    expect(rows.map(r => r.ns)).toEqual(['*', '*']);
+  });
+
+  it('#206: rows already logged with a config key as their namespace are left out of coverage', () => {
+    seed([
+      { tool: 'reverie_config_set', op: 'write', ns: 'bootstrap_max_response_bytes' },
+      { tool: 'reverie_config_set', op: 'write', ns: 'bootstrap_max_response_bytes' },
+      { tool: 'reverie_set', op: 'write', ns: 'arch' },
+    ]);
+    expect(Object.keys(computeStats().namespaceCoverage)).toEqual(['arch']);
+  });
+
+  it('#203: misses are split by what went wrong', () => {
+    seed([
+      { hit: true, success: true },
+      { hit: false, success: false, errorCode: 'NOT_FOUND' },
+      { hit: false, success: false, errorCode: 'NOT_FOUND' },
+      { hit: false, success: false, errorCode: 'STORE_UNREADABLE' },
+      { hit: false, success: true, tool: 'reverie_find' },   // a search that matched nothing
+      { hit: false },                                        // logged before rows carried a code
+    ]);
+    const stats = computeStats();
+    expect(stats.misses).toBe(5);
+    expect(stats.missesByCode).toEqual({ NOT_FOUND: 2, STORE_UNREADABLE: 1, empty: 1, unrecorded: 1 });
+  });
+
+  it('#204: every token estimate divides by the one constant', () => {
+    expect(BYTES_PER_TOKEN).toBe(3);
+    seed([
+      { hit: true, responseSize: 300 },
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 3000 },
+    ]);
+    const stats = computeStats();
+    expect(stats.estimatedTokensSaved).toBe(1100);          // (300 + 3000) / 3
+    expect(stats.estimatedTokensSavedBootstrap).toBe(1000); // 3000 / 3
+    expect(stats.deliveryCostTokens).toBe(1100);
   });
 });

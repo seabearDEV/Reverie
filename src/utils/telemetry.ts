@@ -31,8 +31,13 @@ export interface TelemetryEntry {
    *  than an explicit RVR_SESSION (#207). Absent on per-process sessions. */
   sessionDetected?: boolean | undefined;
   /** Whether the operation succeeded. Optional for backward compat with
-   *  pre-v1.11.x telemetry that didn't carry this field. */
+   *  pre-v1.11.x telemetry that didn't carry this field. CLI rows carry it
+   *  from #203 on; before that only MCP rows did. */
   success?: boolean | undefined;
+  /** The code the call failed with (#203) — the envelope's error codes, so a
+   *  read of a missing key (NOT_FOUND) can be told from any other failed
+   *  read. Absent on success, and on a failure that reported no code. */
+  errorCode?: string | undefined;
   /** Refusal reason on failed writes (#99). Currently the only value is
    *  'project_unresolved' for ProjectResolutionError refusals; future codes
    *  can be added here as additional guardrails land. */
@@ -255,6 +260,23 @@ export class MissWindowTracker {
  * Extract the top-level namespace from a dot-notation key.
  * "arch.mcp" → "arch", undefined/empty → "*"
  */
+/**
+ * Estimated bytes per token for every token figure `stats` reports (#204).
+ * Reporting only — no behaviour depends on it. Measured ~2.35 on a dense
+ * store (dotted keys, identifiers, dates, with a reader's line-number
+ * prefixes) and ~4 on prose; 3 sits between, so an estimate is off by at
+ * most about a third either way rather than understating a dense store's
+ * cost by 40%.
+ */
+export const BYTES_PER_TOKEN = 3;
+
+/**
+ * Tools whose `key` is not an entry key (#206). A config setting name such as
+ * `bootstrap_max_response_bytes` has no namespace; filing it under one made
+ * `stats` list the setting as a namespace with writes.
+ */
+const NON_ENTRY_KEY_TOOLS: ReadonlySet<string> = new Set(['reverie_config_get', 'reverie_config_set']);
+
 export function extractNamespace(key?: string): string {
   if (!key) return '*';
   const dot = key.indexOf('.');
@@ -294,7 +316,7 @@ export function getExplorationCost(namespace: string, missPaths?: MissPath[]): E
     mp => mp.resolution === 'writeback' && mp.namespace === namespace,
   );
   if (relevant.length >= MIN_OBSERVED_SAMPLES) {
-    const costs = relevant.map(mp => mp.explorationBytes / 4).sort((a, b) => a - b);
+    const costs = relevant.map(mp => mp.explorationBytes / BYTES_PER_TOKEN).sort((a, b) => a - b);
     const median = costs[Math.floor(costs.length / 2)];
     return { cost: Math.round(median), source: 'observed', samples: relevant.length };
   }
@@ -355,6 +377,7 @@ export interface TelemetryExtras {
   redundant?: boolean | undefined;
   responseSize?: number | undefined;
   success?: boolean | undefined;
+  errorCode?: string | undefined;
   refusedReason?: string | undefined;
   rescuedByExplicitGlobal?: boolean | undefined;
   degraded?: boolean | undefined;
@@ -386,7 +409,7 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     session: getSessionId(),
     ...(isSessionDetected() && { sessionDetected: true }),
     op: classifyOp(tool),
-    ns: extractNamespace(key),
+    ns: NON_ENTRY_KEY_TOOLS.has(tool) ? '*' : extractNamespace(key),
     src: source,
     scope,
     agent: identity.agent,
@@ -435,6 +458,10 @@ export interface TelemetryStats {
   hitRate: number | undefined;
   hits: number;
   misses: number;
+  /** Misses by cause (#203): an error code for a failed read (NOT_FOUND, …),
+   *  `empty` for a read that succeeded and matched nothing, `unrecorded` for
+   *  rows logged before rows carried a code. */
+  missesByCode: Record<string, number>;
   redundantRate: number | undefined;
   redundantWrites: number;
   avgSessionCalls: number | undefined;
@@ -560,6 +587,8 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
     if (e.success === false) continue;
     if (e.tool === 'reverie_find') continue;
     if (e.tool === 'reverie_alias_set' || e.tool === 'reverie_alias_remove') continue;
+    // Rows logged before #206 carry the config key as their namespace.
+    if (NON_ENTRY_KEY_TOOLS.has(e.tool)) continue;
     if (!nsCoverage[e.ns]) nsCoverage[e.ns] = { reads: 0, writes: 0, lastWrite: undefined };
     if (e.op === 'read') nsCoverage[e.ns].reads++;
     if (e.op === 'write') {
@@ -602,6 +631,13 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
   const readsWithHit = entries.filter(e => e.op === 'read' && e.hit !== undefined);
   const hits = readsWithHit.filter(e => e.hit === true).length;
   const misses = readsWithHit.filter(e => e.hit === false).length;
+  // Null-prototype, see nsCoverage rationale above.
+  const missesByCode = Object.create(null) as Record<string, number>;
+  for (const e of readsWithHit) {
+    if (e.hit !== false) continue;
+    const cause = e.errorCode ?? (e.success === true ? 'empty' : 'unrecorded');
+    missesByCode[cause] = (missesByCode[cause] ?? 0) + 1;
+  }
   const hitRate = readsWithHit.length > 0 ? hits / readsWithHit.length : undefined;
 
   // Redundant write rate
@@ -637,16 +673,16 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
   const mcpSessions = mcpSessionData.size;
   const period = periodDays > 0 ? `${periodDays}d` : 'all';
 
-  // Token savings estimate: response bytes from cache hits / ~4 bytes per token
+  // Token savings estimate: response bytes from cache hits / BYTES_PER_TOKEN
   const estimatedTokensSaved = Math.round(
     entries
       .filter(e => e.op === 'read' && e.hit === true && e.responseSize !== undefined)
-      .reduce((sum, e) => sum + e.responseSize!, 0) / 4
+      .reduce((sum, e) => sum + e.responseSize!, 0) / BYTES_PER_TOKEN
   );
   const estimatedTokensSavedBootstrap = Math.round(
     entries
       .filter(e => e.tool === 'reverie_context' && e.hit === true && e.responseSize !== undefined)
-      .reduce((sum, e) => sum + e.responseSize!, 0) / 4
+      .reduce((sum, e) => sum + e.responseSize!, 0) / BYTES_PER_TOKEN
   );
 
   // Exploration-weighted token savings (namespace-aware, calibrated when possible)
@@ -662,7 +698,7 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
   for (const e of readHits) {
     if (e.tool === 'reverie_context') {
       // Bootstrap: approximate entry count from response size, each avoids ~1 lookup
-      const deliveryCost = (e.responseSize ?? 0) / 4;
+      const deliveryCost = (e.responseSize ?? 0) / BYTES_PER_TOKEN;
       const approxEntries = Math.round((e.responseSize ?? 0) / 80);
       const explorationCost = Math.max(deliveryCost, approxEntries * BOOTSTRAP_PER_ENTRY_COST);
       const rounded = Math.round(explorationCost);
@@ -752,6 +788,7 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
     hitRate,
     hits,
     misses,
+    missesByCode,
     redundantRate,
     redundantWrites,
     avgSessionCalls,

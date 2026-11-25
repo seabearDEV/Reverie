@@ -6,7 +6,7 @@ import { Scope, loadEntries, saveEntries, loadEntriesMerged, findProjectFile, sa
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, ProjectResolutionError } from './projectResolution';
 import { StoreUnreadableError, markUnreadableShown, noteWriteRefused, readForWrite } from './utils/unreadable';
-import { isJsonMode, failJson } from './utils/output';
+import { isJsonMode, failJson, recordErrorCode } from './utils/output';
 
 export type { Scope } from './store';
 
@@ -40,6 +40,7 @@ export function handleError(message: string, error: unknown, context?: string): 
     if (isJsonMode()) {
       failJson('STORE_UNREADABLE', errorText);
     } else {
+      recordErrorCode('STORE_UNREADABLE');
       console.error(`${color.red('✗ ')}${errorText}`);
       process.exitCode = 1;
     }
@@ -56,6 +57,9 @@ export function handleError(message: string, error: unknown, context?: string): 
     failJson(code, `${contextPrefix}${message} ${errorText}`.trim()); // failJson sets exitCode=1
     return;
   }
+
+  // Text mode: keep the same code for the telemetry and audit rows (#203).
+  recordErrorCode(error instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED' : 'RUNTIME');
 
   if (process.env.DEBUG === 'true') {
     console.error(`${color.red(contextPrefix + message)}: ${errorText}`);

@@ -230,11 +230,11 @@ describe('computeStats — net savings and calibration', () => {
   it('computes deliveryCostTokens and netTokensSaved', () => {
     const now = Date.now();
     writeEntries([
-      // Read hit with responseSize → delivery cost = 400/4 = 100 tokens
-      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'arch', hit: true, responseSize: 400 },
+      // Read hit with responseSize → delivery cost = 300 / BYTES_PER_TOKEN (3) = 100 tokens
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'arch', hit: true, responseSize: 300 },
     ]);
     const stats = computeStats();
-    // deliveryCost = estimatedTokensSaved = 400/4 = 100
+    // deliveryCost = estimatedTokensSaved = 300/3 = 100
     expect(stats.deliveryCostTokens).toBe(100);
     // estimatedTotalTokensSaved uses EXPLORATION_COST[arch] = 3000 for the one hit
     expect(stats.estimatedTotalTokensSaved).toBe(3000);
@@ -246,10 +246,10 @@ describe('computeStats — net savings and calibration', () => {
     const now = Date.now();
     // Large response for a cheap namespace (project: 500 tokens)
     writeEntries([
-      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'project', hit: true, responseSize: 4000 },
+      { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'project', hit: true, responseSize: 3000 },
     ]);
     const stats = computeStats();
-    // deliveryCost = 4000/4 = 1000
+    // deliveryCost = 3000/3 = 1000
     // exploration = EXPLORATION_COST[project] = 500
     // net = 500 - 1000 = -500
     expect(stats.netTokensSaved).toBe(-500);
@@ -273,10 +273,10 @@ describe('computeStats — net savings and calibration', () => {
     writeEntries([
       { ts: now, tool: 'reverie_get', session: 's1', op: 'read', ns: 'arch', hit: true, responseSize: 100 },
     ]);
-    // 6 writeback miss-paths for arch with explorationBytes = 800 each → 800/4 = 200 tokens median
+    // 6 writeback miss-paths for arch with explorationBytes = 600 each → 600/3 = 200 tokens median
     writeMissPaths(Array.from({ length: 6 }, (_, i) => ({
       ts: i, session: `s${i}`, namespace: 'arch', key: 'arch.x',
-      toolCalls: 2, explorationBytes: 800,
+      toolCalls: 2, explorationBytes: 600,
       resolution: 'writeback' as const, resolvedAt: i + 100,
     })));
     const stats = computeStats();

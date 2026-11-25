@@ -717,4 +717,33 @@ describe('MCP Integration (real I/O)', () => {
       expect(r.content).toHaveLength(1);
     });
   });
+
+  // ── #203: the error code reaches the telemetry and audit rows ────────
+  describe('what a failed call is recorded as (#203)', () => {
+    interface Row { tool: string; success?: boolean; errorCode?: string }
+    const lastRow = (file: string): Row => {
+      const lines = fs.readFileSync(path.join(tmpDir, file), 'utf8').trim().split('\n');
+      return JSON.parse(lines[lines.length - 1]) as Row;
+    };
+
+    it('a read of a missing key is NOT_FOUND on both rows', () => {
+      const r = callMcpTool('reverie_get', { key: 'rows203.absent' });
+      expect(r.isError).toBe(true);
+      for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+        const row = lastRow(file);
+        expect(row.tool, file).toBe('reverie_get');
+        expect(row.success, file).toBe(false);
+        expect(row.errorCode, file).toBe('NOT_FOUND');
+      }
+    });
+
+    it('a call that succeeds carries no code, and the client payload is unchanged', () => {
+      callMcpTool('reverie_set', { key: 'rows203.present', value: 'v' });
+      const r = callMcpTool('reverie_get', { key: 'rows203.present' });
+      expect(r.isError).toBeUndefined();
+      expect('errorCode' in lastRow('telemetry.jsonl')).toBe(false);
+      const miss = callMcpTool('reverie_get', { key: 'rows203.absent' });
+      expect(Object.keys(miss).sort()).toEqual(['content', 'isError']);
+    });
+  });
 });

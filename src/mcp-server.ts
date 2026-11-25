@@ -44,6 +44,7 @@ import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPa
 import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
+import type { ErrorCode } from "./utils/output";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
 import type { CodexValue } from "./types";
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapListed, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, readForWrite, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
@@ -60,8 +61,14 @@ function toScope(scopeParam?: string): Scope {
 function textResponse(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
-function errorResponse(text: string) {
-  return { content: [{ type: "text" as const, text }], isError: true };
+// The code an error result carries for the telemetry and audit rows (#203).
+// Kept beside the result, not in it: the client's payload is unchanged.
+const errorCodes = new WeakMap<object, ErrorCode>();
+
+function errorResponse(text: string, code?: ErrorCode) {
+  const response = { content: [{ type: "text" as const, text }], isError: true };
+  if (code !== undefined) errorCodes.set(response, code);
+  return response;
 }
 
 /**
@@ -106,13 +113,15 @@ function storeUnreadableErrorResponse(err: StoreUnreadableError) {
     attempted: err.attempted,
     files: err.files.map(f => ({ kind: f.kind, ...(f.key !== undefined && { key: f.key }), file: f.path, reason: f.reason })),
   }, null, 2);
-  return {
+  const response = {
     content: [
       { type: "text" as const, text: err.message },
       { type: "text" as const, text: '```json\n' + structured + '\n```' },
     ],
     isError: true,
   };
+  errorCodes.set(response, 'STORE_UNREADABLE');
+  return response;
 }
 
 /**
@@ -124,13 +133,15 @@ function storeUnreadableErrorResponse(err: StoreUnreadableError) {
  */
 function projectResolutionErrorResponse(err: ProjectResolutionError) {
   const structured = JSON.stringify({ code: err.code, diagnostic: err.diagnostic }, null, 2);
-  return {
+  const response = {
     content: [
       { type: "text" as const, text: err.message },
       { type: "text" as const, text: '```json\n' + structured + '\n```' },
     ],
     isError: true,
   };
+  errorCodes.set(response, 'PROJECT_UNRESOLVED');
+  return response;
 }
 
 ensureDataDirectoryExists();
@@ -371,6 +382,8 @@ server.tool = ((...args: any[]) => {
       const tier = name === 'reverie_context' ? (params.tier as string ?? 'standard') : undefined;
       const entryCount = op === 'read' && success ? extractEntryCount(responseText) : undefined;
       const redundant = isRedundantWrite(name, op, params, before, after);
+      // #203: the code the failure carries, when its response was built with one.
+      const errorCode = !success && result !== null && typeof result === 'object' ? errorCodes.get(result) : undefined;
 
       // Consume any guardrail signals stashed by the handler (#100/#101).
       const guardrails = guardrailSignals;
@@ -383,6 +396,7 @@ server.tool = ((...args: any[]) => {
         redundant,
         responseSize,
         success,
+        ...(errorCode !== undefined && { errorCode }),
         project: projectFile ? path.dirname(projectFile) : undefined,
         refusedReason,
         rescuedByExplicitGlobal,
@@ -401,6 +415,7 @@ server.tool = ((...args: any[]) => {
         before: isWrite ? before : undefined,
         after: isWrite ? after : undefined,
         error: errorMsg,
+        ...(errorCode !== undefined && { errorCode }),
         params: sanitizeParams(params),
         duration,
         aliasResolved,
@@ -593,7 +608,7 @@ server.tool(
       const value = getValue(resolvedKey, lookupScope);
 
       if (value === undefined) {
-        return errorResponse(`Key '${key}' not found.`);
+        return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
       }
 
       // Leaf value
@@ -672,7 +687,7 @@ server.tool(
         assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases']);
         const aliases = loadAliases(scope);
         if (!(key in aliases)) {
-          return errorResponse(`Alias '${key}' not found.`);
+          return errorResponse(`Alias '${key}' not found.`, 'NOT_FOUND');
         }
         delete aliases[key];
         saveAliases(aliases, scope);
@@ -691,7 +706,7 @@ server.tool(
       }
       const removed = removeValue(resolvedKey, scope);
       if (!removed) {
-        return errorResponse(`Key '${key}' not found.`);
+        return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
       }
       // Cascade delete: remove any aliases and confirm metadata for this key or its children
       removeAliasesForKey(resolvedKey, scope);
@@ -722,7 +737,7 @@ server.tool(
       const value = getValue(resolvedSource, scope);
 
       if (value === undefined) {
-        return errorResponse(`Key '${source}' not found.`);
+        return errorResponse(`Key '${source}' not found.`, 'NOT_FOUND');
       }
 
       // #215: a destination that does not parse is a refused write, not a
@@ -776,7 +791,7 @@ server.tool(
         if (!result) {
           const aliases = loadAliases(scope);
           if (!(oldKey in aliases)) {
-            return errorResponse(`Alias '${oldKey}' not found.`);
+            return errorResponse(`Alias '${oldKey}' not found.`, 'NOT_FOUND');
           }
           return errorResponse(`Alias '${newKey}' already exists.`);
         }
@@ -790,7 +805,7 @@ server.tool(
       assertSubtreeReadable(() => resolveScopeForWrite(scope), resolvedOld, 'rename');
       const value = getValue(resolvedOld, scope);
       if (value === undefined) {
-        return errorResponse(`Key '${oldKey}' not found.`);
+        return errorResponse(`Key '${oldKey}' not found.`, 'NOT_FOUND');
       }
 
       const existing = readForWrite<CodexValue | undefined, Scope>(s => getValue(newKey, s), scope, () => resolveScopeForWrite(scope)); // #215, as reverie_copy
@@ -965,7 +980,7 @@ server.tool(
       const scope = toScope(scopeParam);
       const removed = removeAlias(alias, scope);
       if (!removed) {
-        return errorResponse(`Alias '${alias}' not found.`);
+        return errorResponse(`Alias '${alias}' not found.`, 'NOT_FOUND');
       }
       return textResponse(`Alias removed: ${alias}`);
     } catch (err) {
@@ -1101,7 +1116,7 @@ server.tool(
     const value = getValue(resolvedKey, scope);
 
     if (value === undefined) {
-      return errorResponse(`Key '${key}' not found.`);
+      return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
     }
     if (typeof value !== "string") {
       return errorResponse(`Value at '${key}' is not a string command.`);
@@ -1123,7 +1138,7 @@ server.tool(
       for (const ck of chainKeys) {
         const rk = resolveKey(ck, scope);
         const cv = getValue(rk, scope);
-        if (cv === undefined) return errorResponse(`Chain key '${ck}' not found.`);
+        if (cv === undefined) return errorResponse(`Chain key '${ck}' not found.`, 'NOT_FOUND');
         if (typeof cv !== 'string') return errorResponse(`Chain key '${ck}' is not a string command.`);
         if (isEncrypted(cv)) return errorResponse(`Chain key '${ck}' is encrypted.`);
         if (hasConfirm(rk)) anyNeedsConfirm = true;

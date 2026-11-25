@@ -293,12 +293,12 @@ describe('getExplorationCost', () => {
   });
 
   it('returns observed median when >= 5 writeback samples', () => {
-    // explorationBytes: [400, 800, 1200, 1600, 2000]
-    // tokens (÷4):      [100, 200,  300,  400,  500]
+    // explorationBytes: [300, 600, 900, 1200, 1500]
+    // tokens (÷3):      [100, 200, 300,  400,  500]   (BYTES_PER_TOKEN)
     // median (index 2):  300
     const missPaths: MissPath[] = Array.from({ length: 5 }, (_, i) => ({
       ts: i, session: `s${i}`, namespace: 'files', key: 'files.x',
-      toolCalls: 2, explorationBytes: (i + 1) * 400,
+      toolCalls: 2, explorationBytes: (i + 1) * 300,
       resolution: 'writeback' as const, resolvedAt: i + 100,
     }));
     const result = getExplorationCost('files', missPaths);
@@ -336,19 +336,19 @@ describe('getExplorationCost', () => {
     const missPaths: MissPath[] = [
       ...Array.from({ length: 6 }, (_, i) => ({
         ts: i, session: `s${i}`, namespace: 'arch', key: 'arch.x',
-        toolCalls: 2, explorationBytes: 2000,
+        toolCalls: 2, explorationBytes: 1500,
         resolution: 'writeback' as const, resolvedAt: i + 100,
       })),
       ...Array.from({ length: 6 }, (_, i) => ({
         ts: i + 100, session: `s${i + 100}`, namespace: 'files', key: 'files.x',
-        toolCalls: 1, explorationBytes: 800,
+        toolCalls: 1, explorationBytes: 600,
         resolution: 'writeback' as const, resolvedAt: i + 200,
       })),
     ];
     const archResult = getExplorationCost('arch', missPaths);
     const filesResult = getExplorationCost('files', missPaths);
-    expect(archResult.cost).toBe(500); // 2000/4 = 500
-    expect(filesResult.cost).toBe(200); // 800/4 = 200
+    expect(archResult.cost).toBe(500); // 1500/3 = 500
+    expect(filesResult.cost).toBe(200); // 600/3 = 200
     expect(archResult.source).toBe('observed');
     expect(filesResult.source).toBe('observed');
   });

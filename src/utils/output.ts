@@ -121,6 +121,7 @@ export function configureOutput(opts: { json: boolean; command: string }): void 
 export function resetOutput(): void {
   state = freshState();
   signals = {};
+  reportedErrorCode = undefined;
 }
 
 export function isJsonMode(): boolean {
@@ -167,6 +168,23 @@ export function failJson(code: ErrorCode, message: string, preview?: string): vo
   process.exitCode = 1;
 }
 
+// The code a failure was reported with outside JSON mode (#203). In JSON mode
+// the envelope's error holds it; in text mode printError writes a line to
+// stderr and the code would otherwise be lost before the telemetry and audit
+// rows are written.
+let reportedErrorCode: ErrorCode | undefined;
+
+export function recordErrorCode(code: ErrorCode): void {
+  reportedErrorCode = code;
+}
+
+/** The code this invocation failed with, if any was reported. Clears it. */
+export function takeErrorCode(): ErrorCode | undefined {
+  const code = state.error?.code ?? reportedErrorCode;
+  reportedErrorCode = undefined;
+  return code;
+}
+
 export function hasError(): boolean {
   return state.error !== undefined;
 }
@@ -207,8 +225,20 @@ export function alreadyEmitted(): boolean {
 export function emitEnvelope(write?: (s: string) => void): void {
   if (state.emitted) return;
   state.emitted = true;
-  const out = buildEnvelope();
-  const line = JSON.stringify(out, null, 2) + '\n';
+  const line = serializeEnvelope();
   if (write) write(line);
   else process.stdout.write(line);
+}
+
+function serializeEnvelope(): string {
+  return JSON.stringify(buildEnvelope(), null, 2) + '\n';
+}
+
+/**
+ * Bytes emitEnvelope will write, given the state as it stands (#192). The
+ * wrapper calls this once the result and every warning are recorded, so the
+ * telemetry and audit rows carry the size of what the caller receives.
+ */
+export function envelopeByteLength(): number {
+  return Buffer.byteLength(serializeEnvelope(), 'utf8');
 }

@@ -149,7 +149,9 @@ Delivery cost:   ~12.3K tokens (context delivered to agent)
 
 **What it measures:** The token cost of Reverie itself — the data it pushes into the agent's context window on cache hits. Every `reverie_context` or `reverie_get` hit returns data that consumes agent tokens.
 
-**How it's calculated:** `sum(responseSize for all hit reads) / 4`
+**How it's calculated:** `sum(responseSize for all hit reads) / 3`
+
+Every token figure in `rvr stats` divides bytes by one constant, `BYTES_PER_TOKEN` = 3. Measured density runs from about 2.35 bytes per token on a dense store (dotted keys, identifiers, dates) to about 4 on prose; 3 sits between, so an estimate is off by at most about a third either way. It is used for reporting only.
 
 **Why it matters:** Token savings aren't free. If Reverie delivers 50KB of context but only saves the agent from 30KB of exploration, the net effect is negative. Delivery cost creates a natural pressure to keep the knowledge base lean and high-signal. Storing 500 low-value entries inflates delivery cost and erodes net savings.
 
@@ -254,7 +256,7 @@ The static multipliers above are educated guesses. Reverie replaces them with **
 | **moved_on** | Agent gets a hit on any key | Agent found what it needed elsewhere |
 | **timeout** | 5 minutes elapse with no resolution | Agent abandoned the search or session ended |
 
-The exploration cost for each closed miss window is `sum(responseSize of all calls in the window) / 4` — the tokens the agent actually consumed while searching.
+The exploration cost for each closed miss window is `sum(responseSize of all calls in the window) / 3` — the tokens the agent actually consumed while searching.
 
 **Calibration threshold:** Once a namespace accumulates **5 or more writeback resolutions**, Reverie switches from the static multiplier to the **median observed cost** for that namespace. The `[observed, n=12]` tag in the stats output indicates this.
 
@@ -292,7 +294,7 @@ The `reverie_context` tool is special — it returns many entries at once in a s
 ```
 approx_entries  = response_size_bytes / 80     (each entry averages ~80 bytes)
 exploration_cost = max(
-  response_size / 4,                           (delivery floor)
+  response_size / 3,                           (delivery floor)
   approx_entries * 200                         (200 tokens per entry avoided)
 )
 ```
@@ -300,9 +302,9 @@ exploration_cost = max(
 The 200-token-per-entry cost reflects that each entry in the context represents roughly one small lookup the agent would have needed to make. The `max()` ensures the exploration estimate is never lower than the delivery floor.
 
 **Example:** A `reverie_context` call returns 8,000 bytes (~100 entries):
-- Delivery floor: `8000 / 4 = 2,000 tokens`
+- Delivery floor: `8000 / 3 ≈ 2,667 tokens`
 - Exploration estimate: `100 entries * 200 = 20,000 tokens`
-- Result: `max(2000, 20000) = 20,000 tokens`
+- Result: `max(2667, 20000) = 20,000 tokens`
 
 ### Estimation Pipeline
 
@@ -311,7 +313,7 @@ flowchart TD
     T["Telemetry JSONL entries"] --> F{"Filter: op=read, hit=true"}
     F -->|reverie_context| B["Bootstrap estimation
     entries ≈ responseSize / 80
-    cost = max(bytes/4, entries × 200)"]
+    cost = max(bytes/3, entries × 200)"]
     F -->|other reads| CAL{"Calibrated?
     (≥5 writeback samples)"}
     CAL -->|Yes| OBS["Observed median cost
@@ -328,7 +330,7 @@ flowchart TD
     RW --> GROSS
 
     T --> DC["Delivery cost (all hit reads)
-    cost = sum(responseSize) / 4"]
+    cost = sum(responseSize) / 3"]
 
     GROSS --> NET["Net tokens saved
     = gross − delivery cost"]
@@ -350,10 +352,10 @@ A typical session might look like this:
 
 **Totals:**
 - Gross exploration avoided: `20,000 + 2,000 + 3,000 + 150 = 25,150 tokens`
-- Delivery cost: `(8000 + 200 + 300) / 4 = 2,125 tokens`
-- **Net savings: 25,150 − 2,125 = 23,025 tokens**
+- Delivery cost: `(8000 + 200 + 300) / 3 ≈ 2,833 tokens`
+- **Net savings: 25,150 − 2,833 = 22,317 tokens**
 
-The gross estimate is **12x** the delivery cost in this example, reflecting the leverage of stored knowledge. As the knowledge base grows, both numbers increase — but if entries become low-signal, delivery cost grows faster than exploration savings, and net savings shrinks.
+The gross estimate is about **9x** the delivery cost in this example, reflecting the leverage of stored knowledge. As the knowledge base grows, both numbers increase — but if entries become low-signal, delivery cost grows faster than exploration savings, and net savings shrinks.
 
 ## Data Collection
 

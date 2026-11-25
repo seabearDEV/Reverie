@@ -142,7 +142,12 @@ export function formatStatsReport(stats: TelemetryStats, opts: StatsReportOption
     lines.push(p.header('Token savings:'));
     if (stats.hitRate !== undefined) {
       const hitColor = stats.hitRate >= 0.8 ? p.good : stats.hitRate >= 0.5 ? p.warn : p.bad;
-      lines.push(`  Lookup hit rate:   ${hitColor(`${(stats.hitRate * 100).toFixed(0)}%`)} of reads found stored data (${stats.hits} hits, ${stats.misses} misses)`);
+      lines.push(`  Lookup hit rate:   ${hitColor(`${(stats.hitRate * 100).toFixed(0)}%`)} of reads found stored data (${stats.hits} hits, ${stats.misses} misses)`);      // #203: what the misses were — a key that is not there, another failure,
+      // or a search that matched nothing — largest first.
+      const causes = Object.entries(stats.missesByCode).sort((a, b) => b[1] - a[1]);
+      if (causes.length > 0) {
+        lines.push(`  Misses by cause:   ${causes.map(([cause, n]) => `${cause} ${n}`).join(', ')}`);
+      }
     }
     if (stats.redundantRate !== undefined && stats.writes > 0) {
       const redColor = stats.redundantRate <= 0.1 ? p.good : stats.redundantRate <= 0.3 ? p.warn : p.bad;
