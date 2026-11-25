@@ -2,6 +2,7 @@
 
 // Mock functions — defined at top level, cleared between tests
 const mockSetEntry = vi.fn().mockResolvedValue(undefined);
+const mockWarnUnresolvedReferences = vi.fn();
 const mockGetEntry = vi.fn();
 const mockRunCommand = vi.fn().mockResolvedValue(undefined);
 const mockSearchEntries = vi.fn();
@@ -40,7 +41,7 @@ const mockDefaultLLMInstructions = 'default instructions';
 function setupMocks() {
   vi.mock('../commands', () => ({
     setEntry: mockSetEntry,
-    warnUnresolvedReferences: vi.fn(),
+    warnUnresolvedReferences: mockWarnUnresolvedReferences,
     getEntry: mockGetEntry,
     runCommand: mockRunCommand,
     searchEntries: mockSearchEntries,
@@ -173,6 +174,49 @@ describe('CLI Entry Point (index.ts)', () => {
   it('set command calls setEntry with joined value', async () => {
     await loadCLI('set', '--force', 'my.key', 'my', 'value');
     expect(mockSetEntry).toHaveBeenCalledWith('my.key', 'my value', true, undefined, undefined, undefined, undefined, undefined);
+  });
+
+  // #202: the reference check quotes what it finds, so it is given only
+  // values that may be shown. After #230 a value typed at the masked prompt
+  // went through it too, and part of a secret could be printed in a warning.
+  describe('set: which values the unresolved-reference check sees', () => {
+    const savedPassword = process.env.RVR_PASSWORD;
+    const savedTTY = process.stdin.isTTY;
+    afterEach(() => {
+      if (savedPassword === undefined) delete process.env.RVR_PASSWORD;
+      else process.env.RVR_PASSWORD = savedPassword;
+      process.stdin.isTTY = savedTTY;
+    });
+
+    it('a value given as an argument is checked once it is stored', async () => {
+      mockSetEntry.mockResolvedValue({ key: 'my.key' });
+      await loadCLI('set', '--force', 'my.key', 'uses', '${NOPE}');
+      expect(mockWarnUnresolvedReferences).toHaveBeenCalledWith([['my.key', 'uses ${NOPE}']]);
+    });
+
+    it('a value that was not stored is not checked', async () => {
+      mockSetEntry.mockResolvedValue(undefined);
+      await loadCLI('set', '--force', 'my.key', 'uses', '${NOPE}');
+      expect(mockWarnUnresolvedReferences).not.toHaveBeenCalled();
+    });
+
+    it('a value being encrypted is not checked', async () => {
+      mockSetEntry.mockResolvedValue({ key: 'my.key' });
+      await loadCLI('set', '--force', '--encrypt', 'my.key', 'se${cr}et');
+      expect(mockSetEntry).toHaveBeenCalled();
+      expect(mockWarnUnresolvedReferences).not.toHaveBeenCalled();
+    });
+
+    it('a value typed at the masked prompt is stored and never checked', async () => {
+      // askPassword answers from RVR_PASSWORD without a terminal; --prompt
+      // itself insists on one.
+      process.env.RVR_PASSWORD = 'se${cr}et';
+      process.stdin.isTTY = true;
+      mockSetEntry.mockResolvedValue({ key: 'my.key' });
+      await loadCLI('set', '--force', '--prompt', 'my.key');
+      expect(mockSetEntry).toHaveBeenCalledWith('my.key', 'se${cr}et', true, undefined, undefined, undefined, undefined, undefined);
+      expect(mockWarnUnresolvedReferences).not.toHaveBeenCalled();
+    });
   });
 
   it('get command resolves key via resolveKey before calling getEntry', async () => {

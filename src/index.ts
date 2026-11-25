@@ -113,7 +113,7 @@ reverie
         await withCliInstrumentation(
           { tool: 'reverie_set', key: rk, rawKey: k, scope, writeValue: v, params: { key: rk, value: v }, deferEnvelope },
           async () => {
-            const result = await commands.setEntry(rk, v, options.force, undefined, undefined, undefined, options.global, undefined, false);
+            const result = await commands.setEntry(rk, v, options.force, undefined, undefined, undefined, options.global);
             if (result) stored.push([rk, v]);
             if (!deferEnvelope) commands.warnUnresolvedReferences(stored);
             return result;
@@ -124,6 +124,11 @@ reverie
     }
 
     let value: string | undefined;
+    // The value again, when it may be shown: undefined for one typed at the
+    // masked prompt. The reference check below quotes what it finds, so a
+    // masked value must not reach it — kept in a variable of its own so that
+    // no path leads there, rather than behind a flag.
+    let shownValue: string | undefined;
     let stdinGaveUp: string | undefined;
     if (options.prompt) {
       if (!process.stdin.isTTY) {
@@ -132,7 +137,7 @@ reverie
         return;
       }
       if (options.show) {
-        value = await askConfirmation('Value: ');
+        value = shownValue = await askConfirmation('Value: ');
       } else {
         value = await askPassword('Value: ');
         const confirm = await askPassword('Confirm: ');
@@ -162,7 +167,7 @@ reverie
         }
         const stdinValue = (stdinBytes ?? Buffer.alloc(0)).toString('utf8').trimEnd();
         if (stdinValue.length > 0) {
-          value = stdinValue;
+          value = shownValue = stdinValue;
         } else if (!options.alias && options.confirm === undefined) {
           printError('No input received from stdin.');
           process.exitCode = 1;
@@ -179,19 +184,27 @@ reverie
         return;
       }
     } else {
-      value = valueArray.join(' ');
+      value = shownValue = valueArray.join(' ');
     }
     const resolvedKey = resolveKey(key);
     await withCliInstrumentation(
       { tool: 'reverie_set', key: resolvedKey, rawKey: key, scope, writeValue: value, params: { key: resolvedKey, value: value ?? '' } },
-      () => {
+      async () => {
         // #225: stderr, like every other warning, so that `> /dev/null` does
         // not hide the one sign a value was dropped; coded in JSON mode.
         if (stdinGaveUp !== undefined) {
           if (isJsonMode()) addWarning(stdinGaveUp, 'STDIN_SILENT');
           else console.error(`warning: ${stdinGaveUp}`);
         }
-        return commands.setEntry(resolvedKey, value, options.force, options.encrypt, options.alias, options.confirm, options.global, options.passwordFile);
+        const result = await commands.setEntry(resolvedKey, value, options.force, options.encrypt, options.alias, options.confirm, options.global, options.passwordFile);
+        // #202: warn about a reference in the value that does not resolve.
+        // Not for a value that is encrypted, nor for one typed at the masked
+        // prompt (shownValue is undefined then): both are secrets, and the
+        // warning would print part of one.
+        if (result && shownValue !== undefined && !options.encrypt) {
+          commands.warnUnresolvedReferences([[resolvedKey, shownValue]]);
+        }
+        return result;
       }
     );
     if (options.clear) {

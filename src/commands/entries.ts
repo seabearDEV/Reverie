@@ -57,6 +57,10 @@ function warnUnresolved(found: [string, UnresolvedOnRead][]): void {
  * Takes every pair a command stored, so a batch `set a=… b=…` is checked
  * once, after its last pair: checked pair by pair, a reference to a key the
  * same command defines next was reported as unresolved.
+ *
+ * Called by the command, not by setEntry, and only with values that may be
+ * shown: the warning quotes the reference, so a value typed at the masked
+ * prompt or about to be encrypted must never be passed in.
  */
 export function warnUnresolvedReferences(stored: [string, string][]): void {
   const found: [string, UnresolvedOnRead][] = [];
@@ -364,7 +368,7 @@ async function handlePostSetConfirm(key: string, confirm: boolean | undefined, s
   }
 }
 
-export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string, checkReferences = true): Promise<{ key: string; alias?: string; confirm?: boolean } | undefined> {
+export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string): Promise<{ key: string; alias?: string; confirm?: boolean } | undefined> {
   debug('setEntry called', { key, force, encrypt, alias, confirm, global });
   const scope = toScope(global);
   try {
@@ -444,11 +448,6 @@ export async function setEntry(key: string, value: string | undefined, force = f
     setValue(key, storedValue, scope);
     console.log(`Entry '${key}' set successfully.`);
     markValueStored();
-    // #202: warn about a reference in the value that does not resolve. An
-    // encrypted value is not inspected. A batch `set` passes
-    // checkReferences=false and checks all its pairs at the end.
-    if (checkReferences && !encrypt) warnUnresolvedReferences([[key, value]]);
-
     if (alias) {
       setAlias(alias, key, scope);
     }
