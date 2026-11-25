@@ -529,7 +529,7 @@ describe('computeStats', () => {
   it('computes bootstrap exploration cost from response size', () => {
     const now = Date.now();
     // 8000 bytes ≈ 100 entries at ~80 bytes each → 100 × 200 = 20000 tokens
-    // delivery floor: 8000 / 4 = 2000 → max(2000, 20000) = 20000
+    // delivery floor: 8000 / 3 ≈ 2667 → max(2667, 20000) = 20000
     writeEntries([
       { ts: now - 100, tool: 'reverie_context', session: 's1', op: 'read', ns: '*', hit: true, responseSize: 8000 },
     ]);
@@ -641,5 +641,18 @@ describe('what a row is counted as (#203, #204, #206)', () => {
     expect(stats.estimatedTokensSaved).toBe(1100);          // (300 + 3000) / 3
     expect(stats.estimatedTokensSavedBootstrap).toBe(1000); // 3000 / 3
     expect(stats.deliveryCostTokens).toBe(1100);
+  });
+
+  it('#206: a config read is credited no exploration and names no namespace', () => {
+    seed([
+      { tool: 'reverie_config_get', ns: 'bootstrap_max_response_bytes', hit: true, responseSize: 30 }, // logged before #206
+      { tool: 'reverie_config_get', ns: '*', hit: true, responseSize: 30 },
+      { hit: true, responseSize: 300 },
+    ]);
+    const stats = computeStats();
+    // Reading a setting avoids no exploration of the codebase.
+    expect(Object.keys(stats.explorationBreakdown)).toEqual(['arch']);
+    expect(Object.keys(stats.calibration)).toEqual(['arch']);
+    expect(stats.estimatedExplorationTokensSaved).toBe(3000);
   });
 });

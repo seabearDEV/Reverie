@@ -15,6 +15,9 @@ import {
   buildEnvelope,
   emitEnvelope,
   alreadyEmitted,
+  serializeEnvelope,
+  recordErrorCode,
+  takeErrorCode,
 } from '../utils/output';
 
 describe('output envelope (#117 WS1)', () => {
@@ -115,6 +118,42 @@ describe('output envelope (#117 WS1)', () => {
     const parsed = JSON.parse(lines[0]);
     expect(parsed.command).toBe('get');
     expect(parsed.result).toEqual({ ok: 1 });
+  });
+
+  it('emitEnvelope writes the line it is handed, so what was measured is what is written', () => {
+    configureOutput({ json: true, command: 'get' });
+    setResult({ ok: 1 });
+    const line = serializeEnvelope();
+    expect(line.endsWith('\n')).toBe(true);
+    expect(JSON.parse(line).result).toEqual({ ok: 1 });
+    const lines: string[] = [];
+    emitEnvelope((s) => { lines.push(s); }, line);
+    expect(lines).toEqual([line]);
+  });
+
+  // ── The code a call failed with (#203) ───────────────────────────────
+
+  it('takeErrorCode returns the code reported in text mode, once', () => {
+    configureOutput({ json: false, command: 'get' });
+    recordErrorCode('NOT_FOUND');
+    expect(takeErrorCode()).toBe('NOT_FOUND');
+    expect(takeErrorCode()).toBeUndefined();
+  });
+
+  it('takeErrorCode returns the code failJson recorded, once — the envelope keeps its error', () => {
+    // A batch runs several calls in one invocation: the second call must not
+    // be handed the first call's code.
+    configureOutput({ json: true, command: 'set' });
+    failJson('INVALID_INPUT', 'first pair');
+    expect(takeErrorCode()).toBe('INVALID_INPUT');
+    expect(takeErrorCode()).toBeUndefined();
+    expect(buildEnvelope().error?.code).toBe('INVALID_INPUT');
+  });
+
+  it('configureOutput starts an invocation with no recorded code', () => {
+    recordErrorCode('NOT_FOUND'); // reported outside any instrumented call
+    configureOutput({ json: false, command: 'get' });
+    expect(takeErrorCode()).toBeUndefined();
   });
 
   it('error codes are a frozen set that reuses MCP names (no E_ prefix)', () => {

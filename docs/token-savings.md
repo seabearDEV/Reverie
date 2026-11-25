@@ -44,6 +44,7 @@ Running `rvr stats` (or `reverie_stats` via MCP) produces a token savings sectio
 ```
 Token savings:
   Lookup hit rate:   87% of reads found stored data (34 hits, 5 misses)
+  Misses by cause:   NOT_FOUND 3, empty 1, STORE_UNREADABLE 1
   Duplicate writes:  10% of writes were already up to date (6 of 58)
   Data served:       51.4KB returned from store, 585B avg
   Avg latency:       2ms per call
@@ -84,6 +85,14 @@ Lookup hit rate:   87% of reads found stored data (34 hits, 5 misses)
 
 **What counts as a miss:** A read that returned an error or empty result — the agent asked for something that wasn't stored.
 
+**Misses by cause:** The next line splits the misses by what went wrong, largest first:
+
+```
+Misses by cause:   NOT_FOUND 3, empty 1, STORE_UNREADABLE 1
+```
+
+A code is the error the call failed with. `NOT_FOUND` means the store lacks the key; any other code means the read failed for another reason, and the key may well exist. `empty` is a read that succeeded and matched nothing, such as a search with no results. `unrecorded` is a failed read with no code: every row logged before v1.4.0, and an MCP error response that carries none. The same split is `missesByCode` in `rvr stats --json`.
+
 **Why it matters:** A high hit rate means the knowledge base is well-populated for the agent's needs. A low hit rate means agents are asking for things that aren't stored yet — a signal to add more entries.
 
 ```mermaid
@@ -115,7 +124,7 @@ Data served:       51.4KB returned from store, 585B avg
 
 **What it measures:** The total bytes of text content returned across all tool calls, and the average per call.
 
-**How it's calculated:** `Buffer.byteLength(responseText, 'utf8')` for each MCP tool response. This is the plain text the agent receives, not the JSON protocol envelope.
+**How it's calculated:** `Buffer.byteLength(responseText, 'utf8')` for each MCP tool response. This is the plain text the agent receives, not the JSON protocol envelope. On the CLI it is what the command printed, and with `--json` the bytes of the envelope it wrote.
 
 **Why it matters:** This is the raw throughput of the knowledge base. Higher numbers mean agents are consuming more stored knowledge per session.
 
@@ -417,6 +426,7 @@ Every tool call is logged to `~/.reverie/telemetry.jsonl` as a single JSON line:
   "hit": true,
   "redundant": null,
   "responseSize": 200,
+  "success": true,
   "agent": "claude-code"
 }
 ```
@@ -434,7 +444,9 @@ Every tool call is logged to `~/.reverie/telemetry.jsonl` as a single JSON line:
 | `duration` | Execution time in milliseconds |
 | `hit` | Whether the read returned stored data (reads only) |
 | `redundant` | Whether the write was a no-op (writes only) |
-| `responseSize` | UTF-8 byte length of the response text |
+| `responseSize` | UTF-8 byte length of what the caller received: the response text over MCP, the printed output on the CLI, the whole envelope with `--json` |
+| `success` | Whether the call succeeded |
+| `errorCode` | The code a failed call failed with (`NOT_FOUND`, `INVALID_INPUT`, `STORE_UNREADABLE`, …) — the same in text mode as with `--json`. Absent on success |
 | `agent` | Value of `RVR_AGENT_NAME` env var (if set) |
 
 ### How Hits and Misses Are Determined
@@ -475,9 +487,9 @@ All `files.*` lookups get the same 2,000-token multiplier, whether the entry is 
 
 The `reverie_context` estimation divides `responseSize` by 80 to approximate entry count. This works reasonably well for typical entries (~80 bytes of formatted output per line), but breaks down for entries with very long or very short values.
 
-### CLI reads don't log responseSize
+### `--json` rows count the whole envelope
 
-CLI tool calls (as opposed to MCP) don't always log `responseSize`, so CLI-only usage may have incomplete data for the delivery floor calculation. The exploration estimate is unaffected since it uses hit counts, not response sizes.
+A CLI row's `responseSize` is what the command wrote — with `--json`, the entire envelope. An agent that pipes the envelope through a filter such as `jq` takes in fewer bytes than the row records, so delivery cost is an upper bound for those calls. Before v1.4.0 a `--json` call recorded 0, which left it out of delivery cost altogether.
 
 ### No A/B comparison
 

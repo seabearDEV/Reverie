@@ -4,7 +4,7 @@ import { Scope } from '../store';
 import { getValue, getEntriesFlat } from '../storage';
 import { loadAliases, resolveKey } from '../alias';
 import { sanitizeValue, sanitizeParams, logAudit } from './audit';
-import { logToolCall, classifyOp, TelemetryEntry, TelemetryExtras, extractNamespace, appendMissPath } from './telemetry';
+import { logToolCall, classifyOp, TelemetryEntry, TelemetryExtras, extractNamespace, keyIsEntryKey, appendMissPath } from './telemetry';
 import { recordCliWrite, trackCliMissPath } from './sessionState';
 import { formatWriteAmpWarning, takeValueStored, writeAmpStore, WriteAmpResult } from './writeAmp';
 import { findProjectFile } from '../store';
@@ -13,7 +13,7 @@ import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
 import { color } from '../formatting';
 import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, takeWriteRefused, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
-import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError, takeSignals, takeErrorCode, envelopeByteLength, alreadyEmitted } from './output';
+import { isJsonMode, failJson, emitEnvelope, addWarning, setResult, hasResult, hasError, takeSignals, takeErrorCode, serializeEnvelope, alreadyEmitted } from './output';
 
 // ── Shared constants (used by both MCP and CLI wrappers) ─────────────
 
@@ -248,8 +248,16 @@ export async function withCliInstrumentation<T>(
     };
   }
 
-  // Execute handler
+  // Execute handler. The call is judged on its own exit code (#203), not on
+  // whether the exit code changed: an earlier call in this process — a
+  // previous pair of a batch `set` — may have left it non-zero already, and
+  // a second failure then changes nothing. So a non-zero code is set aside
+  // while the handler runs and put back after it, unless this call failed
+  // too. (Zeroed, not cleared: Bun keeps the old value when exitCode is
+  // assigned undefined.)
   const prevExitCode = process.exitCode;
+  const failedBefore = (prevExitCode ?? 0) !== 0;
+  if (failedBefore) process.exitCode = 0;
   let result: T | undefined;
   let success = true;
   let errorMsg: string | undefined;
@@ -299,9 +307,14 @@ export async function withCliInstrumentation<T>(
     }
     const measuredResponseSize = endResponseMeasure();
 
-    if (success) {
-      success = process.exitCode === prevExitCode;
-    }
+    // Failed if it threw, or left a non-zero exit code. A handler that
+    // assigns the exit code 0 — `run` in JSON mode passes on its command's —
+    // has not failed. An earlier failure still fails the process: its code
+    // comes back unless this call set one of its own. Restored here, before
+    // the envelope is built, because the envelope's `ok` reads the exit code.
+    const ownExitCode = process.exitCode ?? 0;
+    if (success) success = ownExitCode === 0;
+    if (failedBefore && ownExitCode === 0) process.exitCode = prevExitCode;
     // #215: most commands render a refused write through handleError, so the
     // catch above never sees it. Read (and always clear) the note it left.
     if (takeWriteRefused() && refusedReason === undefined) refusedReason = 'store_unreadable';
@@ -326,7 +339,9 @@ export async function withCliInstrumentation<T>(
     // The code the failure was reported with (#203): what the handler passed
     // to printError / failJson, else the class of what it threw, else RUNTIME
     // for an exit code set with no report — the same fallback the envelope
-    // uses. Always taken, so a code never outlives its invocation.
+    // uses. Always taken, so a code never outlives its call. A text-mode
+    // failure path that sets the exit code itself must call recordErrorCode
+    // with the code its JSON branch reports, or the two modes disagree.
     const reportedCode = takeErrorCode();
     const errorCode = success ? undefined : (reportedCode ?? thrownCode ?? 'RUNTIME');
 
@@ -409,11 +424,23 @@ export async function withCliInstrumentation<T>(
     }
 
     // Bytes returned to the caller, the MCP wrapper's semantic. In text mode
-    // that is what the handler wrote to stdout. In JSON mode the handler's
-    // stdout is swallowed and the caller receives the envelope, which is
-    // written below, after the rows — so measure it here (#192). Every
-    // warning has been added by this point.
-    const responseSize = jsonMode && !alreadyEmitted() ? envelopeByteLength() : measuredResponseSize;
+    // that is what the handler printed: its stdout, and under Bun also what
+    // it wrote through console.error, which the measurement above counts. In
+    // JSON mode the handler's stdout is swallowed and the caller receives the
+    // envelope, which is written below, after the rows — so it is serialized
+    // here, once, and that string is what gets written (#192). Every warning
+    // has been added by this point.
+    let envelopeLine: string | undefined;
+    let responseSize = measuredResponseSize;
+    if (jsonMode && !alreadyEmitted()) {
+      try {
+        envelopeLine = serializeEnvelope();
+        responseSize = Buffer.byteLength(envelopeLine, 'utf8');
+      } catch {
+        // A result that cannot be serialized. The rows are still written;
+        // the emit below raises the error, as it did before this was measured.
+      }
+    }
 
     // Telemetry
     const projectFile = findProjectFile();
@@ -475,8 +502,10 @@ export async function withCliInstrumentation<T>(
     // Miss-path tracking on CLI reads (#119). Only meaningful when a shared
     // session bridges invocations (trackCliMissPath no-ops otherwise —
     // a window that dies with a one-shot process would log pure noise).
+    // A config call is not a lookup (#206): its key is a setting name, so it
+    // opens no miss window and closes none.
     try {
-      const closedPaths = trackCliMissPath({
+      const closedPaths = !keyIsEntryKey(ctx.tool) ? [] : trackCliMissPath({
         tool: ctx.tool,
         namespace: extractNamespace(ctx.key),
         key: ctx.key ?? '',
@@ -497,7 +526,7 @@ export async function withCliInstrumentation<T>(
     // any error are derived inside buildEnvelope from exitCode + recorded
     // failure. Idempotent: a no-op if something already emitted.
     if (jsonMode) {
-      emitEnvelope((s) => { (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(s); });
+      emitEnvelope((s) => { (originalStdoutWrite as (...a: StdoutWriteArgs) => boolean)(s); }, envelopeLine);
     }
   }
 

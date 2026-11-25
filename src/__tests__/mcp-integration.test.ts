@@ -745,5 +745,31 @@ describe('MCP Integration (real I/O)', () => {
       const miss = callMcpTool('reverie_get', { key: 'rows203.absent' });
       expect(Object.keys(miss).sort()).toEqual(['content', 'isError']);
     });
+
+    it('an unknown config setting is NOT_FOUND, as on the CLI', () => {
+      const r = callMcpTool('reverie_config_get', { key: 'no_such_setting' });
+      expect(r.isError).toBe(true);
+      for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+        const row = lastRow(file);
+        expect(row.tool, file).toBe('reverie_config_get');
+        expect(row.errorCode, file).toBe('NOT_FOUND');
+      }
+    });
+  });
+
+  // ── #206: a config call is not a lookup ──────────────────────────────
+  it('a config read is not fed to the miss tracker (#206)', async () => {
+    const missPaths = path.join(tmpDir, 'miss-paths.jsonl');
+    const namespaces = (): string[] => !fs.existsSync(missPaths) ? [] :
+      fs.readFileSync(missPaths, 'utf8').trim().split('\n').filter(Boolean).map(l => (JSON.parse(l) as { namespace: string }).namespace);
+    await withMcpSession(async call => {
+      await call('reverie_set', { key: 'rows206.present', value: 'v' });
+      expect((await call('reverie_config_get', { key: 'no_such_setting_206' })).isError).toBe(true);
+      // A hit closes every open window of the session and logs it.
+      await call('reverie_get', { key: 'rows206.present' });
+      await call('reverie_get', { key: 'rows206.present' });
+    });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(namespaces()).not.toContain('no_such_setting_206');
   });
 });

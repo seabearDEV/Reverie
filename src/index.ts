@@ -16,7 +16,7 @@ import fs from 'fs';
 import { DEFAULT_LLM_INSTRUCTIONS, CLI_LLM_INSTRUCTIONS, getEffectiveInstructions } from './llm-instructions';
 import { withCliInstrumentation } from './utils/instrumentation';
 import { readStdin } from './utils/stdin';
-import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult } from './utils/output';
+import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult, recordErrorCode } from './utils/output';
 
 // Early-exit handler for shell tab-completion (must run before Commander parses args)
 const completionFlagIndex = process.argv.indexOf('--get-completions');
@@ -549,6 +549,7 @@ reverie
           if (isJsonMode()) {
             printError('days must be a non-negative integer.', 'INVALID_INPUT');
           } else {
+            recordErrorCode('INVALID_INPUT');
             console.error(color.red('Error: days must be a non-negative integer.'));
             process.exitCode = 1;
           }

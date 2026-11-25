@@ -40,7 +40,7 @@ import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
 import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, StrictInterpolationError } from "./utils/interpolate";
-import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace } from "./utils/telemetry";
+import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace, keyIsEntryKey } from "./utils/telemetry";
 import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
@@ -431,8 +431,10 @@ server.tool = ((...args: any[]) => {
         ...guardrails,
       });
 
-      // Miss-path tracking: feed every call to the tracker
-      const closedPaths = missTracker.onToolCall({
+      // Miss-path tracking: feed every call to the tracker — except a config
+      // call (#206), whose key is a setting name: it is not a lookup, so it
+      // opens no miss window and closes none.
+      const closedPaths = !keyIsEntryKey(name) ? [] : missTracker.onToolCall({
         session: getSessionId(),
         tool: name,
         namespace: extractNamespace(key),
@@ -1174,7 +1176,7 @@ server.tool(
 
       const value = getConfigSetting(key);
       if (value === null) {
-        return errorResponse(`Unknown config key: '${key}'`);
+        return errorResponse(`Unknown config key: '${key}'`, 'NOT_FOUND');
       }
       return textResponse(`${key}: ${value}`);
     } catch (err) {

@@ -95,6 +95,14 @@ export interface InvocationSignals {
 }
 let signals: InvocationSignals = {};
 
+// The code the current call failed with (#203), for its telemetry and audit
+// rows. printError and handleError record it in text mode, where the failure
+// is otherwise only a line on stderr; failJson records it in JSON mode. The
+// instrumentation wrapper takes it when the call ends, so in an invocation
+// that runs several calls — a batch `set` — no call is handed another's
+// code. (The envelope's own `error` is per invocation and is not cleared.)
+let reportedErrorCode: ErrorCode | undefined;
+
 export function recordSignals(partial: InvocationSignals): void {
   Object.assign(signals, partial);
 }
@@ -113,6 +121,7 @@ export function takeSignals(): InvocationSignals {
 export function configureOutput(opts: { json: boolean; command: string }): void {
   state = freshState();
   signals = {};
+  reportedErrorCode = undefined;
   state.json = opts.json;
   state.command = opts.command;
 }
@@ -165,22 +174,18 @@ export function failJson(code: ErrorCode, message: string, preview?: string): vo
   const err: EnvelopeError = { code, message };
   if (preview !== undefined) err.preview = preview;
   state.error = err;
+  reportedErrorCode = code;
   process.exitCode = 1;
 }
 
-// The code a failure was reported with outside JSON mode (#203). In JSON mode
-// the envelope's error holds it; in text mode printError writes a line to
-// stderr and the code would otherwise be lost before the telemetry and audit
-// rows are written.
-let reportedErrorCode: ErrorCode | undefined;
-
+/** Record the code of a failure reported outside the envelope (text mode). */
 export function recordErrorCode(code: ErrorCode): void {
   reportedErrorCode = code;
 }
 
-/** The code this invocation failed with, if any was reported. Clears it. */
+/** The code reported since the last take, if any. Clears it. */
 export function takeErrorCode(): ErrorCode | undefined {
-  const code = state.error?.code ?? reportedErrorCode;
+  const code = reportedErrorCode;
   reportedErrorCode = undefined;
   return code;
 }
@@ -221,24 +226,19 @@ export function alreadyEmitted(): boolean {
  * Emit exactly one envelope. `write` defaults to process.stdout.write but the
  * wrapper passes the *original* (pre-monkey-patch) writer so the envelope
  * reaches the real stdout while handler output stays sunk. Idempotent.
+ * `line` is an envelope already serialized by serializeEnvelope: the wrapper
+ * measures it for the telemetry and audit rows (#192) and hands the same
+ * string here, so what was measured is what is written.
  */
-export function emitEnvelope(write?: (s: string) => void): void {
+export function emitEnvelope(write?: (s: string) => void, line?: string): void {
   if (state.emitted) return;
   state.emitted = true;
-  const line = serializeEnvelope();
-  if (write) write(line);
-  else process.stdout.write(line);
+  const out = line ?? serializeEnvelope();
+  if (write) write(out);
+  else process.stdout.write(out);
 }
 
-function serializeEnvelope(): string {
+/** The envelope as emitEnvelope writes it, given the state as it stands. */
+export function serializeEnvelope(): string {
   return JSON.stringify(buildEnvelope(), null, 2) + '\n';
-}
-
-/**
- * Bytes emitEnvelope will write, given the state as it stands (#192). The
- * wrapper calls this once the result and every warning are recorded, so the
- * telemetry and audit rows carry the size of what the caller receives.
- */
-export function envelopeByteLength(): number {
-  return Buffer.byteLength(serializeEnvelope(), 'utf8');
 }

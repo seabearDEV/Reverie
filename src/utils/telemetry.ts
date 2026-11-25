@@ -254,12 +254,6 @@ export class MissWindowTracker {
   }
 }
 
-// ── Namespace extraction ────────────────────────────────────────────
-
-/**
- * Extract the top-level namespace from a dot-notation key.
- * "arch.mcp" → "arch", undefined/empty → "*"
- */
 /**
  * Estimated bytes per token for every token figure `stats` reports (#204).
  * Reporting only — no behaviour depends on it. Measured ~2.35 on a dense
@@ -270,6 +264,8 @@ export class MissWindowTracker {
  */
 export const BYTES_PER_TOKEN = 3;
 
+// ── Namespace extraction ────────────────────────────────────────────
+
 /**
  * Tools whose `key` is not an entry key (#206). A config setting name such as
  * `bootstrap_max_response_bytes` has no namespace; filing it under one made
@@ -277,6 +273,20 @@ export const BYTES_PER_TOKEN = 3;
  */
 const NON_ENTRY_KEY_TOOLS: ReadonlySet<string> = new Set(['reverie_config_get', 'reverie_config_set']);
 
+/**
+ * Whether a tool's `key` names a store entry. A config call's does not
+ * (#206), so it has no namespace, is not a lookup of stored knowledge, and
+ * stays out of everything keyed on one: namespace coverage, the exploration
+ * breakdown, and the miss tracker on both surfaces.
+ */
+export function keyIsEntryKey(tool: string): boolean {
+  return !NON_ENTRY_KEY_TOOLS.has(tool);
+}
+
+/**
+ * Extract the top-level namespace from a dot-notation key.
+ * "arch.mcp" → "arch", undefined/empty → "*"
+ */
 export function extractNamespace(key?: string): string {
   if (!key) return '*';
   const dot = key.indexOf('.');
@@ -409,7 +419,7 @@ export function logToolCall(tool: string, key?: string, source: 'mcp' | 'cli' = 
     session: getSessionId(),
     ...(isSessionDetected() && { sessionDetected: true }),
     op: classifyOp(tool),
-    ns: NON_ENTRY_KEY_TOOLS.has(tool) ? '*' : extractNamespace(key),
+    ns: keyIsEntryKey(tool) ? extractNamespace(key) : '*',
     src: source,
     scope,
     agent: identity.agent,
@@ -460,7 +470,8 @@ export interface TelemetryStats {
   misses: number;
   /** Misses by cause (#203): an error code for a failed read (NOT_FOUND, …),
    *  `empty` for a read that succeeded and matched nothing, `unrecorded` for
-   *  rows logged before rows carried a code. */
+   *  a failed read with no code — every row logged before rows carried one,
+   *  and an MCP error response built without one. */
   missesByCode: Record<string, number>;
   redundantRate: number | undefined;
   redundantWrites: number;
@@ -588,7 +599,7 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
     if (e.tool === 'reverie_find') continue;
     if (e.tool === 'reverie_alias_set' || e.tool === 'reverie_alias_remove') continue;
     // Rows logged before #206 carry the config key as their namespace.
-    if (NON_ENTRY_KEY_TOOLS.has(e.tool)) continue;
+    if (!keyIsEntryKey(e.tool)) continue;
     if (!nsCoverage[e.ns]) nsCoverage[e.ns] = { reads: 0, writes: 0, lastWrite: undefined };
     if (e.op === 'read') nsCoverage[e.ns].reads++;
     if (e.op === 'write') {
@@ -696,6 +707,9 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
 
   const readHits = entries.filter(e => e.op === 'read' && e.hit === true);
   for (const e of readHits) {
+    // Reading a setting avoids no exploration of the codebase (#206), and
+    // rows logged before that fix carry the setting name as a namespace.
+    if (!keyIsEntryKey(e.tool)) continue;
     if (e.tool === 'reverie_context') {
       // Bootstrap: approximate entry count from response size, each avoids ~1 lookup
       const deliveryCost = (e.responseSize ?? 0) / BYTES_PER_TOKEN;
@@ -723,7 +737,7 @@ export function computeStats(periodDays = 0, includeTest = false): TelemetryStat
   const estimatedTotalTokensSaved = estimatedExplorationTokensSaved + estimatedRedundantWriteTokensSaved;
 
   // Net savings: gross exploration avoided minus delivery cost (tokens consumed by cache hits)
-  const deliveryCostTokens = estimatedTokensSaved; // raw bytes served ÷ 4
+  const deliveryCostTokens = estimatedTokensSaved; // raw bytes served ÷ BYTES_PER_TOKEN
   const netTokensSaved = estimatedTotalTokensSaved - deliveryCostTokens;
 
   // Agent breakdown — null-prototype, see nsCoverage rationale above.
