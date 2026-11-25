@@ -568,6 +568,24 @@ describe('a project store beside a global one (#215)', () => {
     expect(r.error?.code).toBe('STORE_UNREADABLE');
   });
 
+  it('rm in the default scope does not claim to remove a key that exists only in the global store', () => {
+    // The lookup falls through to the global store; the removal never does.
+    expect(rvrIn(projectDir, 'set', '--global', 'notes.todo', 'global only').status).toBe(0);
+    const r = rvrIn(projectDir, 'rm', '--force', 'notes.todo');
+    expect(r.status).toBe(1);
+    expect(r.stdout).not.toContain('removed successfully');
+    expect(r.stderr).toContain("Entry 'notes.todo' not found in the project store");
+    expect(r.stderr).toContain('--global');
+
+    const e = json('rm', '--force', 'notes.todo');
+    expect(e.ok).toBe(false);
+    expect(e.error?.code).toBe('NOT_FOUND');
+    expect(json('get', 'notes.todo').result).toEqual({ 'notes.todo': 'global only' });
+
+    expect(rvrIn(projectDir, 'rm', '--force', '--global', 'notes.todo').status).toBe(0);
+    expect(json('get', 'notes.todo').error?.code).toBe('NOT_FOUND');
+  });
+
   it('init skips a seed key it cannot read, and still finishes', () => {
     // Two branches both ran the first-session bootstrap: the marker conflicts.
     fs.writeFileSync(projectFile('context.initialized.json'), TRUNCATED);

@@ -794,7 +794,15 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   // refuse before the entry is gone rather than leave them dangling.
   assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
-  removeValue(key, scope);
+  if (!removeValue(key, scope)) {
+    // The lookup above falls through from the project store to the global
+    // one; the removal deliberately does not (#99). So a key that exists
+    // only in the global store was found, not removed, and reported as
+    // "removed successfully". Say what happened, and skip the cascade.
+    printError(`Entry '${key}' not found in the project store. It exists in the global store: pass --global to remove it there.`, 'NOT_FOUND');
+    process.exitCode = 1;
+    return;
+  }
 
   // Cascade delete: remove any aliases pointing to this key or its children
   removeAliasesForKey(key, scope);
