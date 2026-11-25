@@ -172,6 +172,29 @@ describe('a store with git conflict markers in it (#215)', () => {
       expect(after[after.length - 1].refusedReason).toBeUndefined();
     });
 
+    it('a write under the conflicted key is refused: the two could not both exist', () => {
+      const r = rvr('set', '--global', `${HANDOFF}.extra`, 'v');
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(`Refusing to write '${HANDOFF}.extra' under entry '${HANDOFF}'`);
+      expect(fs.existsSync(file(`${HANDOFF}.extra.json`))).toBe(false);
+      expect(read(`${HANDOFF}.json`)).toBe(before);
+      expect(json('set', '--global', `${HANDOFF}.extra`, 'v').error?.code).toBe('STORE_UNREADABLE');
+    });
+
+    it('rm and rename of its parent are refused, even when it is the only child', () => {
+      // `context` holds nothing but the conflicted handoff, so it looks absent.
+      const removed = rvr('rm', '--global', '--force', 'context');
+      expect(removed.status).toBe(1);
+      expect(removed.stderr).toContain(`Refusing to remove 'context' while entry '${HANDOFF}' under it cannot be read`);
+      expect(removed.stderr).not.toContain('not found');
+
+      const renamed = rvr('rename', '--global', 'context', 'ctx');
+      expect(renamed.status).toBe(1);
+      expect(renamed.stderr).toContain(`Refusing to rename 'context' while entry '${HANDOFF}' under it cannot be read`);
+      expect(read(`${HANDOFF}.json`)).toBe(before);
+      expect(json('rm', '--global', '--force', 'context').error?.code).toBe('STORE_UNREADABLE');
+    });
+
     it('rm of the conflicted key fails without deleting it', () => {
       const e = json('rm', '--global', HANDOFF);
       expect(e.ok).toBe(false);
@@ -247,6 +270,45 @@ describe('a store with git conflict markers in it (#215)', () => {
     });
   });
 
+  describe('a conflicted entry under a parent, with an alias and a confirm flag of its own', () => {
+    let aliasesBefore: string;
+    let confirmBefore: string;
+    beforeEach(() => {
+      expect(rvr('set', '--global', 'commands.deploy', 'echo deploy', '--confirm', '-a', 'dep').status).toBe(0);
+      aliasesBefore = read('_aliases.json');
+      confirmBefore = read('_confirm.json');
+      gitWrite('commands.deploy.json', conflictedEntry('echo deploy-ours', 'echo deploy-theirs'));
+    });
+
+    it('rm of the parent is refused: it would keep the file and drop its alias and its flag', () => {
+      // The cascade removes every alias and flag under the prefix. The file
+      // it could not read stayed on disk — and ran unconfirmed once resolved.
+      const r = rvr('rm', '--global', '--force', 'commands');
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("Refusing to remove 'commands' while entry 'commands.deploy' under it cannot be read");
+      expect(r.stdout).not.toContain('removed successfully');
+      expect(fs.existsSync(file('commands.hello.json'))).toBe(true);
+      expect(read('_aliases.json')).toBe(aliasesBefore);
+      expect(read('_confirm.json')).toBe(confirmBefore);
+    });
+
+    it('rename of the parent is refused before anything moves', () => {
+      const r = rvr('rename', '--global', 'commands', 'cmds');
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("Refusing to rename 'commands' while entry 'commands.deploy' under it cannot be read");
+      expect(fs.existsSync(file('commands.hello.json'))).toBe(true);
+      expect(fs.existsSync(file('cmds.hello.json'))).toBe(false);
+      expect(read('_aliases.json')).toBe(aliasesBefore);
+      expect(read('_confirm.json')).toBe(confirmBefore);
+    });
+
+    it('a sibling can still be removed', () => {
+      expect(rvr('rm', '--global', '--force', 'commands.hello').status).toBe(0);
+      expect(fs.existsSync(file('commands.hello.json'))).toBe(false);
+      expect(read('_confirm.json')).toBe(confirmBefore);
+    });
+  });
+
   describe('a healthy store', () => {
     it('lint passes and nothing is warned about', () => {
       const r = rvr('lint', '--global');
@@ -281,6 +343,20 @@ describe('a store with git conflict markers in it (#215)', () => {
       expect(read('_aliases.json')).toBe(before);
       const e = json('alias', 'set', 'zz', 'arch.store', '--global');
       expect(e.error?.code).toBe('STORE_UNREADABLE');
+      expect(read('_aliases.json')).toBe(before);
+    });
+
+    it('alias remove and alias rename are refused — not "not found"', () => {
+      // Both sides of the conflict define `hand`. The map loads as empty, so
+      // a lookup in it used to answer NOT_FOUND.
+      for (const args of [['alias', 'remove', 'hand', '--global'], ['alias', 'rename', 'hand', 'h2', '--global'], ['rm', '--global', '-a', 'hand']]) {
+        const r = rvr(...args);
+        expect(r.status, args.join(' ')).toBe(1);
+        expect(r.stderr, args.join(' ')).toContain('Refusing to write the alias map');
+        expect(r.stderr, args.join(' ')).not.toContain('not found');
+      }
+      expect(json('alias', 'remove', 'hand', '--global').error?.code).toBe('STORE_UNREADABLE');
+      expect(json('alias', 'rename', 'hand', 'h2', '--global').error?.code).toBe('STORE_UNREADABLE');
       expect(read('_aliases.json')).toBe(before);
     });
 
@@ -372,6 +448,21 @@ describe('a store with git conflict markers in it (#215)', () => {
       expect(rvr('set', '--global', 'arch.store', 'v2').status).toBe(0);
       expect(rvr('copy', '--global', 'arch.store', 'arch.copy').status).toBe(0);
       expect(json('get', 'arch.copy').result).toEqual({ 'arch.copy': 'v2' });
+      expect(read('_confirm.json')).toBe(before);
+    });
+
+    it('confirm remove and set --no-confirm are refused — they used to report success and change nothing', () => {
+      const removed = rvr('confirm', 'remove', 'commands.deploy', '--global');
+      expect(removed.status).toBe(1);
+      expect(removed.stderr).toContain('Refusing to write the confirmation list');
+      expect(removed.stdout).not.toContain('Confirmation removed');
+
+      const unset = rvr('set', '--global', 'commands.hello', '--no-confirm');
+      expect(unset.status).toBe(1);
+      expect(unset.stderr).toContain('Refusing to write the confirmation list');
+      expect(unset.stdout).not.toContain('no longer requires confirmation');
+
+      expect(json('confirm', 'remove', 'commands.deploy', '--global').error?.code).toBe('STORE_UNREADABLE');
       expect(read('_confirm.json')).toBe(before);
     });
 

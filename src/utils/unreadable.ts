@@ -112,9 +112,12 @@ export function unreadableWarningBlock(files: UnreadableFile[]): string[] {
   return lines;
 }
 
-function buildMessage(files: UnreadableFile[], attempted: 'read' | 'write'): string {
+function buildMessage(files: UnreadableFile[], attempted: 'read' | 'write', lead?: string): string {
   const f = files[0];
   const more = files.length > 1 ? ` (and ${files.length - 1} more unreadable file${files.length > 2 ? 's' : ''})` : '';
+  if (lead !== undefined) {
+    return `${lead}: ${describeUnreadable(f)}${more}. Nothing was written. ${resolutionHint(f)} Then retry.`;
+  }
   if (attempted === 'read') {
     return `Cannot read ${subject(f)}: ${describeUnreadable(f)}${more}. It exists; this is not "not found". ${resolutionHint(f)}`;
   }
@@ -132,8 +135,13 @@ export class StoreUnreadableError extends Error {
   readonly files: UnreadableFile[];
   readonly attempted: 'read' | 'write';
 
-  constructor(files: UnreadableFile[], attempted: 'read' | 'write') {
-    super(buildMessage(files, attempted));
+  /**
+   * `lead` replaces the opening clause for a refusal that is not "this very
+   * file would be replaced" — a write beside an unreadable entry, or an
+   * operation on its parent. It names what was refused and why.
+   */
+  constructor(files: UnreadableFile[], attempted: 'read' | 'write', lead?: string) {
+    super(buildMessage(files, attempted, lead));
     this.name = 'StoreUnreadableError';
     this.files = files;
     this.attempted = attempted;
@@ -304,6 +312,54 @@ export function assertSidecarsWritable(target: () => string, kinds: ('aliases' |
   source.refresh?.();
   const broken = source.list().filter(f => f.kind !== 'entry' && kinds.includes(f.kind));
   if (broken.length > 0) throw new StoreUnreadableError(broken, 'write');
+}
+
+/**
+ * The refusal for a write to an ancestor or a descendant of an unreadable
+ * entry. `a.b` and `a.b.c` cannot both be stored: one is a leaf where the
+ * other needs a subtree. While `a.b.json` cannot be read the store does not
+ * know it is there, so a write to `a.b.c` would land beside it — and once the
+ * file is resolved, the next full save deletes one of the two.
+ */
+export function nameCollisionError(key: string, file: UnreadableFile): StoreUnreadableError {
+  const other = file.key ?? path.basename(file.path, '.json');
+  const relation = key.startsWith(`${other}.`) ? 'under' : 'over';
+  return new StoreUnreadableError(
+    [file],
+    'write',
+    `Refusing to write '${key}' ${relation} ${subject(file)}, which cannot be read (the two cannot both exist)`,
+  );
+}
+
+/** Is `other` an ancestor or a descendant of `key` in the dotted-key tree? */
+export function keysCollide(key: string, other: string): boolean {
+  return key.startsWith(`${other}.`) || other.startsWith(`${key}.`);
+}
+
+/**
+ * Pre-flight for a command that removes or moves a whole subtree. The command
+ * sees only the entries it can read: an unreadable one under `key` would be
+ * left on disk while the cascade drops (or re-points) its alias and its
+ * confirmation flag — so that once the file is resolved, an entry that
+ * required confirmation runs without it. Refuse before anything changes.
+ * Same contract as assertSidecarsWritable: scans the target store first, and
+ * stays out of the way when the target cannot be resolved or is not registered.
+ */
+export function assertSubtreeReadable(target: () => string, key: string, verb: 'remove' | 'rename'): void {
+  let sourceId: string;
+  try {
+    sourceId = target();
+  } catch {
+    return;
+  }
+  const source = sources.get(sourceId);
+  if (!source) return;
+  source.refresh?.();
+  const prefix = `${key}.`;
+  const broken = source.list().filter(f => f.kind === 'entry' && f.key?.startsWith(prefix));
+  if (broken.length > 0) {
+    throw new StoreUnreadableError(broken, 'write', `Refusing to ${verb} '${key}' while ${subject(broken[0])} under it cannot be read`);
+  }
 }
 
 /**

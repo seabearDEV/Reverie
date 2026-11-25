@@ -2,6 +2,7 @@ import { debug } from './utils/debug';
 import { Scope, loadAliasMap, saveAliasMap, loadAliasMapMerged } from './store';
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite } from './projectResolution';
+import { assertSidecarsWritable } from './utils/unreadable';
 
 
 export function loadAliases(scope?: Scope  ): Record<string, string> {
@@ -50,6 +51,9 @@ export function removeAlias(alias: string, scope?: Scope  ): boolean {
   // fails (#99). Pre-#99 project-then-global fallthrough is dropped to keep
   // remove semantics aligned with set: if you want to touch global, ask for it.
   const effectiveScope = resolveScopeForWrite(scope);
+  // #215: an unreadable map loads as empty, and "no such alias" is the wrong
+  // answer about a file that could not be read. Refuse instead.
+  assertSidecarsWritable(() => effectiveScope, ['aliases']);
   const aliases = loadAliasMap(effectiveScope);
   if (alias in aliases) {
     delete aliases[alias];
@@ -62,6 +66,7 @@ export function removeAlias(alias: string, scope?: Scope  ): boolean {
 // Rename an alias
 export function renameAlias(oldName: string, newName: string, scope?: Scope  ): boolean {
   const effectiveScope = resolveScopeForWrite(scope);
+  assertSidecarsWritable(() => effectiveScope, ['aliases']); // #215, as removeAlias
   const aliases = loadAliasMap(effectiveScope);
   if (!(oldName in aliases)) return false;
   if (newName in aliases) return false;

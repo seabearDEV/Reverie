@@ -23,7 +23,7 @@ import { atomicWriteFileSync } from './atomicWrite';
 import { withFileLock } from './fileLock';
 import { flattenObject, expandFlatKeys } from './objectPath';
 import { debug } from './debug';
-import { StoreUnreadableError, UnreadableFile, classifyUnparseable } from './unreadable';
+import { StoreUnreadableError, UnreadableFile, classifyUnparseable, keysCollide, nameCollisionError } from './unreadable';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -780,6 +780,21 @@ export function createDirectoryStore(
       if (refused.length > 0) {
         writeEpoch(dir, inProgressEpoch + 1);
         throw new StoreUnreadableError(refused, 'write');
+      }
+
+      // 3c. Nor a write to an ancestor or a descendant of an unreadable entry
+      //     (#215). The store cannot see that entry, so `a.b.c` would land
+      //     beside an unreadable `a.b` — a leaf and a subtree under one name
+      //     — and once the file is resolved the next full save deletes one
+      //     of them. setOne() sends every such write here: it detects the
+      //     collision from the file names and returns false.
+      for (const [key] of toWrite) {
+        for (const u of unreadableEntries.values()) {
+          if (u.file.key !== undefined && keysCollide(key, u.file.key)) {
+            writeEpoch(dir, inProgressEpoch + 1);
+            throw nameCollisionError(key, u.file);
+          }
+        }
       }
 
       // 4. Apply deltas. Each atomicWriteFileSync is individually atomic;

@@ -542,6 +542,42 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.readFileSync(storeFile(`${HANDOFF}.json`), 'utf8')).toBe(conflictedEntry);
     });
 
+    it('removing or renaming an alias over a conflicted alias map is refused, not "not found"', () => {
+      const aliases = conflictedSidecar('"hand": "context.next_session",', '"ho": "context.next_session",');
+      fs.writeFileSync(storeFile('_aliases.json'), aliases);
+      const calls: [string, Record<string, unknown>][] = [
+        ['reverie_alias_remove', { alias: 'hand' }],
+        ['reverie_remove', { key: 'hand', is_alias: true }],
+        ['reverie_rename', { oldKey: 'hand', newKey: 'h2', is_alias: true, scope: 'global' }],
+      ];
+      for (const [tool, params] of calls) {
+        const r = callMcpTool(tool, params);
+        expect(r.isError, tool).toBe(true);
+        expect(r.content[0].text, tool).toMatch(/^Refusing to write the alias map/);
+      }
+      expect(fs.readFileSync(storeFile('_aliases.json'), 'utf8')).toBe(aliases);
+    });
+
+    it('removing or renaming the parent of the conflicted entry is refused', () => {
+      callMcpTool('reverie_set', { key: 'context.other', value: 'a readable sibling' });
+      const removed = callMcpTool('reverie_remove', { key: 'context' });
+      expect(removed.isError).toBe(true);
+      expect(removed.content[0].text).toMatch(/^Refusing to remove 'context' while entry 'context\.next_session' under it cannot be read/);
+      const renamed = callMcpTool('reverie_rename', { oldKey: 'context', newKey: 'ctx', scope: 'global' });
+      expect(renamed.isError).toBe(true);
+      expect(renamed.content[0].text).toMatch(/^Refusing to rename 'context' while entry 'context\.next_session' under it cannot be read/);
+      expect(fs.existsSync(storeFile('context.other.json'))).toBe(true);
+      expect(fs.existsSync(storeFile('ctx.other.json'))).toBe(false);
+      expect(fs.readFileSync(storeFile(`${HANDOFF}.json`), 'utf8')).toBe(conflictedEntry);
+    });
+
+    it('a write under the conflicted entry is refused', () => {
+      const r = callMcpTool('reverie_set', { key: `${HANDOFF}.extra`, value: 'v' });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/^Refusing to write 'context\.next_session\.extra' under entry 'context\.next_session'/);
+      expect(fs.existsSync(storeFile(`${HANDOFF}.extra.json`))).toBe(false);
+    });
+
     it('reverie_run fails closed when the confirmation list is conflicted', () => {
       fs.writeFileSync(storeFile('_confirm.json'), conflictedSidecar('"commands.deploy": true,', '"commands.wipe": true,'));
       const r = callMcpTool('reverie_run', { key: 'commands.hello' });

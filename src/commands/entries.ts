@@ -14,7 +14,7 @@ import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAli
 import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
-import { assertSidecarsWritable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
+import { assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
 import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
@@ -764,6 +764,12 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   debug('removeEntry called', { key, force, global });
   const scope = toScope(global);
 
+  // #215: an entry under this key that cannot be read is invisible to the
+  // removal — it would stay on disk while the cascade below drops its alias
+  // and its confirmation flag. Checked before the lookup: a key whose only
+  // children are unreadable looks absent, and "not found" is the wrong answer.
+  assertSubtreeReadable(() => resolveScopeForWrite(scope), key, 'remove');
+
   const existing = getValue(key, scope);
   if (existing === undefined) {
     printWarning(`Entry '${key}' not found.`);
@@ -862,6 +868,9 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   }
 
   // Entry key rename
+  // #215: an unreadable entry under the old key would be left behind while
+  // its alias and its confirmation flag move to the new name.
+  assertSubtreeReadable(() => resolveScopeForWrite(scope), oldKey, 'rename');
   const value = getValue(oldKey, scope);
   if (value === undefined) {
     printError(`Entry '${oldKey}' not found.`, 'NOT_FOUND');

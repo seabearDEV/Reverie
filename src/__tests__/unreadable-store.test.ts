@@ -184,6 +184,42 @@ describe('an entry file that does not parse', () => {
     expect(makeStore().getOne('arch.store')).toBe('rewritten');
   });
 
+  it('save() refuses a write UNDER it: once resolved, the leaf and the child could not both exist', () => {
+    const store = storeWithConflict();
+    const before = fs.readFileSync(entryPath('context.next_session'), 'utf8');
+    const loaded = store.load();
+    const err = expectUnreadable(
+      () => store.save({ ...loaded, entries: { ...loaded.entries, context: { other: 'kept', next_session: { extra: 'v' } } } }),
+      'write',
+    );
+    expect(err.files.map(f => f.key)).toEqual(['context.next_session']);
+    expect(err.message).toMatch(/^Refusing to write 'context\.next_session\.extra' under entry 'context\.next_session'/);
+    expect(err.message).toContain('Nothing was written');
+    expect(fs.existsSync(entryPath('context.next_session.extra'))).toBe(false);
+    expect(fs.readFileSync(entryPath('context.next_session'), 'utf8')).toBe(before);
+    expect(epoch() % 2).toBe(0);
+  });
+
+  it('save() refuses a write OVER it, to a parent key', () => {
+    const store = makeStore();
+    store.save(data({ a: { b: { c: 'leaf' } }, z: { keep: 'v' } }));
+    gitWrite(entryPath('a.b.c'), conflictedEntry('ours', 'theirs'));
+    const loaded = store.load();
+    expect(loaded.entries).toEqual({ z: { keep: 'v' } });
+    const err = expectUnreadable(() => store.save({ ...loaded, entries: { ...loaded.entries, a: { b: 'now a leaf' } } }), 'write');
+    expect(err.message).toMatch(/^Refusing to write 'a\.b' over entry 'a\.b\.c'/);
+    expect(fs.existsSync(entryPath('a.b'))).toBe(false);
+    expect(epoch() % 2).toBe(0);
+  });
+
+  it('a sibling of it is not a name collision', () => {
+    const store = storeWithConflict();
+    const loaded = store.load();
+    store.save({ ...loaded, entries: { ...loaded.entries, context: { other: 'kept', next_sessions: 'plural', next: 'prefix' } } });
+    expect(makeStore().getOne('context.next_sessions')).toBe('plural');
+    expect(makeStore().getOne('context.next')).toBe('prefix');
+  });
+
   it('classifies other damage as "parse": truncated JSON, and a wrapper with no value', () => {
     const store = makeStore();
     store.save(data({ a: { cut: 'x', bare: 'y', ok: 'z' } }));

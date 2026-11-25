@@ -45,7 +45,7 @@ import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
-import { StoreUnreadableError, assertSidecarsWritable, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
+import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
@@ -641,6 +641,9 @@ server.tool(
     try {
       const scope = toScope(scopeParam);
       if (is_alias) {
+        // #215: an unreadable map loads as empty — "not found" would be the
+        // wrong answer about a file that could not be read.
+        assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases']);
         const aliases = loadAliases(scope);
         if (!(key in aliases)) {
           return errorResponse(`Alias '${key}' not found.`);
@@ -654,7 +657,9 @@ server.tool(
       // #215: a file that exists but does not parse must not be reported as
       // "not found" (getValue throws for it), and the cascade below cannot
       // see what points at this key while a sidecar is unreadable — refuse
-      // before the entry is gone.
+      // before the entry is gone. Nor may an unreadable entry UNDER this key
+      // be left on disk while the cascade drops its alias and its flag.
+      assertSubtreeReadable(() => resolveScopeForWrite(scope), resolvedKey, 'remove');
       if (getValue(resolvedKey, scope) !== undefined) {
         assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
       }
@@ -752,6 +757,9 @@ server.tool(
 
       // Entry key rename
       const resolvedOld = resolveKey(oldKey, scope);
+      // #215: an unreadable entry under the old key would be left behind
+      // while its alias and its confirmation flag move to the new name.
+      assertSubtreeReadable(() => resolveScopeForWrite(scope), resolvedOld, 'rename');
       const value = getValue(resolvedOld, scope);
       if (value === undefined) {
         return errorResponse(`Key '${oldKey}' not found.`);
