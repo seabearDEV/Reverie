@@ -865,6 +865,37 @@ describe('MCP Integration (real I/O)', () => {
         expect(row.errorCode, file).toBe('NOT_FOUND');
       }
     });
+
+    // #216 / #224: the CLI reports these refusals as INVALID_INPUT. Over MCP
+    // they were recorded with no code at all, so a row could not tell a
+    // refused collision from any other failed write.
+    it('a refused key collision is INVALID_INPUT, as on the CLI, for every tool that can meet one', () => {
+      callMcpTool('reverie_set', { key: 'rows216.api', value: 'leaf' });
+      callMcpTool('reverie_set', { key: 'rows216.auth', value: 'JWT' });
+      callMcpTool('reverie_set', { key: 'rows216solo', value: 'v' });
+      const refusals: [string, Record<string, unknown>][] = [
+        ['reverie_set', { key: 'rows216', value: 'flat' }],                                   // a value to a parent
+        ['reverie_set', { key: 'rows216.API', value: 'other' }],                              // a case variant
+        ['reverie_copy', { source: 'rows216solo', dest: 'rows216', force: true }],
+        ['reverie_rename', { oldKey: 'rows216solo', newKey: 'rows216.api.moved' }],           // under a leaf
+        ['reverie_rename', { oldKey: 'rows216', newKey: 'rows216.sub' }],                     // under itself
+        ['reverie_rename', { oldKey: 'rows216', newKey: 'constructor' }],                     // not a storable key
+        ['reverie_import', { type: 'entries', data: JSON.stringify({ rows216: 'flat' }), merge: true }],
+      ];
+      for (const [tool, params] of refusals) {
+        const label = `${tool} ${JSON.stringify(params)}`;
+        const r = callMcpTool(tool, params);
+        expect(r.isError, label).toBe(true);
+        for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+          const row = lastRow(file);
+          expect(row.tool, `${label} ${file}`).toBe(tool);
+          expect(row.success, `${label} ${file}`).toBe(false);
+          expect(row.errorCode, `${label} ${file}`).toBe('INVALID_INPUT');
+        }
+        // The code goes to the rows only: the client payload keeps its shape.
+        expect(Object.keys(r).sort(), label).toEqual(['content', 'isError']);
+      }
+    });
   });
 
   // ── #206: a config call is not a lookup ──────────────────────────────

@@ -528,7 +528,7 @@ server.tool(
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       // #216 / #224: the refusal is complete on its own.
-      if (err instanceof KeyCollisionError) return errorResponse(err.message);
+      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error setting entry: ${String(err)}`);
     }
   }
@@ -791,7 +791,7 @@ server.tool(
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       // #216 / #224: the refusal is complete on its own.
-      if (err instanceof KeyCollisionError) return errorResponse(err.message);
+      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error copying entry: ${String(err)}`);
     }
   }
@@ -839,7 +839,7 @@ server.tool(
       // everything under it. Refuse a destination that would be removed with
       // it, or that cannot be stored at all.
       const destinationProblem = renameDestinationProblem(resolvedOld, newKey, isValidEntryKey);
-      if (destinationProblem) return errorResponse(destinationProblem);
+      if (destinationProblem) return errorResponse(destinationProblem, 'INVALID_INPUT');
 
       const existing = readForWrite<CodexValue | undefined, Scope>(s => getValue(newKey, s), scope, () => resolveScopeForWrite(scope)); // #215, as reverie_copy
       if (existing !== undefined) {
@@ -910,7 +910,7 @@ server.tool(
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       // #216 / #224: the refusal is complete on its own.
-      if (err instanceof KeyCollisionError) return errorResponse(err.message);
+      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error renaming entry: ${String(err)}`);
     }
   }
@@ -1503,7 +1503,7 @@ server.tool(
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       // #216 / #224: the refusal is complete on its own.
-      if (err instanceof KeyCollisionError) return errorResponse(err.message);
+      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error importing: ${String(err)}`);
     }
   }

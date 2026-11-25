@@ -482,4 +482,28 @@ describe('a write that would remove or overwrite another entry is refused (#216,
     expect(r.status).toBe(1);
     expect(r.stdout + r.stderr).toContain("'arch.authFlow' and 'arch.authflow'");
   });
+
+  it('lint: a failing run records INVALID_INPUT in text mode, the code --json reports (#203)', () => {
+    // A leaf and a key under another spelling of it: two different files on
+    // every filesystem, and a pair that cannot both exist as keys. So unlike
+    // the pair above this one can be put on disk anywhere.
+    const dir = path.join(projectDir, '.reverie');
+    fs.writeFileSync(path.join(dir, 'arch.API.v2.json'), JSON.stringify({ value: 'under', meta: { created: 1, updated: 1 } }));
+    const lastRow = (): { tool: string; success?: boolean; errorCode?: string } => {
+      const lines = fs.readFileSync(path.join(dataDir, 'telemetry.jsonl'), 'utf8').trim().split('\n');
+      return JSON.parse(lines[lines.length - 1]) as { tool: string; success?: boolean; errorCode?: string };
+    };
+
+    const env = json('lint');
+    expect(env.ok).toBe(false);
+    expect(env.error?.code).toBe('INVALID_INPUT');
+    expect(lastRow().errorCode).toBe('INVALID_INPUT');
+
+    const r = rvr('lint');
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("'arch.api' and 'arch.API.v2'");
+    const row = lastRow();
+    expect(row.success).toBe(false);
+    expect(row.errorCode).toBe('INVALID_INPUT');
+  });
 });
