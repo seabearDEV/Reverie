@@ -1,0 +1,7 @@
+{
+  "value": "A write that would remove or overwrite an entry it does not name is refused (#216, #224, v1.4.0): a value to a parent of entries, a key under a leaf, or a key differing only by case from an existing one. Covers set, copy, rename, `data import --merge` and the MCP tools; error code INVALID_INPUT; no flag gets past it (-f only skips the overwrite prompt for the same key). Keys compare case-insensitively on every filesystem, so a case-only rename needs a temporary key. Code: utils/keyCollision.ts (no store imports, so mock-safe). directoryStore.setOne returns false on any collision and storage.setValue's slow path is what refuses — a new single-key write path must call assertKeyWritable itself. Full saves (saveData) are not checked: import replace, remove and rename restructure legitimately. Gap: lint sees a case pair only where both files exist; a case-insensitive checkout would need git's index, and src spawns no git. 1.3.0 still does all three silently and reports success.",
+  "meta": {
+    "created": 1795581241929,
+    "updated": 1795581242030
+  }
+}

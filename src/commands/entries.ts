@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { loadData, handleError, getValue, getValueForWrite, setValue, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
+import { assertKeyWritable } from '../utils/keyCollision';
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
 import { displayTree } from '../formatting';
@@ -847,7 +848,10 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
       const effectiveScope = resolveScopeForWrite(scope);
       const data = loadEntries(effectiveScope);
       for (const [flatKey, flatVal] of Object.entries(flattenObject({ [sourceKey]: value }))) {
-        setNestedValue(data, destKey + flatKey.slice(sourceKey.length), String(flatVal));
+        const leafKey = destKey + flatKey.slice(sourceKey.length);
+        // #216 / #224: refuse before the first leaf is set; nothing is saved.
+        assertKeyWritable(data, leafKey);
+        setNestedValue(data, leafKey, String(flatVal));
       }
       saveEntriesAndTouchMeta(data, destKey, effectiveScope);
     }
@@ -913,7 +917,10 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     const effectiveScope = resolveScopeForWrite(scope);
     const data = loadEntries(effectiveScope);
     for (const [flatKey, flatVal] of Object.entries(flattenObject({ [oldKey]: value }))) {
-      setNestedValue(data, newKey + flatKey.slice(oldKey.length), String(flatVal));
+      const leafKey = newKey + flatKey.slice(oldKey.length);
+      // #216 / #224: refuse before the first leaf is set; nothing is saved.
+      assertKeyWritable(data, leafKey);
+      setNestedValue(data, leafKey, String(flatVal));
     }
     saveEntriesAndTouchMeta(data, newKey, effectiveScope);
   }

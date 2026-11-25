@@ -1,5 +1,6 @@
 import { deepMerge } from './deepMerge';
-import { expandFlatKeys } from './objectPath';
+import { expandFlatKeys, flattenObject } from './objectPath';
+import { assertKeyWritable } from './keyCollision';
 import type { CodexData } from '../types';
 
 export interface ImportSections {
@@ -36,9 +37,20 @@ export function computeImportSections(
 ): ImportSections {
   const next: ImportSections = {};
   if (sections.entries) {
-    next.entries = (merge
-      ? deepMerge(current.entries(), expandFlatKeys(sections.entries))
-      : expandFlatKeys(sections.entries)) as CodexData;
+    const incoming = expandFlatKeys(sections.entries);
+    if (merge) {
+      const existing = current.entries();
+      // #216 / #224: a merge adds and overwrites keys; it does not get to
+      // remove the entries under a key it flattens, the leaf above a key it
+      // nests, or a key that differs only by case. Checked against the store
+      // as it stands, before anything is merged.
+      for (const leafKey of Object.keys(flattenObject(incoming))) {
+        assertKeyWritable(existing, leafKey);
+      }
+      next.entries = deepMerge(existing, incoming) as CodexData;
+    } else {
+      next.entries = incoming as CodexData;
+    }
   }
   if (sections.aliases) {
     next.aliases = merge ? { ...current.aliases(), ...sections.aliases } : sections.aliases;

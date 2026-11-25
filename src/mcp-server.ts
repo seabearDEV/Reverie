@@ -35,6 +35,7 @@ import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMet
 import { hasConfirm, setConfirm, removeConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
+import { KeyCollisionError, assertKeyWritable } from "./utils/keyCollision";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
@@ -499,6 +500,8 @@ server.tool(
       return textResponse(lines.join('\n'));
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      // #216 / #224: the refusal is complete on its own.
+      if (err instanceof KeyCollisionError) return errorResponse(err.message);
       return errorResponse(`Error setting entry: ${String(err)}`);
     }
   }
@@ -742,7 +745,10 @@ server.tool(
         const writeScope = resolveScopeForWrite(scope);
         const data = loadEntries(writeScope);
         for (const [flatKey, flatVal] of Object.entries(flattenObject({ [resolvedSource]: value }))) {
-          setNestedValue(data, dest + flatKey.slice(resolvedSource.length), String(flatVal));
+          const leafKey = dest + flatKey.slice(resolvedSource.length);
+          // #216 / #224: refuse before the first leaf is set; nothing is saved.
+          assertKeyWritable(data, leafKey);
+          setNestedValue(data, leafKey, String(flatVal));
         }
         saveEntriesAndTouchMeta(data, dest, writeScope);
       }
@@ -750,6 +756,8 @@ server.tool(
       return textResponse(`Copied: ${resolvedSource} -> ${dest}`);
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      // #216 / #224: the refusal is complete on its own.
+      if (err instanceof KeyCollisionError) return errorResponse(err.message);
       return errorResponse(`Error copying entry: ${String(err)}`);
     }
   }
@@ -812,7 +820,10 @@ server.tool(
         const writeScope = resolveScopeForWrite(scope);
         const data = loadEntries(writeScope);
         for (const [flatKey, flatVal] of Object.entries(flattenObject({ [resolvedOld]: value }))) {
-          setNestedValue(data, newKey + flatKey.slice(resolvedOld.length), String(flatVal));
+          const leafKey = newKey + flatKey.slice(resolvedOld.length);
+          // #216 / #224: refuse before the first leaf is set; nothing is saved.
+          assertKeyWritable(data, leafKey);
+          setNestedValue(data, leafKey, String(flatVal));
         }
         saveEntriesAndTouchMeta(data, newKey, writeScope);
       }
@@ -858,6 +869,8 @@ server.tool(
       return textResponse(`Renamed: ${resolvedOld} -> ${newKey}`);
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      // #216 / #224: the refusal is complete on its own.
+      if (err instanceof KeyCollisionError) return errorResponse(err.message);
       return errorResponse(`Error renaming entry: ${String(err)}`);
     }
   }
@@ -1445,6 +1458,8 @@ server.tool(
       );
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      // #216 / #224: the refusal is complete on its own.
+      if (err instanceof KeyCollisionError) return errorResponse(err.message);
       return errorResponse(`Error importing: ${String(err)}`);
     }
   }
