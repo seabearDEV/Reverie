@@ -1,7 +1,7 @@
 import { getEntriesFlat, Scope } from '../storage';
 import { loadAliases } from '../alias';
 import { loadMeta, loadMetaMerged, getStalenessTag } from '../store';
-import { UnreadableFile, bootstrapUnreadableLines, displayPath, listUnreadableFiles, markUnreadableShown } from '../utils/unreadable';
+import { UnreadableFile, bootstrapListed, bootstrapUnreadableLines, displayPath, listUnreadableFiles, markUnreadableShown } from '../utils/unreadable';
 import { isEncrypted } from '../utils/crypto';
 import { color } from '../formatting';
 import { getBinaryName } from '../utils/binaryName';
@@ -603,7 +603,9 @@ export function showContext(options: ContextOptions = {}): void {
       console.log(options.plain ? line : color.red(line));
     }
     console.log('');
-    markUnreadableShown();
+    // Only what the block named. Past its cap it says "… and N more"; the
+    // wrapper names those on stderr.
+    markUnreadableShown(bootstrapListed(payload.unreadable));
   }
 
   // Handoff banner first (#212): when the harness persists a large result

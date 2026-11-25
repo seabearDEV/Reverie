@@ -243,10 +243,39 @@ describe('a store with git conflict markers in it (#215)', () => {
       expect(Buffer.byteLength(r.stdout, 'utf8')).toBeLessThanOrEqual(4096);
     });
 
+    it('context: past the cap, the files the report does not name are named on stderr', () => {
+      for (let i = 0; i < 10; i++) gitWrite(`context.conflicted${String(i).padStart(2, '0')}.json`, before);
+      const r = rvr('context', '--plain');
+      expect(r.stdout.split('\n')[0]).toContain('11 store files cannot be read');
+      expect(r.stdout).toContain('… and 3 more');
+      // 11 files sorted by path: the report lists the first eight.
+      expect(r.stdout).toContain('context.conflicted07 — ');
+      expect(r.stdout).not.toContain('context.conflicted08');
+      expect(r.stderr).toContain('warning: 3 store files cannot be read:');
+      for (const rest of ['context.conflicted08.json', 'context.conflicted09.json', `${HANDOFF}.json`]) {
+        expect(r.stderr, rest).toContain(`${rest} has unresolved git conflict markers`);
+      }
+      expect(r.stderr).not.toContain('context.conflicted07');
+    });
+
+    it('run of a command that interpolates the conflicted key fails as unreadable, and names it once', () => {
+      expect(rvr('set', '--global', 'commands.show', 'echo ${context.next_session}').status).toBe(0);
+      const e = json('run', '--global', '--yes', 'commands.show');
+      expect(e.ok).toBe(false);
+      expect(e.error?.code).toBe('STORE_UNREADABLE');
+
+      const r = rvr('run', '--global', '--yes', 'commands.show');
+      expect(r.status).toBe(1);
+      expect(r.stderr.match(/has unresolved git conflict markers/g)).toHaveLength(1);
+    });
+
     it('lint: lists it and fails', () => {
       const r = rvr('lint', '--global');
       expect(r.status).toBe(1);
       expect(r.stdout).toContain('1 store file cannot be read');
+      // The line under the list must not read as an all-clear.
+      expect(r.stdout).not.toContain('No schema issues found.');
+      expect(r.stdout).toContain('No schema issues in the entries that could be read.');
       expect(r.stdout).toContain(`${HANDOFF}.json has unresolved git conflict markers`);
       expect(r.stderr).not.toContain('unresolved git conflict markers');
 
@@ -537,6 +566,19 @@ describe('a project store beside a global one (#215)', () => {
     const r = json('get', 'zz.note');
     expect(r.ok).toBe(false);
     expect(r.error?.code).toBe('STORE_UNREADABLE');
+  });
+
+  it('init skips a seed key it cannot read, and still finishes', () => {
+    // Two branches both ran the first-session bootstrap: the marker conflicts.
+    fs.writeFileSync(projectFile('context.initialized.json'), TRUNCATED);
+    const r = rvrIn(projectDir, 'init', '--force');
+    expect(r.status).toBe(0);
+    expect(r.stdout + r.stderr).toContain('Skipped context.initialized');
+    expect(fs.existsSync(path.join(projectDir, 'CLAUDE.md'))).toBe(true);
+    expect(fs.existsSync(path.join(projectDir, 'AGENTS.md'))).toBe(true);
+    // The other seed still landed, and the broken file was left alone.
+    expect(fs.existsSync(projectFile('conventions.persistence.json'))).toBe(true);
+    expect(fs.readFileSync(projectFile('context.initialized.json'), 'utf8')).toBe(TRUNCATED);
   });
 
   it('a broken PROJECT file is still a refused write', () => {

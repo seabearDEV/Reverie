@@ -45,7 +45,8 @@ import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
-import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
+import type { CodexValue } from "./types";
+import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapListed, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, readForWrite, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
@@ -78,15 +79,40 @@ const NO_UNREADABLE_WARNING_TOOLS = new Set([
  * turned up, minus any the error above already named. No extra scan.
  */
 function appendUnreadableWarnings(tool: string, result: unknown, named: Set<string>): void {
-  if (NO_UNREADABLE_WARNING_TOOLS.has(tool)) return;
+  // The bootstrap names its files in the body — up to a cap, past which it
+  // only counts them. Those it left out still get a block here.
+  const inBootstrap = tool === 'reverie_context';
+  if (NO_UNREADABLE_WARNING_TOOLS.has(tool) && !inBootstrap) return;
   try {
     const content = (result as { content?: unknown } | undefined)?.content;
     if (!Array.isArray(content)) return;
-    for (const file of listUnreadableFiles()) {
+    const files = listUnreadableFiles();
+    if (inBootstrap) for (const f of bootstrapListed(files)) named.add(f.path);
+    for (const file of files) {
       if (named.has(file.path)) continue;
       content.push({ type: 'text', text: `warning: ${unreadableWarning(file)}` });
     }
   } catch { /* reporting must not break the tool call */ }
+}
+
+/**
+ * Render a StoreUnreadableError (#215) the way a project-resolution refusal
+ * is rendered: the message, then a JSON block with the code and the files,
+ * so a client can branch on `STORE_UNREADABLE` without parsing prose.
+ */
+function storeUnreadableErrorResponse(err: StoreUnreadableError) {
+  const structured = JSON.stringify({
+    code: err.code,
+    attempted: err.attempted,
+    files: err.files.map(f => ({ kind: f.kind, ...(f.key !== undefined && { key: f.key }), file: f.path, reason: f.reason })),
+  }, null, 2);
+  return {
+    content: [
+      { type: "text" as const, text: err.message },
+      { type: "text" as const, text: '```json\n' + structured + '\n```' },
+    ],
+    isError: true,
+  };
 }
 
 /**
@@ -310,7 +336,7 @@ server.tool = ((...args: any[]) => {
       } else if (err instanceof StoreUnreadableError) {
         // #215: the message is complete on its own — what, why, how to fix.
         // A refused write is recorded as a refusal; a failed read is an error.
-        result = errorResponse(err.message);
+        result = storeUnreadableErrorResponse(err);
         if (err.attempted === 'write') refusedReason = 'store_unreadable';
         for (const f of err.files) unreadableNamed.add(f.path);
       } else {
@@ -699,7 +725,9 @@ server.tool(
         return errorResponse(`Key '${source}' not found.`);
       }
 
-      const existing = getValue(dest, scope);
+      // #215: a destination that does not parse is a refused write, not a
+      // failed read — worded and audited as one, as on the CLI.
+      const existing = readForWrite<CodexValue | undefined, Scope>(s => getValue(dest, s), scope, () => resolveScopeForWrite(scope));
       if (existing !== undefined && !force) {
         return errorResponse(`Key '${dest}' already exists. Pass force: true to overwrite.`);
       }
@@ -765,7 +793,7 @@ server.tool(
         return errorResponse(`Key '${oldKey}' not found.`);
       }
 
-      const existing = getValue(newKey, scope);
+      const existing = readForWrite<CodexValue | undefined, Scope>(s => getValue(newKey, s), scope, () => resolveScopeForWrite(scope)); // #215, as reverie_copy
       if (existing !== undefined) {
         return errorResponse(`Key '${newKey}' already exists. Remove it first or choose a different key.`);
       }
@@ -986,6 +1014,9 @@ function runGated(
   try {
     command = rawValues.map((cv) => interpolate(cv)).join(' && ');
   } catch (err) {
+    // #215: a `${key}` naming an unreadable entry is not an interpolation
+    // error. Let the wrapper render it, with its code.
+    if (err instanceof StoreUnreadableError) throw err;
     return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
   }
 
@@ -1029,6 +1060,7 @@ function runGated(
   try {
     execCommand = rawValues.map((cv) => interpolateExec(cv)).join(' && ');
   } catch (err) {
+    if (err instanceof StoreUnreadableError) throw err; // #215, as above
     return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
   }
 

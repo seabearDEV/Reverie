@@ -14,7 +14,7 @@ import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAli
 import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
-import { assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
+import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
 import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
@@ -124,6 +124,10 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
         try {
           value = interpolate(value);
         } catch (err) {
+          // #215: a `${key}` that names an unreadable entry. The outer catch
+          // reports it as STORE_UNREADABLE and marks the file as shown;
+          // printError here would call it RUNTIME and name the file twice.
+          if (err instanceof StoreUnreadableError) throw err;
           printError(err instanceof Error ? err.message : String(err));
           process.exitCode = 1;
           return;
@@ -159,6 +163,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       try {
         return interpolateExec(rawValue);
       } catch (err) {
+        if (err instanceof StoreUnreadableError) throw err; // #215, as above
         printError(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
         return undefined;

@@ -511,6 +511,32 @@ describe('messages', () => {
     expect(new StoreUnreadableError([entry, aliases, confirm], 'write').message).toContain('(and 2 more unreadable files)');
   });
 
+  it('a file that is merely invalid is not described as a conflict', () => {
+    const truncated: UnreadableFile = { ...entry, reason: 'parse' };
+    const msg = new StoreUnreadableError([truncated], 'write').message;
+    expect(msg).toContain('is not a valid store file, and writing would discard what is left of it. Nothing was written.');
+    expect(msg).not.toContain('both sides');
+    expect(msg).not.toContain('git checkout');
+  });
+
+  it('the fix for an invalid file says to delete it by hand: the store will not remove what it cannot read', () => {
+    expect(resolutionHint(confirm)).toBe(
+      'Restore /repo/.reverie/_confirm.json from version control or a backup, or delete that file by hand (the store will not remove a file it cannot read).',
+    );
+  });
+
+  it('a mixed set gets both fixes, each labelled', () => {
+    const truncated: UnreadableFile = { ...entry, key: 'a.cut', path: '/repo/.reverie/a.cut.json', reason: 'parse' };
+    for (const lines of [unreadableWarningBlock([entry, truncated]), bootstrapUnreadableLines([entry, truncated])]) {
+      const fixes = lines.slice(-2).map(l => l.trim());
+      expect(fixes[0]).toBe("With conflict markers: which side to keep is the user's call: `git checkout --ours -- <file>` (or `--theirs`), then `git add <file>`.");
+      expect(fixes[1]).toBe('Not a valid store file: restore each from version control or a backup, or delete it by hand (the store will not remove a file it cannot read).');
+    }
+    // One kind only: one line, unlabelled.
+    expect(unreadableWarningBlock([truncated, { ...truncated, key: 'a.b', path: '/repo/.reverie/a.b.json' }]).slice(-1)[0].trim())
+      .toBe('Restore each from version control or a backup, or delete it by hand (the store will not remove a file it cannot read).');
+  });
+
   it('the conflict fix is whole-file, valid as written, and leaves the choice of side to the user', () => {
     const hint = resolutionHint(entry);
     expect(hint).toContain("Which side to keep is the user's call");
@@ -518,7 +544,6 @@ describe('messages', () => {
     // No form that fails when pasted as one command, and no invitation to hand-edit.
     expect(hint).not.toContain('--ours|--theirs');
     expect(hint).not.toMatch(/edit|merge by hand/i);
-    expect(resolutionHint(confirm)).toBe('Restore /repo/.reverie/_confirm.json from version control or a backup, or remove it.');
   });
 
   it('a warning says what the store is doing without the file', () => {

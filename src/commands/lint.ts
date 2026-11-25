@@ -214,7 +214,9 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
 
   // Namespace section
   if (namespaceIssues.length === 0) {
-    console.log(color.green('No schema issues found.'));
+    // #215: with unreadable files listed above, an unqualified all-clear
+    // reads as if the store were fine. It covers only what could be read.
+    console.log(color.green(unreadable.length > 0 ? 'No schema issues in the entries that could be read.' : 'No schema issues found.'));
     console.log(color.gray(`Allowed namespaces: ${allowedNamespaces.join(', ')}`));
   } else {
     // Group by namespace

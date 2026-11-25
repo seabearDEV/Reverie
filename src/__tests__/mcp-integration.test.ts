@@ -465,6 +465,53 @@ describe('MCP Integration (real I/O)', () => {
       expect(r.content[0].text).toContain('git checkout --ours --');
     });
 
+    it('an error carries the code and the files as a second, machine-readable block', () => {
+      const r = callMcpTool('reverie_get', { key: HANDOFF });
+      expect(r.isError).toBe(true);
+      expect(r.content).toHaveLength(2);
+      const block = r.content[1].text;
+      expect(block.startsWith('```json\n') && block.endsWith('\n```')).toBe(true);
+      expect(JSON.parse(block.slice('```json\n'.length, -'\n```'.length))).toEqual({
+        code: 'STORE_UNREADABLE',
+        attempted: 'read',
+        files: [{ kind: 'entry', key: HANDOFF, file: storeFile(`${HANDOFF}.json`), reason: 'conflict' }],
+      });
+    });
+
+    it('reverie_copy and reverie_rename onto it are refused writes, and logged as refusals', () => {
+      const copied = callMcpTool('reverie_copy', { source: 'arch.store', dest: HANDOFF, force: true });
+      expect(copied.isError).toBe(true);
+      expect(copied.content[0].text).toMatch(/^Refusing to write entry 'context\.next_session'/);
+      const renamed = callMcpTool('reverie_rename', { oldKey: 'arch.store', newKey: HANDOFF, scope: 'global' });
+      expect(renamed.isError).toBe(true);
+      expect(renamed.content[0].text).toMatch(/^Refusing to write entry 'context\.next_session'/);
+      expect(fs.readFileSync(storeFile(`${HANDOFF}.json`), 'utf8')).toBe(conflictedEntry);
+      expect(fs.existsSync(storeFile('arch.store.json'))).toBe(true);
+
+      const audit = fs.readFileSync(path.join(tmpDir, 'audit.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+      for (const tool of ['reverie_copy', 'reverie_rename']) {
+        const row = audit.find((e: any) => e.tool === tool);
+        expect(row.success, tool).toBe(false);
+        expect(row.refusedReason, tool).toBe('store_unreadable');
+      }
+    });
+
+    it('reverie_run of a command that interpolates it reports the file, not an interpolation error', () => {
+      callMcpTool('reverie_set', { key: 'commands.show', value: 'echo ${context.next_session}' });
+      const r = callMcpTool('reverie_run', { key: 'commands.show' });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/^Cannot read entry 'context\.next_session'/);
+    });
+
+    it('reverie_context past the cap names the remaining files as extra blocks', () => {
+      for (let i = 0; i < 10; i++) fs.writeFileSync(storeFile(`context.conflicted${String(i).padStart(2, '0')}.json`), conflictedEntry);
+      const r = callMcpTool('reverie_context', {});
+      expect(r.content[0].text).toContain('… and 3 more');
+      expect(texts(r).slice(1)).toHaveLength(3);
+      expect(texts(r).slice(1).join('\n')).toContain('context.conflicted08.json');
+      expect(texts(r).slice(1).join('\n')).not.toContain('context.conflicted07.json');
+    });
+
     it('reverie_set: refused, the file untouched, and logged as a refusal', () => {
       const r = callMcpTool('reverie_set', { key: HANDOFF, value: 'a fresh handoff' });
       expect(r.isError).toBe(true);

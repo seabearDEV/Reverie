@@ -81,11 +81,39 @@ export function describeUnreadable(f: UnreadableFile): string {
  * the other committer's entry.
  */
 export function resolutionHint(f: UnreadableFile): string {
-  return f.reason === 'conflict' ? conflictHint(displayPath(f.path)) : `Restore ${displayPath(f.path)} from version control or a backup, or remove it.`;
+  return f.reason === 'conflict' ? conflictHint(displayPath(f.path)) : restoreHint(`Restore ${displayPath(f.path)}`, 'that file');
 }
 
 function conflictHint(p: string): string {
   return `Which side to keep is the user's call: \`git checkout --ours -- ${p}\` (or \`--theirs\`), then \`git add ${p}\`.`;
+}
+
+/**
+ * For a file that is simply not valid (truncated, emptied, hand-edited).
+ * "Delete it by hand" is spelled out because the store offers no way to:
+ * `rm` refuses a file it cannot read, as it does for a conflict, and reset
+ * leaves it in place.
+ */
+function restoreHint(lead: string, it: string): string {
+  return `${lead} from version control or a backup, or delete ${it} by hand (the store will not remove a file it cannot read).`;
+}
+
+/**
+ * The fix stated once for a list of files: one line when they are all the
+ * same kind of broken, two labelled lines when the list mixes conflicts with
+ * files that are merely invalid — the git commands do nothing for those.
+ */
+function sharedHints(files: UnreadableFile[]): string[] {
+  const conflict = files.some(f => f.reason === 'conflict');
+  const parse = files.some(f => f.reason === 'parse');
+  if (conflict && parse) {
+    const lower = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
+    return [
+      `With conflict markers: ${lower(conflictHint('<file>'))}`,
+      `Not a valid store file: ${lower(restoreHint('Restore each', 'it'))}`,
+    ];
+  }
+  return [conflict ? conflictHint('<file>') : restoreHint('Restore each', 'it')];
 }
 
 /** What the store is doing without the file. */
@@ -108,7 +136,7 @@ export function unreadableWarningBlock(files: UnreadableFile[]): string[] {
   if (files.length === 1) return [`warning: ${unreadableWarning(files[0])}`];
   const lines = [`warning: ${files.length} store files cannot be read:`];
   for (const f of files) lines.push(`  ${describeUnreadable(f)} — ${consequence(f)}`);
-  lines.push(`  ${files.some(f => f.reason === 'conflict') ? conflictHint('<file>') : 'Restore each from version control or a backup, or remove it.'}`);
+  for (const hint of sharedHints(files)) lines.push(`  ${hint}`);
   return lines;
 }
 
@@ -121,7 +149,9 @@ function buildMessage(files: UnreadableFile[], attempted: 'read' | 'write', lead
   if (attempted === 'read') {
     return `Cannot read ${subject(f)}: ${describeUnreadable(f)}${more}. It exists; this is not "not found". ${resolutionHint(f)}`;
   }
-  const lost = f.kind === 'entry' ? 'both sides of it' : f.kind === 'aliases' ? 'every alias in it' : 'every confirmation flag in it';
+  // "Both sides" is true of a conflict only; a truncated file has no sides.
+  const lost = f.kind === 'entry' ? (f.reason === 'conflict' ? 'both sides of it' : 'what is left of it')
+    : f.kind === 'aliases' ? 'every alias in it' : 'every confirmation flag in it';
   return `Refusing to write ${subject(f)}: ${describeUnreadable(f)}${more}, and writing would discard ${lost}. Nothing was written. ${resolutionHint(f)} Then retry.`;
 }
 
@@ -195,13 +225,22 @@ export function bootstrapUnreadableLines(files: UnreadableFile[]): string[] {
   const lines = [
     `!! ${n} store file${n === 1 ? '' : 's'} cannot be read. ${n === 1 ? 'It is' : 'They are'} NOT shown below and NOT missing — do not write over ${n === 1 ? 'it' : 'them'}:`,
   ];
-  for (const f of files.slice(0, BOOTSTRAP_LIST_CAP)) {
+  for (const f of bootstrapListed(files)) {
     const what = f.kind === 'entry' ? (f.key ?? path.basename(f.path, '.json')) : f.kind === 'aliases' ? '(alias map)' : '(confirmation list)';
     lines.push(`   ${what} — ${describeUnreadable(f)}`);
   }
   if (n > BOOTSTRAP_LIST_CAP) lines.push(`   … and ${n - BOOTSTRAP_LIST_CAP} more`);
-  lines.push(`   ${files.some(f => f.reason === 'conflict') ? conflictHint('<file>') : 'Restore each from version control or a backup, or remove it.'}`);
+  for (const hint of sharedHints(files)) lines.push(`   ${hint}`);
   return lines;
+}
+
+/**
+ * The files the bootstrap block names; past the cap it only counts the rest.
+ * Callers mark these — not all of them — as shown, so the files the block
+ * left out are still named by the surface's own warning channel.
+ */
+export function bootstrapListed(files: UnreadableFile[]): UnreadableFile[] {
+  return files.slice(0, BOOTSTRAP_LIST_CAP);
 }
 
 // ── "Already shown" bookkeeping ────────────────────────────────────────
