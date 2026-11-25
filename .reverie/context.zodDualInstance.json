@@ -1,0 +1,7 @@
+{
+  "value": "Bumping a direct dep that a transitive dep ALSO resolves creates two copies, and for type-carrying packages that silently breaks the build. Hit 2026-09-04 by Dependabot #184 (zod 4.4.3 -> 4.5.4): top level moved, @modelcontextprotocol/sdk kept a nested zod@4.4.3, and every registerTool call in src/mcp-server.ts stopped type-checking —\n\n  error TS2769: Argument of type 'string' is not assignable to parameter of type 'ZodRawShapeCompat'\n\n21 tsc errors + 94 lint errors (no-unsafe-assignment cascading off the failed inference). The SDK's ZodRawShapeCompat came from ITS zod; our schemas from ours; structurally distinct types.\n\nFIX: add zod to package.json overrides (now: fast-uri, minimatch, zod) -> one instance, 0/0, 176 packages not 178. Landed as #185, superseding #184. Unlike the [[context.bunTransitiveDedup]] cases, zod is a dep we DO import, so the override pins the SDK to the version we already ship rather than adopting a stranger.\n\nCHECK AFTER ANY zod/MCP-SDK BUMP: find node_modules -name package.json -path '*zod/package.json' — more than one hit means re-pin.\n\nWHY CI MISSED IT, and what later zod bumps do now that the override exists: [[context.dependabotOverrides]].",
+  "meta": {
+    "created": 1788564905931,
+    "updated": 1795571125246
+  }
+}

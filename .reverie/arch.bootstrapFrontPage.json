@@ -1,0 +1,7 @@
+{
+  "value": "Front-page details beyond [[arch.bootstrap]], which owns the composer and the budget order. Pinned set = project/commands/conventions by default, overridden per store by the entry system.bootstrap.pinned (store content, not config.json — system.llm.instructions precedent). Gist = contextBudget.gistOf: first line, word-boundary cut at bootstrap_gist_chars=160. Demotion SKIPS namespaces whose entries are already one-liners. The MCP handler renders the same ContextPayload; do NOT re-add a hand-rolled copy there. Hints (rvr get <key> vs reverie_get <key>) are the only surface difference. CLI telemetry gets shape/degradation fields through output.recordSignals()/takeSignals() — the CLI analog of the MCP AsyncLocalStorage guardrail channel; drained per invocation by instrumentation.ts. extractEntryCount in mcp-server parses the footer \"(N entries\" — keep that token if you change the footer.",
+  "meta": {
+    "created": 1788566721828,
+    "updated": 1795571125340
+  }
+}
