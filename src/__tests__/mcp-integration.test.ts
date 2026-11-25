@@ -910,7 +910,7 @@ describe('MCP Integration (real I/O)', () => {
       ]);
     });
 
-    it('an import whose own keys collide is INVALID_INPUT: merged, replacing, and previewed', () => {
+    it('an import that fails validation is INVALID_INPUT: colliding keys (merged, replacing, previewed) and a bad section', () => {
       // The pair is inside the data, so the refusal comes from validation,
       // not from the store — a different throw, and one that carried no code.
       const data = JSON.stringify({ notes: { Key: 'one', key: 'two' } });
@@ -918,6 +918,8 @@ describe('MCP Integration (real I/O)', () => {
         ['reverie_import', { type: 'entries', data, merge: true }],
         ['reverie_import', { type: 'entries', data, merge: false }],
         ['reverie_import', { type: 'entries', data, preview: true }],
+        // Validation of the other sections is coded the same way.
+        ['reverie_import', { type: 'aliases', data: JSON.stringify({ short: 5 }) }],
       ]);
     });
 
