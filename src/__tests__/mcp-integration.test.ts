@@ -924,8 +924,6 @@ describe('MCP Integration (real I/O)', () => {
     });
 
     it('a rename or copy onto a key that already exists is INVALID_INPUT', () => {
-      // On a case-insensitive filesystem this is also the answer a case
-      // variant of an existing key gets, before the collision check is reached.
       callMcpTool('reverie_set', { key: 'rows216.api', value: 'leaf' });
       callMcpTool('reverie_set', { key: 'rows216solo', value: 'v' });
       callMcpTool('reverie_alias_set', { alias: 'r216a', key: 'rows216.api' });
