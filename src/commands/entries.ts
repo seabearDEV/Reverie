@@ -21,7 +21,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
 import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
-import { isJsonMode, setResult, failJson } from '../utils/output';
+import { isJsonMode, setResult, failJson, recordErrorCode } from '../utils/output';
 import { markValueStored } from '../utils/writeAmp';
 
 function toScope(global?: boolean  ): Scope | undefined {
@@ -259,6 +259,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
         const stdout = execSync(execValue, { encoding: 'utf-8', shell: process.env.SHELL ?? '/bin/sh' });
         process.stdout.write(stdout);
       } catch (err: unknown) {
+        recordErrorCode('COMMAND_FAILED'); // the code the JSON branch reports (#203)
         process.exitCode = (err && typeof err === 'object' && 'status' in err ? Number(err.status) : 1) || 1;
         if (err && typeof err === 'object' && 'stderr' in err && (err as { stderr?: string }).stderr) {
           process.stderr.write(String((err as { stderr?: string }).stderr));
@@ -268,6 +269,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       try {
         execSync(execValue, { stdio: 'inherit', shell: process.env.SHELL ?? '/bin/sh' });
       } catch (err: unknown) {
+        recordErrorCode('COMMAND_FAILED');
         process.exitCode = (err && typeof err === 'object' && 'status' in err ? Number(err.status) : 1) || 1;
       }
     }

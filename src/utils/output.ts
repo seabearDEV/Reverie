@@ -95,6 +95,14 @@ export interface InvocationSignals {
 }
 let signals: InvocationSignals = {};
 
+// The code the current call failed with (#203), for its telemetry and audit
+// rows. printError and handleError record it in text mode, where the failure
+// is otherwise only a line on stderr; failJson records it in JSON mode. The
+// instrumentation wrapper takes it when the call ends, so in an invocation
+// that runs several calls — a batch `set` — no call is handed another's
+// code. (The envelope's own `error` is per invocation and is not cleared.)
+let reportedErrorCode: ErrorCode | undefined;
+
 export function recordSignals(partial: InvocationSignals): void {
   Object.assign(signals, partial);
 }
@@ -113,6 +121,7 @@ export function takeSignals(): InvocationSignals {
 export function configureOutput(opts: { json: boolean; command: string }): void {
   state = freshState();
   signals = {};
+  reportedErrorCode = undefined;
   state.json = opts.json;
   state.command = opts.command;
 }
@@ -121,6 +130,7 @@ export function configureOutput(opts: { json: boolean; command: string }): void 
 export function resetOutput(): void {
   state = freshState();
   signals = {};
+  reportedErrorCode = undefined;
 }
 
 export function isJsonMode(): boolean {
@@ -156,6 +166,15 @@ export function addWarning(message: string, code = 'WARNING', count?: number): v
 }
 
 /**
+ * Whether this exact warning is already recorded. A batch `set` runs one
+ * instrumented call per pair into a single envelope, so a warning about the
+ * store itself would otherwise be added once per pair.
+ */
+export function hasWarning(message: string, code = 'WARNING'): boolean {
+  return state.warnings.some(w => w.code === code && w.message === message);
+}
+
+/**
  * Record a structured error and flag the process for a non-zero exit. The
  * envelope is emitted (ok:false) by the wrapper / finalize step. `preview`
  * carries the resolved command for REQUIRES_CONFIRMATION / COMMAND_FAILED.
@@ -164,7 +183,20 @@ export function failJson(code: ErrorCode, message: string, preview?: string): vo
   const err: EnvelopeError = { code, message };
   if (preview !== undefined) err.preview = preview;
   state.error = err;
+  reportedErrorCode = code;
   process.exitCode = 1;
+}
+
+/** Record the code of a failure reported outside the envelope (text mode). */
+export function recordErrorCode(code: ErrorCode): void {
+  reportedErrorCode = code;
+}
+
+/** The code reported since the last take, if any. Clears it. */
+export function takeErrorCode(): ErrorCode | undefined {
+  const code = reportedErrorCode;
+  reportedErrorCode = undefined;
+  return code;
 }
 
 export function hasError(): boolean {
@@ -203,12 +235,19 @@ export function alreadyEmitted(): boolean {
  * Emit exactly one envelope. `write` defaults to process.stdout.write but the
  * wrapper passes the *original* (pre-monkey-patch) writer so the envelope
  * reaches the real stdout while handler output stays sunk. Idempotent.
+ * `line` is an envelope already serialized by serializeEnvelope: the wrapper
+ * measures it for the telemetry and audit rows (#192) and hands the same
+ * string here, so what was measured is what is written.
  */
-export function emitEnvelope(write?: (s: string) => void): void {
+export function emitEnvelope(write?: (s: string) => void, line?: string): void {
   if (state.emitted) return;
   state.emitted = true;
-  const out = buildEnvelope();
-  const line = JSON.stringify(out, null, 2) + '\n';
-  if (write) write(line);
-  else process.stdout.write(line);
+  const out = line ?? serializeEnvelope();
+  if (write) write(out);
+  else process.stdout.write(out);
+}
+
+/** The envelope as emitEnvelope writes it, given the state as it stands. */
+export function serializeEnvelope(): string {
+  return JSON.stringify(buildEnvelope(), null, 2) + '\n';
 }

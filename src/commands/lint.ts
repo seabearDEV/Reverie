@@ -2,7 +2,7 @@ import { getEntriesFlat, Scope } from '../storage';
 import { color } from '../formatting';
 import { findProjectFile } from '../store';
 import { interpolate } from '../utils/interpolate';
-import { isJsonMode, setResult, failJson } from '../utils/output';
+import { isJsonMode, setResult, failJson, recordErrorCode } from '../utils/output';
 import { describeUnreadable, displayPath, listUnreadableFiles, markUnreadableShown, resolutionHint } from '../utils/unreadable';
 import fs from 'fs';
 import path from 'path';
@@ -209,6 +209,7 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
     console.log('');
     // Listed here, so the wrapper need not repeat them on stderr.
     markUnreadableShown();
+    recordErrorCode('STORE_UNREADABLE'); // the code the JSON branch reports (#203)
     process.exitCode = 1;
   }
 
