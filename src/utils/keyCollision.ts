@@ -198,3 +198,14 @@ export function renameDestinationProblem(oldKey: string, newKey: string, isValid
   }
   return null;
 }
+
+/**
+ * The entries a rename of `oldKey` to `newKey` moves, old key to new key: the
+ * key itself when it holds a value, every leaf under it when it is a
+ * namespace. `value` is what the rename read at `oldKey`.
+ */
+export function renamedLeaves(oldKey: string, newKey: string, value: CodexData[string]): [from: string, to: string][] {
+  if (typeof value === 'string') return [[oldKey, newKey]];
+  return Object.keys(flattenObject({ [oldKey]: value }))
+    .map((leaf): [string, string] => [leaf, newKey + leaf.slice(oldKey.length)]);
+}

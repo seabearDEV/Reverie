@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { loadData, handleError, getValue, getValueForWrite, setValue, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
-import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
+import { assertKeysWritable, renameDestinationProblem, renamedLeaves } from '../utils/keyCollision';
 import { isValidEntryKey } from '../utils/directoryStore';
 import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
@@ -349,7 +349,34 @@ async function promptAndEncrypt(value: string, passwordFile?: string): Promise<s
 }
 
 /**
- * Why a confirmation flag cannot be set on `key`, or null when it can.
+ * Does `key` still read after a rename moved it? It does when the same key is
+ * stored in the other scope, which a rename in this one does not touch. An
+ * entry that cannot be read is still there.
+ */
+function stillReads(key: string, scope?: Scope): boolean {
+  try {
+    return getValue(key, scope) !== undefined;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The keys stored in the scope a lookup of `scope` covers. Each store is read
+ * on its own: the default view (loadData with no scope) replaces a whole
+ * top-level namespace of the global store with the project's, which hides
+ * global keys that a lookup by key still finds.
+ */
+function storedKeys(scope?: Scope): string[] {
+  if (scope === 'project' || scope === 'global') return Object.keys(flattenObject(loadData(scope)));
+  const keys = new Set(Object.keys(flattenObject(loadData('global'))));
+  if (findProjectFile()) for (const k of Object.keys(flattenObject(loadData('project')))) keys.add(k);
+  return [...keys];
+}
+
+/**
+ * Why a confirmation flag cannot be set on `key` (or, with `setting` false,
+ * cleared from it), or null when it can.
  *
  * A flag gates `run`, and `run` takes an entry that holds a command, so the
  * key has to be one — spelled as it is stored. Each of these used to report
@@ -358,28 +385,28 @@ async function promptAndEncrypt(value: string, passwordFile?: string): Promise<s
  *   - a key that is not in the store (a typo): `confirm set` did not look;
  *   - a namespace: the lookup found the subtree, and `run` never takes one;
  *   - a key that differs from the entry only by case: on a case-insensitive
- *     filesystem the lookup is answered by the entry's file, so the flag went
- *     into the list under a name the entry does not have.
+ *     filesystem the lookup was answered by the entry's file, so the flag
+ *     went into the list under a name the entry does not have.
  *
- * The gate itself now matches a flag under any spelling (confirm.ts), so the
- * third is no longer a way past it. It is refused all the same, like the
- * write it resembles (#216), so the list names entries as they are stored.
+ * Clearing is looser about one thing: a namespace is accepted, so a flag
+ * that an older version put on one can be taken off again.
  */
-export function confirmTargetProblem(key: string, scope?: Scope): { message: string; code: 'NOT_FOUND' | 'INVALID_INPUT' } | null {
+export function confirmTargetProblem(key: string, scope?: Scope, setting = true): { message: string; code: 'NOT_FOUND' | 'INVALID_INPUT' } | null {
   // First, and unguarded: an entry whose file cannot be read is not a miss
   // (#215), and getValue is what throws for it.
   const value = getValue(key, scope);
-  if (value !== undefined && typeof value !== 'string') {
+  if (setting && value !== undefined && typeof value !== 'string') {
     return {
       code: 'INVALID_INPUT',
       message: `'${key}' is a namespace, not an entry. A confirmation flag goes on an entry that holds a command: set it on the entries under '${key}'.`,
     };
   }
-  // The lookup above cannot tell the entry from another spelling of it: on a
-  // case-insensitive filesystem either one opens the entry's file. The
-  // store's own key list can.
-  const stored = Object.keys(flattenObject(loadData(scope)));
-  if (!stored.includes(key)) {
+  // A read is answered only by the key as stored (directoryStore's getOne),
+  // so another spelling is normally a miss already. The list is still
+  // checked: it names the stored key for the message, and it holds where
+  // the filesystem cannot say what a file is called.
+  const stored = storedKeys(scope);
+  if (typeof value !== 'object' && !stored.includes(key)) {
     const lower = key.toLowerCase();
     const otherSpelling = stored.find(k => k.toLowerCase() === lower);
     if (otherSpelling !== undefined) {
@@ -425,7 +452,7 @@ export async function setEntry(key: string, value: string | undefined, force = f
     if (value === undefined) {
       // Handle --confirm / --no-confirm on an existing entry (no value needed)
       if (confirm !== undefined) {
-        const problem = confirmTargetProblem(key, scope);
+        const problem = confirmTargetProblem(key, scope, confirm);
         if (problem) {
           printError(problem.message, problem.code);
           process.exitCode = 1;
@@ -1107,8 +1134,8 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     saveAliases(aliases, scope);
   }
 
-  // Move confirm metadata: the flag on the key and on every entry under it.
-  moveConfirm(oldKey, newKey, scope);
+  // Move confirm metadata: the flag of each entry that moved.
+  moveConfirm(renamedLeaves(oldKey, newKey, value), scope, key => stillReads(key, scope));
 
   // Set a new alias on the renamed key
   if (newAlias) {

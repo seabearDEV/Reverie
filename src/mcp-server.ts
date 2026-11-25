@@ -35,7 +35,7 @@ import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMet
 import { hasConfirm, moveConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
-import { KeyCollisionError, assertKeysWritable, renameDestinationProblem } from "./utils/keyCollision";
+import { KeyCollisionError, assertKeysWritable, renameDestinationProblem, renamedLeaves } from "./utils/keyCollision";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
@@ -895,8 +895,12 @@ server.tool(
         saveAliases(aliases, scope);
       }
 
-      // Move confirm metadata: the flag on the key and on every entry under it.
-      moveConfirm(resolvedOld, newKey, scope);
+      // Move confirm metadata: the flag of each entry that moved.
+      // The old name keeps its flag while it still reads: the same key in the
+      // other scope, which this rename did not touch, was gated by it too.
+      moveConfirm(renamedLeaves(resolvedOld, newKey, value), scope, (key) => {
+        try { return getValue(key, scope) !== undefined; } catch { return true; }
+      });
 
       // Set a new alias on the renamed key
       if (alias) {

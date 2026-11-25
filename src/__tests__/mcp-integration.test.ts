@@ -301,11 +301,21 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.existsSync(marker('status'))).toBe(false);
     });
 
-    it('reverie_run: a key spelled in another case never runs the flagged command', () => {
-      // Case-insensitive filesystem: the spelling reads the entry and the
-      // gate holds. Case-sensitive: it names nothing. Either way, no run.
+    it('reverie_run: a key spelled another way is not a stored key, and never runs the flagged command', () => {
+      // Another case, and a letter the filesystem folds and toLowerCase does
+      // not (U+017F for the `s`). Directly, through a reference, through an
+      // alias.
       flag('commands.deploy');
-      callMcpTool('reverie_run', { key: 'commands.DEPLOY' });
+      for (const key of ['commands.DEPLOY', 'commandſ.deploy']) {
+        const direct = callMcpTool('reverie_run', { key });
+        expect(direct.isError, key).toBe(true);
+        expect(text(direct), key).toContain('not found');
+        callMcpTool('reverie_set', { key: 'commands.wrapper', value: '${' + key + '} && true' });
+        expect(callMcpTool('reverie_run', { key: 'commands.wrapper' }).isError, key).toBe(true);
+        callMcpTool('reverie_alias_set', { alias: 'dp', key });
+        expect(callMcpTool('reverie_run', { key: 'dp' }).isError, key).toBe(true);
+        expect(callMcpTool('reverie_get', { key }).isError, key).toBe(true);
+      }
       expect(fs.existsSync(marker('deploy'))).toBe(false);
     });
 
@@ -318,12 +328,40 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.existsSync(marker('deploy'))).toBe(false);
     });
 
-    it('reverie_rename: a renamed entry keeps a flag listed in another case', () => {
+    it('reverie_rename: a renamed entry is flagged when its flag was listed in another case', () => {
       flag('commands.DEPLOY');
       callMcpTool('reverie_rename', { oldKey: 'commands.deploy', newKey: 'commands.ship' });
-      expect(flagged()).toEqual(['commands.ship']);
+      // The old spelling is not the renamed entry's name; it stays.
+      expect(flagged()).toEqual(['commands.DEPLOY', 'commands.ship']);
       expect(text(callMcpTool('reverie_run', { key: 'commands.ship' }))).toContain('requires confirmation before execution');
       expect(fs.existsSync(marker('deploy'))).toBe(false);
+    });
+
+    it('reverie_rename: another spelling of the source is not found, and nothing is copied', () => {
+      flag('commands.deploy');
+      const r = callMcpTool('reverie_rename', { oldKey: 'commands.DEPLOY', newKey: 'tmp.x' });
+      expect(r.isError).toBe(true);
+      expect(fs.existsSync(storeFile('tmp.x.json'))).toBe(false);
+      expect(flagged()).toEqual(['commands.deploy']);
+    });
+
+    it('reverie_remove and reverie_rename leave the flag of an entry in a namespace spelled in another case', () => {
+      // `ops.*` and `OPS.*` are two namespaces; removing or renaming one
+      // touched the other's flag when the cascade ignored case.
+      for (const [tool, params] of [
+        ['reverie_remove', { key: 'ops' }],
+        ['reverie_rename', { oldKey: 'ops', newKey: 'jobs' }],
+      ] as [string, Record<string, unknown>][]) {
+        callMcpTool('reverie_set', { key: 'ops.build', value: 'true' });
+        callMcpTool('reverie_set', { key: 'OPS.deploy', value: `touch ${marker('OPS')}` });
+        flag('OPS.deploy');
+        expect(callMcpTool(tool, params).isError, tool).toBeFalsy();
+        expect(flagged(), tool).toEqual(['OPS.deploy']);
+        expect(text(callMcpTool('reverie_run', { key: 'OPS.deploy' })), tool).toContain('requires confirmation before execution');
+        expect(fs.existsSync(marker('OPS')), tool).toBe(false);
+        callMcpTool('reverie_remove', { key: 'OPS.deploy' });
+        callMcpTool('reverie_remove', { key: 'jobs' });
+      }
     });
   });
 

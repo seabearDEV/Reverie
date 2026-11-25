@@ -745,7 +745,7 @@ rvr confirm remove commands.deploy
 rvr run commands.deploy -y
 ```
 
-The key has to be an entry, spelled as it is stored: `confirm set` and `set <key> --confirm` refuse a key that is not in the store, a namespace, and a key that differs from an entry only by case (the message names the stored key). Flags compare keys without case, as the store does, so a flagged command is gated however its key is spelled in a `run`, a `${reference}` or an alias. Renaming an entry or a namespace carries the flags with it, and removing one removes them.
+The key has to be an entry, spelled as it is stored: `confirm set` and `set <key> --confirm` refuse a key that is not in the store, a namespace, and another spelling of an entry (the message names the stored key when only the case differs). A read takes the key as stored too, so `rvr run commands.Deploy` does not find a command stored as `commands.deploy`, directly or through a `${reference}` or an alias. Renaming an entry or a namespace carries the flags of the entries it moves, and removing an entry removes its flag.
 
 ### Staleness Detection
 

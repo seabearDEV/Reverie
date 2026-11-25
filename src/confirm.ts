@@ -17,43 +17,29 @@ export function saveConfirmKeys(data: Record<string, true>, scope?: Scope  ): vo
 }
 
 // ── Which entry a flag belongs to ───────────────────────────────────────
-// Keys keep their case and compare without it (#216). The confirmation list
-// has to follow the same rule, because the read behind `run` does: on a
-// case-insensitive filesystem (default macOS, Windows) `commands.Deploy` opens
-// the file of `commands.deploy`, and a list that only matched the exact
-// spelling let a flagged entry run unconfirmed under any other one. The
-// comparison is the same on every filesystem, so a store is gated the same
-// way on every machine.
+// Two rules, and they pull in opposite directions on purpose.
+//
+// Asking whether a key is flagged ignores case. Keys keep their case and
+// compare without it (#216), and versions up to 1.3.0 could list a flag under
+// another spelling than the entry's (`confirm set commands.Deploy` for an
+// entry stored as `commands.deploy` reported success). Matching the exact
+// spelling only left such an entry running unconfirmed; matching without case
+// gates it. The gate errs toward asking.
+//
+// Changing the list is exact. Nothing drops a flag unless the user named it
+// (removeConfirm) or the entry it is spelled as is gone (the remove cascade,
+// moveConfirm). A cascade that ignored case would take the flag of an entry
+// that was not removed: `commands.*` and `Commands.*` are two namespaces.
 
-/** Do `a` and `b` name the same entry? */
+/** Do `a` and `b` name the same entry, case aside? */
 function sameKey(a: string, b: string): boolean {
   return a === b || a.toLowerCase() === b.toLowerCase();
 }
 
-/**
- * The segments of `key` past `base` when `key` is `base` or a key under it
- * (none for `base` itself), or null when it is neither. Compared a segment at
- * a time: lower-casing can change a string's length, so cutting the original
- * at the lower-cased prefix's length could cut in the wrong place.
- */
-function segmentsUnder(key: string, base: string): string[] | null {
-  const keySegments = key.split('.');
-  const baseSegments = base.split('.');
-  if (keySegments.length < baseSegments.length) return null;
-  for (let i = 0; i < baseSegments.length; i++) {
-    if (!sameKey(keySegments[i], baseSegments[i])) return null;
-  }
-  return keySegments.slice(baseSegments.length);
-}
-
-// Mark a key as requiring confirmation. Another spelling of the same key
-// already in the list is replaced, so the list names an entry once.
+// Mark a key as requiring confirmation
 export function setConfirm(key: string, scope?: Scope  ): void {
   const effectiveScope = resolveScopeForWrite(scope);
   const keys = loadConfirmMap(effectiveScope);
-  for (const listed of Object.keys(keys)) {
-    if (listed !== key && sameKey(listed, key)) delete keys[listed];
-  }
   keys[key] = true;
   saveConfirmMap(keys, effectiveScope);
   debug(`Confirm set for key: "${key}"`);
@@ -69,8 +55,9 @@ export function removeConfirm(key: string, scope?: Scope  ): void {
   // be reported as a removal that happened. Refuse instead.
   assertSidecarsWritable(() => effectiveScope, ['confirm']);
   const keys = loadConfirmMap(effectiveScope);
-  // Every spelling: the gate reads them all as this key, so leaving one
-  // behind would report the requirement removed and keep enforcing it.
+  // The user named this key, so every spelling of it goes: the gate reads
+  // them all as this key, and leaving one behind would report the
+  // requirement removed and keep enforcing it.
   const listed = Object.keys(keys).filter(k => sameKey(k, key));
   if (listed.length > 0) {
     for (const k of listed) delete keys[k];
@@ -80,10 +67,9 @@ export function removeConfirm(key: string, scope?: Scope  ): void {
 }
 
 // Check if a key carries the confirm flag (checks merged), under any spelling
-// of the key — see sameKey above. Literal in one respect: an unreadable
-// confirmation list (#215) loads as empty and this answers false. The run
-// gates add confirmListUnreadable() so they fail closed; rename asks this to
-// decide whether there is a flag to move, and must get the truth.
+// of the key — see above. Literal in one respect: an unreadable confirmation
+// list (#215) loads as empty and this answers false. The run gates add
+// confirmListUnreadable() so they fail closed.
 export function hasConfirm(key: string): boolean {
   const keys = loadConfirmMapMerged();
   if (keys[key] === true) return true;
@@ -91,35 +77,40 @@ export function hasConfirm(key: string): boolean {
 }
 
 /**
- * Carry confirmation flags across a rename: the flag on `oldKey` and the flag
- * on every entry under it move to the same place under `newKey`.
+ * Carry confirmation flags across a rename.
  *
- * Only the flag on the renamed key itself used to move, so renaming a
- * namespace left the flags of its entries behind under names that no longer
- * existed, and the renamed commands ran unconfirmed.
+ * `moved` is what the rename actually moved, old key to new key, one pair per
+ * entry: the caller knows, and this must not guess from the key's shape.
+ * Guessing "everything under the old key" took flags from entries that never
+ * moved — one in a namespace spelled in another case, one in the other scope.
+ * Only the flag on the renamed key itself used to move at all, so renaming a
+ * namespace left its entries' flags behind and the renamed commands ran
+ * unconfirmed.
  *
- * Which flags to carry is read from the merged list, as the gate reads it: a
- * flag kept in the other scope gated the entry too, and the renamed entry has
- * to stay gated. They are written to — and the old names cleared from — the
- * scope the rename writes to.
+ * For each moved entry that was gated (as the gate reads it: merged list, any
+ * spelling), the new key is flagged in the scope the rename writes to. The
+ * old name is dropped from that scope's list only under its exact spelling,
+ * and only if `stillStored` says the old key no longer reads: a rename in the
+ * project leaves a global entry of the same name where it was, and that entry
+ * was gated by this flag too.
  */
-export function moveConfirm(oldKey: string, newKey: string, scope?: Scope  ): void {
+export function moveConfirm(
+  moved: readonly (readonly [from: string, to: string])[],
+  scope: Scope | undefined,
+  stillStored: (key: string) => boolean,
+): void {
   const merged = loadConfirmMapMerged();
-  const carried: string[] = [];
-  for (const listed of Object.keys(merged)) {
-    if (merged[listed] !== true) continue;
-    const tail = segmentsUnder(listed, oldKey);
-    if (tail) carried.push([newKey, ...tail].join('.'));
-  }
+  const flagged = new Set(Object.keys(merged).filter(k => merged[k] === true).map(k => k.toLowerCase()));
+  const carried = moved.filter(([from]) => flagged.has(from.toLowerCase()));
   if (carried.length === 0) return;
   const effectiveScope = resolveScopeForWrite(scope);
   const keys = loadConfirmMap(effectiveScope);
-  for (const listed of Object.keys(keys)) {
-    if (segmentsUnder(listed, oldKey)) delete keys[listed];
+  for (const [from, to] of carried) {
+    keys[to] = true;
+    if (from in keys && !stillStored(from)) delete keys[from];
   }
-  for (const key of carried) keys[key] = true;
   saveConfirmMap(keys, effectiveScope);
-  debug(`Confirm moved: "${oldKey}" -> "${newKey}" (${carried.length} flag(s), ${effectiveScope})`);
+  debug(`Confirm moved for ${carried.length} of ${moved.length} renamed entr${moved.length === 1 ? 'y' : 'ies'} (${effectiveScope})`);
 }
 
 // Cascade delete: remove key and any children (e.g., removing "commands" removes "commands.deploy")
@@ -130,9 +121,11 @@ export function removeConfirmForKey(key: string, scope?: Scope  ): void {
 
 function removeConfirmFromScope(key: string, scope: 'project' | 'global'): void {
   const keys = loadConfirmMap(scope);
+  // Exact, like the removal it follows: see "Changing the list is exact".
+  const prefix = key + '.';
   let changed = false;
   for (const k of Object.keys(keys)) {
-    if (segmentsUnder(k, key)) {
+    if (k === key || k.startsWith(prefix)) {
       delete keys[k];
       changed = true;
     }

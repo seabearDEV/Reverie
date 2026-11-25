@@ -137,16 +137,16 @@ describe('Confirm Metadata', () => {
     });
   });
 
-  // The store compares keys without case (#216), and on a case-insensitive
-  // filesystem `commands.Deploy` reads the file of `commands.deploy`. A list
-  // that matched only the exact spelling let a flagged entry run unconfirmed
-  // under any other one, so every operation here ignores case.
-  describe('a flag belongs to its entry under any spelling of the key', () => {
+  // Asking whether a key is flagged ignores case; changing the list is exact.
+  // Versions up to 1.3.0 could list a flag under another spelling than the
+  // entry's, and matching the exact spelling only left that entry running
+  // unconfirmed. But a cascade that ignored case took the flag of an entry
+  // that was never removed: `commands.*` and `Commands.*` are two namespaces.
+  describe('asking ignores case', () => {
     const list = (data: Record<string, true>) => {
       (loadConfirmMap as Mock).mockReturnValue({ ...data });
       (loadConfirmMapMerged as Mock).mockReturnValue({ ...data });
     };
-    const saved = () => (saveConfirmMap as Mock).mock.calls[0][0] as Record<string, true>;
 
     it('hasConfirm: a key spelled in another case is the flagged entry', () => {
       expect(hasConfirm('commands.Deploy')).toBe(true);
@@ -174,79 +174,109 @@ describe('Confirm Metadata', () => {
       expect(hasConfirm('constructor')).toBe(false);
       expect(hasConfirm('__proto__')).toBe(false);
     });
+  });
 
-    it('removeConfirm: every spelling goes, so the requirement is really gone', () => {
+  describe('changing the list is exact, unless the user named the key', () => {
+    const list = (data: Record<string, true>) => {
+      (loadConfirmMap as Mock).mockReturnValue({ ...data });
+      (loadConfirmMapMerged as Mock).mockReturnValue({ ...data });
+    };
+    const saved = () => (saveConfirmMap as Mock).mock.calls[0][0] as Record<string, true>;
+
+    it('removeConfirm: the user named the key, so every spelling of it goes', () => {
       list({ 'commands.deploy': true, 'commands.DEPLOY': true, 'commands.other': true });
       removeConfirm('commands.Deploy');
       expect(saved()).toEqual({ 'commands.other': true });
     });
 
-    it('setConfirm: replaces another spelling instead of listing the entry twice', () => {
-      list({ 'commands.DEPLOY': true, 'commands.other': true });
-      setConfirm('commands.deploy');
-      expect(saved()).toEqual({ 'commands.deploy': true, 'commands.other': true });
+    it('setConfirm: leaves another spelling alone — it may be another entry', () => {
+      // Two entries that differ only by case can exist in a store written on
+      // a case-sensitive volume. Each keeps its own flag.
+      list({ 'a.b': true });
+      setConfirm('a.B');
+      expect(saved()).toEqual({ 'a.b': true, 'a.B': true });
     });
 
-    it('removeConfirmForKey: the cascade ignores case, and stops at the segment boundary', () => {
-      list({ 'Commands.deploy': true, 'commands.Sub.x': true, 'commandsx.deploy': true });
+    it('removeConfirmForKey: takes the flag of the removed key only, not of its case twin', () => {
+      list({ 'a.b': true, 'a.B': true });
+      removeConfirmForKey('a.B');
+      expect(saved()).toEqual({ 'a.b': true });
+      expect(hasConfirm('a.b')).toBe(true);
+    });
+
+    it('removeConfirmForKey: a namespace spelled in another case is another namespace', () => {
+      list({ 'commands.build': true, 'Commands.deploy': true, 'commandsx.deploy': true });
       removeConfirmForKey('commands');
-      expect(saved()).toEqual({ 'commandsx.deploy': true });
+      expect(saved()).toEqual({ 'Commands.deploy': true, 'commandsx.deploy': true });
     });
   });
 
-  // Only the flag on the renamed key itself used to move. Renaming a
-  // namespace left the flags of its entries under names that no longer
-  // existed, and the renamed commands ran unconfirmed.
+  // Only the flag on the renamed key itself used to move, so renaming a
+  // namespace left its entries' flags behind. The caller says which entries
+  // moved; nothing here infers it from the shape of the key.
   describe('moveConfirm', () => {
     const list = (scoped: Record<string, true>, merged: Record<string, true> = scoped) => {
       (loadConfirmMap as Mock).mockReturnValue({ ...scoped });
       (loadConfirmMapMerged as Mock).mockReturnValue({ ...merged });
     };
     const saved = () => (saveConfirmMap as Mock).mock.calls[0][0] as Record<string, true>;
+    const gone = () => false;
+    const remains = () => true;
 
-    it('moves the flag on the renamed key', () => {
-      moveConfirm('commands.deploy', 'commands.ship');
+    it('moves the flag of a renamed entry', () => {
+      moveConfirm([['commands.deploy', 'commands.ship']], undefined, gone);
       expect(saved()).toEqual({ 'commands.ship': true, 'commands.rm-logs': true });
     });
 
-    it('moves the flag of every entry under a renamed namespace', () => {
+    it('moves the flag of each entry that moved, and of no other', () => {
       list({ 'ops.deploy': true, 'ops.db.wipe': true, 'other.cmd': true });
-      moveConfirm('ops', 'jobs');
+      moveConfirm([['ops.deploy', 'jobs.deploy'], ['ops.db.wipe', 'jobs.db.wipe'], ['ops.status', 'jobs.status']], undefined, gone);
       expect(saved()).toEqual({ 'jobs.deploy': true, 'jobs.db.wipe': true, 'other.cmd': true });
     });
 
-    it('leaves a key that only shares a prefix where it is', () => {
-      list({ 'ops.deploy': true, 'ops2.deploy': true, 'opsx': true });
-      moveConfirm('ops', 'jobs');
-      expect(saved()).toEqual({ 'jobs.deploy': true, 'ops2.deploy': true, 'opsx': true });
-    });
-
-    it('carries a flag listed in another case, keeping the rest of its spelling', () => {
-      list({ 'OPS.Deploy': true });
-      moveConfirm('ops', 'jobs');
-      expect(saved()).toEqual({ 'jobs.Deploy': true });
-    });
-
-    it('carries a flag that lives in the other scope, so the renamed entry stays gated', () => {
-      // The gate reads the merged list: a flag in the global list gated the
-      // project entry too. The old name stays in the list this rename cannot
-      // write to; the new name is flagged in the one it can.
-      list({}, { 'ops.deploy': true });
-      moveConfirm('ops.deploy', 'ops.ship');
-      expect(saved()).toEqual({ 'ops.ship': true });
-    });
-
-    it('writes nothing when there is no flag to move', () => {
-      moveConfirm('commands.greet', 'commands.hello');
+    it('leaves the flag of an entry that did not move, whatever its key looks like', () => {
+      // `OPS.deploy` is not under `ops`, and neither is `ops2.deploy`: the
+      // rename moved `ops.a` only, and says so.
+      list({ 'OPS.deploy': true, 'ops2.deploy': true, 'ops.other': true });
+      moveConfirm([['ops.a', 'jobs.a']], undefined, gone);
       expect(saveConfirmMap).not.toHaveBeenCalled();
     });
 
-    it('does not cut a key at the wrong place when lower-casing changes its length', () => {
-      // 'İ'.toLowerCase() is two code units. A cut at the lower-cased
-      // prefix's length would drop the first letter of the next segment.
-      list({ 'İps.deploy': true });
-      moveConfirm('İps', 'jobs');
-      expect(saved()).toEqual({ 'jobs.deploy': true });
+    it('carries a flag listed in another case than the entry, and leaves that spelling in the list', () => {
+      // The old spelling is not this entry's name. It may be another entry's.
+      list({ 'ops.DEPLOY': true });
+      moveConfirm([['ops.deploy', 'jobs.deploy']], undefined, gone);
+      expect(saved()).toEqual({ 'ops.DEPLOY': true, 'jobs.deploy': true });
+    });
+
+    it('keeps the old flag while the old key still reads', () => {
+      // A rename in the project leaves a global entry of the same name where
+      // it was. That entry was gated by this flag too.
+      list({ 'ops.deploy': true });
+      moveConfirm([['ops.deploy', 'jobs.deploy']], undefined, remains);
+      expect(saved()).toEqual({ 'ops.deploy': true, 'jobs.deploy': true });
+    });
+
+    it('carries a flag that lives in the other scope, so the renamed entry stays gated', () => {
+      // The gate reads the merged list. The new name is flagged in the list
+      // this rename can write to; the other list is not touched.
+      list({}, { 'ops.deploy': true });
+      moveConfirm([['ops.deploy', 'ops.ship']], undefined, gone);
+      expect(saved()).toEqual({ 'ops.ship': true });
+    });
+
+    it('writes nothing when no moved entry was flagged', () => {
+      moveConfirm([['commands.greet', 'commands.hello']], undefined, gone);
+      expect(saveConfirmMap).not.toHaveBeenCalled();
+      moveConfirm([], undefined, gone);
+      expect(saveConfirmMap).not.toHaveBeenCalled();
+    });
+
+    it('asks whether the old key still reads only for entries it is about to drop', () => {
+      const stillStored = vi.fn(() => false);
+      list({ 'ops.deploy': true });
+      moveConfirm([['ops.deploy', 'jobs.deploy'], ['ops.status', 'jobs.status']], undefined, stillStored);
+      expect(stillStored.mock.calls).toEqual([['ops.deploy']]);
     });
   });
 
