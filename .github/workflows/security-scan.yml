@@ -21,8 +21,6 @@ permissions:
 jobs:
   bun-audit:
     runs-on: ubuntu-latest
-    outputs:
-      report: ${{ steps.report.outputs.report }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -38,17 +36,15 @@ jobs:
           set -o pipefail
           bun audit 2>&1 | tee audit.txt
 
-      - name: Keep the report for the issue
-        id: report
+      # An artifact, not a job output: the runner drops an output that may
+      # hold a masked value ("Skip output ... since it may contain secret").
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
-        run: |
-          delim="AUDIT_$(openssl rand -hex 16)"
-          {
-            echo "report<<$delim"
-            if [ -f audit.txt ]; then sed -E 's/\x1b\[[0-9;]*m//g' audit.txt | head -c 60000; fi
-            echo
-            echo "$delim"
-          } >> "$GITHUB_OUTPUT"
+        with:
+          name: bun-audit
+          path: audit.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
   # A job of its own so that only this job holds issues: write, and nothing
   # installed from the registry runs alongside it.
@@ -63,9 +59,15 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TITLE: 'Security scan: bun audit reports advisories'
       RESULT: ${{ needs.bun-audit.result }}
-      REPORT: ${{ needs.bun-audit.outputs.report }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      # Absent when the scan failed before bun audit ran.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.bun-audit.result == 'failure'
+        continue-on-error: true
+        with:
+          name: bun-audit
+
       - name: Open, update or close the issue
         run: |
           num=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
@@ -78,7 +80,9 @@ jobs:
             exit 0
           fi
 
-          summary=$(printf '%s\n' "$REPORT" | grep -E '^[0-9]+ vulnerabilit' | tail -n 1 || true)
+          report=""
+          if [ -f audit.txt ]; then report=$(sed -E 's/\x1b\[[0-9;]*m//g' audit.txt | head -c 60000); fi
+          summary=$(printf '%s\n' "$report" | grep -E '^[0-9]+ vulnerabilit' | tail -n 1 || true)
           {
             echo "The Security scan failed on \`$GITHUB_REF_NAME\` (${GITHUB_SHA::7}): $RUN_URL"
             echo
@@ -88,7 +92,7 @@ jobs:
               echo '<details><summary>bun audit</summary>'
               echo
               echo '```'
-              printf '%s\n' "$REPORT"
+              printf '%s\n' "$report"
               echo '```'
               echo '</details>'
             else
