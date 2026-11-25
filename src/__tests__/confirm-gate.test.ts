@@ -4,26 +4,30 @@
 // it was set on in three ways, each one reporting success:
 //
 //   1. Another spelling. A key maps to its filename, and a filesystem that
-//      folds names opened the entry's file for a key that is not stored:
+//      folds names opens the entry's file for a key that is not stored:
 //      another case on default macOS and Windows volumes, and on APFS other
-//      Unicode forms too (`ſ` for `s`, NFD for NFC). The flagged command ran
-//      unconfirmed under that spelling — given to `run`, in a ${reference} or
-//      $(exec ref) in another entry, or behind an alias. A read is now
-//      answered only by the key as stored.
-//      The reverse: a flag listed in another case than the entry (which
-//      `confirm set` used to accept) gated nothing. Asking whether a key is
-//      flagged now ignores case.
+//      Unicode forms too (U+017F for `s`, NFD for NFC). The flag was matched
+//      by exact spelling, so the flagged command ran unconfirmed under the
+//      other one — given to `run`, in a ${reference} or $(exec ref) in
+//      another entry, or behind an alias. A key is now gated by its name,
+//      case aside, or by any flagged name that opens the same entry file.
 //   2. `confirm set` did not look the key up. A typo, a namespace or another
 //      spelling reported "now requires confirmation" and gated nothing.
 //   3. Renaming a namespace moved the entries and left their flags behind.
 //
 // And the rule that keeps the fix from opening the same hole elsewhere:
-// nothing takes a flag off an entry that is still there.
+// nothing takes a flag off an entry that is still there. Every entry `main`
+// gates is still gated here, after any command.
 //
 // Spawns the built dist/index.js (assumes `bun run build` has run) against a
 // project store and a global store in temp directories. Nothing here depends
-// on what the filesystem folds: where a spelling would not open the entry's
-// file anyway, the assertions still hold.
+// on what the filesystem folds: where another spelling opens the entry's
+// file the gate has to hold, and where it does not there is nothing to run.
+// Either way the assertion is that the command did not run.
+//
+// Non-ASCII spellings are written as escapes or built from code points: two
+// forms of one letter look the same in an editor, and one that normalizes
+// would turn a test of two spellings into a test of one.
 
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
@@ -110,22 +114,25 @@ describe('the confirmation gate follows the entry', () => {
   // ── 1. another spelling of the key ───────────────────────────────────
 
   describe('a key spelled another way', () => {
-    // Case; a letter the filesystem folds and toLowerCase does not (U+017F
-    // LONG S for the `s` of `commands`); and both together.
-    const spellings = ['commands.DEPLOY', 'Commands.Deploy', 'commandſ.deploy', 'COMMANDſ.deploy'];
+    // Case; a letter APFS folds and toLowerCase does not (U+017F LONG S for
+    // the `s` of `commands`); and both together.
+    const LONG_S = String.fromCodePoint(0x17f);
+    const spellings = ['commands.DEPLOY', 'Commands.Deploy', `command${LONG_S}.deploy`, `COMMAND${LONG_S}.deploy`];
 
-    it('is not a stored key: get and run say NOT_FOUND', () => {
+    it('run: is refused for confirmation where it opens the entry, not found where it does not', () => {
       for (const key of spellings) {
-        expect(json('get', key).error?.code, key).toBe('NOT_FOUND');
-        expect(json('run', key).error?.code, key).toBe('NOT_FOUND');
-        expect(json('run', key, '--yes').error?.code, key).toBe('NOT_FOUND');
+        const env = json('run', key);
+        expect(env.ok, key).toBe(false);
+        // The two go together: a spelling that reads the entry is gated.
+        const reads = json('get', key).ok;
+        expect(env.error?.code, key).toBe(reads ? 'REQUIRES_CONFIRMATION' : 'NOT_FOUND');
       }
       expect(ran('deploy')).toBe(false);
     });
 
     it('run: never executes the flagged command, however the spelling reaches it', () => {
       // One spelling of each kind: about seventeen spawns apiece.
-      for (const key of ['commands.DEPLOY', 'command\u017f.deploy']) {
+      for (const key of ['commands.DEPLOY', `command${LONG_S}.deploy`]) {
         expectNotRun('deploy', 'run', key);
         // A ${reference} and a $(exec ref) from an unflagged entry.
         expect(rvr('set', 'x.ref', '${' + key + '} && ' + touch('ref')).status).toBe(0);
@@ -144,29 +151,40 @@ describe('the confirmation gate follows the entry', () => {
       expect(ran('exec')).toBe(false);
     }, SLOW_TEST_MS);
 
-    it('a key stored in one Unicode form is not answered by the other', () => {
-      const nfc = 'café.go';
-      const nfd = 'café.go';
+    it('a key stored in one Unicode form is gated under the other', () => {
+      const nfc = `caf${String.fromCodePoint(0xe9)}.go`;           // precomposed e-acute
+      const nfd = `cafe${String.fromCodePoint(0x301)}.go`;         // e + combining acute
+      expect(nfc).not.toBe(nfd);
+      expect(nfc.normalize('NFD')).toBe(nfd);
       expect(rvr('set', nfc, touch('cafe'), '--confirm').status).toBe(0);
-      expect(json('get', nfc).ok).toBe(true);
-      expect(json('get', nfd).error?.code).toBe('NOT_FOUND');
       expectNotRun('cafe', 'run', nfd);
-      expect(rvr('run', nfc).stderr).toContain(REFUSAL);
-      expect(ran('cafe')).toBe(false);
+      expectNotRun('cafe', 'run', nfc);
     });
 
-    it('rename: is refused as a source, and nothing is copied or unflagged', () => {
-      // The read used to succeed and the removal — exact — to do nothing: a
-      // "rename" that left the entry where it was and made a copy.
-      for (const key of spellings) {
-        const r = rvr('rename', key, 'tmp.x');
-        expect(r.status, key).toBe(1);
-        expect(json('rename', key, 'tmp.x').error?.code, key).toBe('NOT_FOUND');
+    it('stays gated after the entry is written through the other spelling', () => {
+      // The write replaces the entry's file. On APFS the filesystem then
+      // reports the other spelling as the file's name while the listing
+      // keeps the old one: the state that defeated a check of names. Where
+      // the spelling is a separate file instead, what gets written is an
+      // entry of its own, and only the original is asserted.
+      for (const key of ['commands.DEPLOY', `command${LONG_S}.deploy`]) {
+        const folded = json('get', key).ok;
+        rvr('copy', 'commands.deploy', key, '--force');
+        rvr('set', key, touch('deploy'));
+        expectNotRun('deploy', 'run', 'commands.deploy');
+        if (folded) expectNotRun('deploy', 'run', key);
       }
-      expect(projectKeys()).not.toContain('tmp.x');
-      expect(projectFlags()).toEqual(['commands.deploy']);
-      expect(rvr('run', 'commands.deploy').stderr).toContain(REFUSAL);
-      expect(ran('deploy')).toBe(false);
+    }, SLOW_TEST_MS);
+
+    it('rename through it: whatever the rename does, no flagged command comes out unflagged', () => {
+      // Where the spelling reads the entry, this "rename" copies it and
+      // leaves the original (the removal is exact and finds nothing). Both
+      // are then gated. Where it does not read, the rename is refused.
+      const r = rvr('rename', 'commands.DEPLOY', 'tmp.x');
+      expectNotRun('deploy', 'run', 'commands.deploy');
+      if (r.status === 0) expectNotRun('deploy', 'run', 'tmp.x');
+      else expect(projectKeys()).not.toContain('tmp.x');
+      expect(projectFlags()).toContain('commands.deploy');
     });
   });
 
@@ -208,16 +226,41 @@ describe('the confirmation gate follows the entry', () => {
       expect(listing).toMatch(/commands\.status \[confirm\]/);
     });
 
-    it('confirm remove: the user named the key, so the flag goes whichever way it is spelled', () => {
-      expect(rvr('confirm', 'remove', 'commands.deploy').status).toBe(0);
+    it('confirm remove: takes the name it is given, and says so when the key is still gated', () => {
+      // Removal is exact. The entry is gated by a flag under another
+      // spelling, so clearing "commands.deploy" clears nothing — and
+      // reporting it removed, as this command used to, would be false.
+      const r = rvr('confirm', 'remove', 'commands.deploy');
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("'commands.deploy' still requires confirmation: it is flagged as 'commands.DEPLOY' in the project list");
+      expect(r.stderr).toContain('confirm remove commands.DEPLOY');
+      expect(r.stdout).not.toContain('Confirmation removed');
+      expect(json('confirm', 'remove', 'commands.deploy').error?.code).toBe('INVALID_INPUT');
+      expect(projectFlags()).toEqual(['Commands.Status', 'commands.DEPLOY']);
+      expect(rvr('run', 'commands.deploy').stderr).toContain(REFUSAL);
+      // Under the name it is listed as, it goes.
+      const exact = rvr('confirm', 'remove', 'commands.DEPLOY');
+      expect(exact.status).toBe(0);
+      expect(exact.stdout).toContain("Confirmation removed from 'commands.DEPLOY'.");
       expect(projectFlags()).toEqual(['Commands.Status']);
       expect(rvr('run', 'commands.deploy').status).toBe(0);
       expect(ran('deploy')).toBe(true);
     });
 
-    it('set --no-confirm does the same', () => {
-      expect(rvr('set', 'commands.deploy', '--no-confirm').status).toBe(0);
-      expect(projectFlags()).toEqual(['Commands.Status']);
+    it('set --no-confirm: the same', () => {
+      const r = rvr('set', 'commands.deploy', '--no-confirm');
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("still requires confirmation: it is flagged as 'commands.DEPLOY' in the project list");
+      expect(r.stdout).not.toContain('no longer requires confirmation');
+      expect(projectFlags()).toEqual(['Commands.Status', 'commands.DEPLOY']);
+    });
+
+    it('set <key> <value> --no-confirm: stores the value and warns that the key is still gated', () => {
+      const env = JSON.parse(rvr('--json', 'set', 'commands.deploy', touch('deploy'), '--no-confirm').stdout) as Envelope & { warnings?: { message: string }[] };
+      expect(env.ok).toBe(true);
+      expect((env.warnings ?? []).map(w => w.message).join('\n')).toContain("still requires confirmation: it is flagged as 'commands.DEPLOY'");
+      expect(rvr('run', 'commands.deploy').stderr).toContain(REFUSAL);
+      expect(ran('deploy')).toBe(false);
     });
 
     it('rename: the new key is flagged', () => {
@@ -259,7 +302,12 @@ describe('the confirmation gate follows the entry', () => {
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("Entry 'commands.STATUS' not found. The stored key is 'commands.status'");
       expect(json('confirm', 'set', 'commands.STATUS').error?.code).toBe('NOT_FOUND');
-      expect(json('confirm', 'set', 'commandſ.status').error?.code).toBe('NOT_FOUND');
+      // A spelling only the filesystem connects to the entry (U+017F for
+      // the `s`): found by the file it opens, where it opens one.
+      const longS = `command${String.fromCodePoint(0x17f)}.status`;
+      const refused = json('confirm', 'set', longS);
+      expect(refused.error?.code).toBe('NOT_FOUND');
+      if (json('get', longS).ok) expect(refused.error?.message).toContain("The stored key is 'commands.status'");
       expect(projectFlags()).toEqual(['commands.deploy']);
     });
 
@@ -424,9 +472,74 @@ describe('the confirmation gate follows the entry', () => {
       listFlags('commands.DEPLOY');
       expect(rvr('remove', 'commands.deploy', '--force').status).toBe(0);
       expect(projectFlags()).toEqual(['commands.DEPLOY']);
-      // Clearing it is one command, under either spelling.
-      expect(rvr('confirm', 'remove', 'commands.deploy').status).toBe(0);
+      expect(rvr('confirm', 'remove', 'commands.DEPLOY').status).toBe(0);
       expect(projectFlags()).toEqual([]);
+    });
+
+    // The same key in both stores: the project entry shadows the global one,
+    // and one flag — in either list — gates whichever of them is read.
+    describe('the same key in both stores', () => {
+      beforeEach(() => {
+        expect(rvr('set', '-G', 'both.deploy', touch('global')).status).toBe(0);
+        expect(rvr('set', '-G', 'both.other', 'true').status).toBe(0);
+        expect(rvr('set', 'both.deploy', touch('project')).status).toBe(0);
+      });
+
+      it('a namespace rename in the global store leaves the project entry gated', () => {
+        // The flag is in the global list. The rename moved the global
+        // entries; the project's both.deploy still reads, so the flag stays.
+        expect(rvr('confirm', 'set', '-G', 'both.deploy').status).toBe(0);
+        expect(rvr('run', 'both.deploy').stderr).toContain(REFUSAL);
+        expect(rvr('rename', '-G', 'both', 'moved').status).toBe(0);
+        expect(globalFlags()).toEqual(['both.deploy', 'moved.deploy']);
+        const r = rvr('run', 'both.deploy');
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain(REFUSAL);
+        expect(rvr('run', 'moved.deploy').stderr).toContain(REFUSAL);
+        expect(ran('project')).toBe(false);
+        expect(ran('global')).toBe(false);
+      });
+
+      it('a leaf rename in the global store does the same', () => {
+        expect(rvr('confirm', 'set', '-G', 'both.deploy').status).toBe(0);
+        expect(rvr('rename', '-G', 'both.deploy', 'both.ship').status).toBe(0);
+        expect(globalFlags()).toEqual(['both.deploy', 'both.ship']);
+        expect(rvr('run', 'both.deploy').stderr).toContain(REFUSAL);
+        expect(ran('project')).toBe(false);
+      });
+
+      it('a rename in the project leaves the global entry, now visible, gated', () => {
+        expect(rvr('confirm', 'set', 'both.deploy').status).toBe(0);
+        expect(rvr('rename', 'both.deploy', 'both.ship').status).toBe(0);
+        expect(projectFlags()).toEqual(['both.deploy', 'both.ship', 'commands.deploy']);
+        for (const key of ['both.deploy', 'both.ship']) {
+          const r = rvr('run', key);
+          expect(r.status, key).toBe(1);
+          expect(r.stderr, key).toContain(REFUSAL);
+        }
+        expect(ran('project')).toBe(false);
+        expect(ran('global')).toBe(false);
+      });
+
+      it('a rename keeps the old flag when the same key in the other store cannot be read', () => {
+        // Whether it is still there cannot be told, so it is.
+        expect(rvr('confirm', 'set', 'both.deploy').status).toBe(0);
+        fs.writeFileSync(path.join(dataDir, 'store', 'both.deploy.json'), '{\n<<<<<<< ours\n=======\n>>>>>>> theirs\n}\n');
+        expect(rvr('rename', 'both.deploy', 'both.ship').status).toBe(0);
+        expect(projectFlags()).toEqual(['both.deploy', 'both.ship', 'commands.deploy']);
+      });
+
+      it('confirm remove says the key is still gated when the flag is in the other list', () => {
+        expect(rvr('confirm', 'set', '-G', 'both.deploy').status).toBe(0);
+        const r = rvr('confirm', 'remove', 'both.deploy');
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain("'both.deploy' still requires confirmation: it is flagged as 'both.deploy' in the global list");
+        expect(r.stderr).toContain('confirm remove -G both.deploy');
+        expect(globalFlags()).toEqual(['both.deploy']);
+        expect(rvr('confirm', 'remove', '-G', 'both.deploy').status).toBe(0);
+        expect(rvr('run', 'both.deploy').status).toBe(0);
+        expect(ran('project')).toBe(true);
+      });
     });
   });
 });

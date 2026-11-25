@@ -115,11 +115,18 @@ type ToolCall = (tool: string, params?: Record<string, unknown>) => Promise<Tool
  * cannot show what a long-lived server does when a store file changes under
  * it between two calls — the case its caches exist for.
  */
-async function withMcpSession(fn: (call: ToolCall) => Promise<void>, opts: { cwd?: string; dataDir?: string } = {}): Promise<void> {
+async function withMcpSession(fn: (call: ToolCall) => Promise<void>, opts: { cwd?: string; dataDir?: string; project?: boolean } = {}): Promise<void> {
   const dataDir = opts.dataDir ?? tmpDir;
+  // `project: true` runs the server where `cwd` holds a `.reverie/` store, so
+  // a call can reach both stores. Everything else stays global-only.
+  const env: Record<string, string | undefined> = { ...process.env, RVR_DATA_DIR: dataDir, RVR_NO_PROJECT: '1' };
+  if (opts.project) {
+    delete env.RVR_NO_PROJECT;
+    delete env.RVR_PROJECT;
+  }
   const child = spawn('bun', [path.resolve('dist/mcp-server.js')], {
     cwd: opts.cwd ?? process.cwd(),
-    env: { ...process.env, RVR_DATA_DIR: dataDir, RVR_NO_PROJECT: '1' },
+    env: env as NodeJS.ProcessEnv,
     stdio: ['pipe', 'pipe', 'ignore'],
   });
   interface Reply { id?: number; result?: unknown }
@@ -152,7 +159,9 @@ async function withMcpSession(fn: (call: ToolCall) => Promise<void>, opts: { cwd
     await request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0' } });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     await fn(async (tool, params = {}) => {
-      const args = SCOPED_TOOLS.has(tool) && params.scope === undefined ? { ...params, scope: 'global' } : params;
+      // In a project session an omitted scope stays omitted: that is the
+      // default a client gets, the project store over the global one.
+      const args = !opts.project && SCOPED_TOOLS.has(tool) && params.scope === undefined ? { ...params, scope: 'global' } : params;
       return (await request('tools/call', { name: tool, arguments: args })).result as ToolResult;
     });
   } finally {
@@ -301,22 +310,27 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.existsSync(marker('status'))).toBe(false);
     });
 
-    it('reverie_run: a key spelled another way is not a stored key, and never runs the flagged command', () => {
-      // Another case, and a letter the filesystem folds and toLowerCase does
-      // not (U+017F for the `s`). Directly, through a reference, through an
-      // alias.
+    it('reverie_run: a key spelled another way never runs the flagged command', () => {
+      // Another case, and a letter APFS folds and toLowerCase does not
+      // (U+017F for the `s`). Directly, through a reference, through an
+      // alias. Where the spelling opens the entry the answer is the
+      // confirmation step; where it does not, not found. Never the command.
       flag('commands.deploy');
-      for (const key of ['commands.DEPLOY', 'commandſ.deploy']) {
+      for (const key of ['commands.DEPLOY', `command${String.fromCodePoint(0x17f)}.deploy`]) {
+        const reads = !callMcpTool('reverie_get', { key }).isError;
         const direct = callMcpTool('reverie_run', { key });
-        expect(direct.isError, key).toBe(true);
-        expect(text(direct), key).toContain('not found');
+        if (reads) expect(text(direct), key).toContain('requires confirmation before execution');
+        else expect(direct.isError, key).toBe(true);
         callMcpTool('reverie_set', { key: 'commands.wrapper', value: '${' + key + '} && true' });
-        expect(callMcpTool('reverie_run', { key: 'commands.wrapper' }).isError, key).toBe(true);
+        const viaRef = callMcpTool('reverie_run', { key: 'commands.wrapper' });
+        if (reads) expect(text(viaRef), key).toContain('requires confirmation before execution');
+        else expect(viaRef.isError, key).toBe(true);
         callMcpTool('reverie_alias_set', { alias: 'dp', key });
-        expect(callMcpTool('reverie_run', { key: 'dp' }).isError, key).toBe(true);
-        expect(callMcpTool('reverie_get', { key }).isError, key).toBe(true);
+        const viaAlias = callMcpTool('reverie_run', { key: 'dp' });
+        if (reads) expect(text(viaAlias), key).toContain('requires confirmation before execution');
+        else expect(viaAlias.isError, key).toBe(true);
+        expect(fs.existsSync(marker('deploy')), key).toBe(false);
       }
-      expect(fs.existsSync(marker('deploy'))).toBe(false);
     });
 
     it('reverie_rename: a renamed namespace keeps the flags of the entries under it', () => {
@@ -337,12 +351,46 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.existsSync(marker('deploy'))).toBe(false);
     });
 
-    it('reverie_rename: another spelling of the source is not found, and nothing is copied', () => {
+    it('reverie_rename through another spelling of the source: no flagged command comes out unflagged', () => {
+      // Where the spelling reads the entry, this copies it and leaves the
+      // original (the removal is exact). Both are then gated. Where it does
+      // not read, the rename is refused.
       flag('commands.deploy');
       const r = callMcpTool('reverie_rename', { oldKey: 'commands.DEPLOY', newKey: 'tmp.x' });
-      expect(r.isError).toBe(true);
-      expect(fs.existsSync(storeFile('tmp.x.json'))).toBe(false);
-      expect(flagged()).toEqual(['commands.deploy']);
+      expect(flagged()).toContain('commands.deploy');
+      expect(text(callMcpTool('reverie_run', { key: 'commands.deploy' }))).toContain('requires confirmation before execution');
+      if (!r.isError) expect(text(callMcpTool('reverie_run', { key: 'tmp.x' }))).toContain('requires confirmation before execution');
+      else expect(fs.existsSync(storeFile('tmp.x.json'))).toBe(false);
+      expect(fs.existsSync(marker('deploy'))).toBe(false);
+    });
+
+    it('reverie_rename with scope "project": the same key in the global store stays gated', async () => {
+      // One flag, in the project list, gates whichever both.deploy is read.
+      // The rename moves the project's entries; the global one did not move
+      // and becomes the one a read finds.
+      const projectDir = path.join(tmpDir, 'proj');
+      const projectStore = path.join(projectDir, '.reverie');
+      fs.mkdirSync(projectStore, { recursive: true });
+      fs.writeFileSync(path.join(projectStore, '_aliases.json'), '{}');
+      fs.writeFileSync(path.join(projectStore, '_confirm.json'), JSON.stringify({ 'both.deploy': true }));
+      const projectFlags = () => Object.keys(JSON.parse(fs.readFileSync(path.join(projectStore, '_confirm.json'), 'utf8')) as object).sort();
+      await withMcpSession(async (call) => {
+        const say = async (tool: string, params: Record<string, unknown>) => text(await call(tool, params));
+        await call('reverie_set', { key: 'both.deploy', value: `touch ${marker('global')}`, scope: 'global' });
+        await call('reverie_set', { key: 'both.deploy', value: `touch ${marker('project')}`, scope: 'project' });
+        await call('reverie_set', { key: 'both.other', value: 'true', scope: 'project' });
+        expect(fs.existsSync(path.join(projectStore, 'both.deploy.json'))).toBe(true);
+        expect(await say('reverie_run', { key: 'both.deploy' })).toContain('requires confirmation before execution');
+
+        const renamed = await call('reverie_rename', { oldKey: 'both', newKey: 'moved', scope: 'project' });
+        expect(renamed.isError).toBeFalsy();
+        expect(fs.existsSync(path.join(projectStore, 'both.deploy.json'))).toBe(false);
+        expect(projectFlags()).toEqual(['both.deploy', 'moved.deploy']);
+        expect(await say('reverie_run', { key: 'both.deploy' })).toContain('requires confirmation before execution');
+        expect(await say('reverie_run', { key: 'moved.deploy' })).toContain('requires confirmation before execution');
+      }, { cwd: projectDir, project: true });
+      expect(fs.existsSync(marker('global'))).toBe(false);
+      expect(fs.existsSync(marker('project'))).toBe(false);
     });
 
     it('reverie_remove and reverie_rename leave the flag of an entry in a namespace spelled in another case', () => {

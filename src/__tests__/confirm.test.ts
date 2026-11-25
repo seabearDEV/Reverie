@@ -6,7 +6,9 @@ import {
   hasConfirm,
   removeConfirmForKey,
   moveConfirm,
+  flagsGating,
 } from '../confirm';
+import { keysOpeningSameEntry } from '../utils/entryIdentity';
 
 vi.mock('../store', () => {
   let confirmKeys: Record<string, true> = {};
@@ -19,6 +21,12 @@ vi.mock('../store', () => {
     clearProjectFileCache: vi.fn(),
   };
 });
+
+// Which keys open the same entry file is the filesystem's answer; these tests
+// supply it. entryIdentity.test.ts asks a real one.
+vi.mock('../utils/entryIdentity', () => ({
+  keysOpeningSameEntry: vi.fn(() => []),
+}));
 
 import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged } from '../store';
 
@@ -34,6 +42,7 @@ describe('Confirm Metadata', () => {
     };
     (loadConfirmMap as Mock).mockReturnValue({ ...defaultConfirm });
     (loadConfirmMapMerged as Mock).mockReturnValue({ ...defaultConfirm });
+    (keysOpeningSameEntry as Mock).mockReturnValue([]);
     console.log = vi.fn();
     console.error = vi.fn();
   });
@@ -137,12 +146,13 @@ describe('Confirm Metadata', () => {
     });
   });
 
-  // Asking whether a key is flagged ignores case; changing the list is exact.
-  // Versions up to 1.3.0 could list a flag under another spelling than the
-  // entry's, and matching the exact spelling only left that entry running
-  // unconfirmed. But a cascade that ignored case took the flag of an entry
-  // that was never removed: `commands.*` and `Commands.*` are two namespaces.
-  describe('asking ignores case', () => {
+  // Asking is generous; changing the list is exact.
+  //
+  // A key maps to its filename, and on a filesystem that folds names another
+  // spelling opens the flagged entry's file: matching the exact spelling only
+  // let that command run unasked. But anything that drops a flag by a looser
+  // match than its own name takes the flag of an entry that is still there.
+  describe('asking: a key is gated by its name, case aside, or by a name that opens the same entry file', () => {
     const list = (data: Record<string, true>) => {
       (loadConfirmMap as Mock).mockReturnValue({ ...data });
       (loadConfirmMapMerged as Mock).mockReturnValue({ ...data });
@@ -158,14 +168,26 @@ describe('Confirm Metadata', () => {
       expect(hasConfirm('commands.deploy')).toBe(true);
     });
 
+    it('hasConfirm: a spelling no string comparison would match is gated when it opens the flagged file', () => {
+      // U+017F LONG S: APFS opens `commands.deploy` for it; toLowerCase does not fold it.
+      const longS = 'commandſ.deploy';
+      expect(hasConfirm(longS)).toBe(false);
+      (keysOpeningSameEntry as Mock).mockImplementation((key: string, flagged: string[]) =>
+        key === longS ? flagged.filter(k => k === 'commands.deploy') : []);
+      expect(hasConfirm(longS)).toBe(true);
+      // Only flagged keys are offered as candidates: an unflagged entry's file gates nothing.
+      expect((keysOpeningSameEntry as Mock).mock.calls.at(-1)).toEqual([longS, ['commands.deploy', 'commands.rm-logs']]);
+    });
+
     it('hasConfirm: a longer or shorter key is a different entry', () => {
       expect(hasConfirm('commands.deploy.now')).toBe(false);
       expect(hasConfirm('commands')).toBe(false);
       expect(hasConfirm('commands.deplo')).toBe(false);
     });
 
-    it('hasConfirm: only the literal true counts, under any spelling', () => {
+    it('hasConfirm: only the literal true counts, by name or by file', () => {
       list({ 'commands.DEPLOY': false as unknown as true });
+      (keysOpeningSameEntry as Mock).mockImplementation((_key: string, flagged: string[]) => flagged);
       expect(hasConfirm('commands.deploy')).toBe(false);
       expect(hasConfirm('commands.DEPLOY')).toBe(false);
     });
@@ -174,24 +196,42 @@ describe('Confirm Metadata', () => {
       expect(hasConfirm('constructor')).toBe(false);
       expect(hasConfirm('__proto__')).toBe(false);
     });
+
+    it('flagsGating: names each flag that gates the key, and the list it is in', () => {
+      (loadConfirmMapMerged as Mock).mockReturnValue({ 'commands.deploy': true, 'commands.DEPLOY': true, 'other.cmd': true });
+      // The global list holds only the exact spelling; the other is the project's.
+      (loadConfirmMap as Mock).mockReturnValue({ 'commands.deploy': true });
+      expect(flagsGating('commands.deploy')).toEqual([
+        { key: 'commands.deploy', scope: 'global' },
+        { key: 'commands.DEPLOY', scope: 'project' },
+      ]);
+      expect(flagsGating('commands.greet')).toEqual([]);
+    });
   });
 
-  describe('changing the list is exact, unless the user named the key', () => {
+  describe('changing the list is exact', () => {
     const list = (data: Record<string, true>) => {
       (loadConfirmMap as Mock).mockReturnValue({ ...data });
       (loadConfirmMapMerged as Mock).mockReturnValue({ ...data });
     };
     const saved = () => (saveConfirmMap as Mock).mock.calls[0][0] as Record<string, true>;
 
-    it('removeConfirm: the user named the key, so every spelling of it goes', () => {
-      list({ 'commands.deploy': true, 'commands.DEPLOY': true, 'commands.other': true });
-      removeConfirm('commands.Deploy');
-      expect(saved()).toEqual({ 'commands.other': true });
+    it('removeConfirm: takes the name it is given, and leaves another spelling — it may be another entry', () => {
+      // Two entries that differ only by case can exist in a store written on
+      // a case-sensitive volume, each with its own flag.
+      list({ 'a.b': true, 'a.B': true, 'other': true });
+      removeConfirm('a.b');
+      expect(saved()).toEqual({ 'a.B': true, 'other': true });
     });
 
-    it('setConfirm: leaves another spelling alone — it may be another entry', () => {
-      // Two entries that differ only by case can exist in a store written on
-      // a case-sensitive volume. Each keeps its own flag.
+    it('removeConfirm: writes nothing when the name is not listed, whatever else would gate the key', () => {
+      list({ 'commands.DEPLOY': true });
+      (keysOpeningSameEntry as Mock).mockImplementation((_key: string, flagged: string[]) => flagged);
+      removeConfirm('commands.deploy');
+      expect(saveConfirmMap).not.toHaveBeenCalled();
+    });
+
+    it('setConfirm: leaves another spelling alone', () => {
       list({ 'a.b': true });
       setConfirm('a.B');
       expect(saved()).toEqual({ 'a.b': true, 'a.B': true });
@@ -212,67 +252,54 @@ describe('Confirm Metadata', () => {
   });
 
   // Only the flag on the renamed key itself used to move, so renaming a
-  // namespace left its entries' flags behind. The caller says which entries
-  // moved; nothing here infers it from the shape of the key.
+  // namespace left its entries' flags behind. The caller says which moved
+  // entries were gated, asked before anything moved; nothing here infers it.
   describe('moveConfirm', () => {
-    const list = (scoped: Record<string, true>, merged: Record<string, true> = scoped) => {
+    const list = (scoped: Record<string, true>) => {
       (loadConfirmMap as Mock).mockReturnValue({ ...scoped });
-      (loadConfirmMapMerged as Mock).mockReturnValue({ ...merged });
     };
     const saved = () => (saveConfirmMap as Mock).mock.calls[0][0] as Record<string, true>;
     const gone = () => false;
     const remains = () => true;
 
-    it('moves the flag of a renamed entry', () => {
+    it('flags the new key and drops the old one', () => {
       moveConfirm([['commands.deploy', 'commands.ship']], undefined, gone);
       expect(saved()).toEqual({ 'commands.ship': true, 'commands.rm-logs': true });
     });
 
-    it('moves the flag of each entry that moved, and of no other', () => {
-      list({ 'ops.deploy': true, 'ops.db.wipe': true, 'other.cmd': true });
-      moveConfirm([['ops.deploy', 'jobs.deploy'], ['ops.db.wipe', 'jobs.db.wipe'], ['ops.status', 'jobs.status']], undefined, gone);
-      expect(saved()).toEqual({ 'jobs.deploy': true, 'jobs.db.wipe': true, 'other.cmd': true });
+    it('does that for each entry it is given, and touches no other flag', () => {
+      list({ 'ops.deploy': true, 'ops.db.wipe': true, 'OPS.deploy': true, 'ops2.deploy': true });
+      moveConfirm([['ops.deploy', 'jobs.deploy'], ['ops.db.wipe', 'jobs.db.wipe']], undefined, gone);
+      expect(saved()).toEqual({ 'jobs.deploy': true, 'jobs.db.wipe': true, 'OPS.deploy': true, 'ops2.deploy': true });
     });
 
-    it('leaves the flag of an entry that did not move, whatever its key looks like', () => {
-      // `OPS.deploy` is not under `ops`, and neither is `ops2.deploy`: the
-      // rename moved `ops.a` only, and says so.
-      list({ 'OPS.deploy': true, 'ops2.deploy': true, 'ops.other': true });
-      moveConfirm([['ops.a', 'jobs.a']], undefined, gone);
-      expect(saveConfirmMap).not.toHaveBeenCalled();
-    });
-
-    it('carries a flag listed in another case than the entry, and leaves that spelling in the list', () => {
-      // The old spelling is not this entry's name. It may be another entry's.
+    it('drops the old name only under its exact spelling', () => {
+      // The entry was gated by a flag listed in another case. That spelling
+      // is not the renamed entry's name, and it may be another entry's.
       list({ 'ops.DEPLOY': true });
       moveConfirm([['ops.deploy', 'jobs.deploy']], undefined, gone);
       expect(saved()).toEqual({ 'ops.DEPLOY': true, 'jobs.deploy': true });
     });
 
     it('keeps the old flag while the old key still reads', () => {
-      // A rename in the project leaves a global entry of the same name where
-      // it was. That entry was gated by this flag too.
+      // The same key in the other store did not move, and this flag gated it too.
       list({ 'ops.deploy': true });
       moveConfirm([['ops.deploy', 'jobs.deploy']], undefined, remains);
       expect(saved()).toEqual({ 'ops.deploy': true, 'jobs.deploy': true });
     });
 
-    it('carries a flag that lives in the other scope, so the renamed entry stays gated', () => {
-      // The gate reads the merged list. The new name is flagged in the list
-      // this rename can write to; the other list is not touched.
-      list({}, { 'ops.deploy': true });
+    it('flags the new key in the list it writes to when the flag lived in the other one', () => {
+      list({});
       moveConfirm([['ops.deploy', 'ops.ship']], undefined, gone);
       expect(saved()).toEqual({ 'ops.ship': true });
     });
 
-    it('writes nothing when no moved entry was flagged', () => {
-      moveConfirm([['commands.greet', 'commands.hello']], undefined, gone);
-      expect(saveConfirmMap).not.toHaveBeenCalled();
+    it('writes nothing when no moved entry was gated', () => {
       moveConfirm([], undefined, gone);
       expect(saveConfirmMap).not.toHaveBeenCalled();
     });
 
-    it('asks whether the old key still reads only for entries it is about to drop', () => {
+    it('asks whether the old key still reads only for a flag it is about to drop', () => {
       const stillStored = vi.fn(() => false);
       list({ 'ops.deploy': true });
       moveConfirm([['ops.deploy', 'jobs.deploy'], ['ops.status', 'jobs.status']], undefined, stillStored);

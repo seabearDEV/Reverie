@@ -500,6 +500,14 @@ confirmCommand
       { tool: 'reverie_confirm_remove', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
         removeConfirm(resolvedKey, scope);
+        // Removal is exact, so the key can still be gated: by a flag under
+        // another spelling, or in the other store's list. This used to
+        // print "removed" whatever had happened.
+        const note = commands.stillGatedNote(resolvedKey);
+        if (note) {
+          printError(note, 'INVALID_INPUT');
+          return undefined;
+        }
         console.log(`Confirmation removed from '${resolvedKey}'.`);
         return { key: resolvedKey, confirm: false };
       }

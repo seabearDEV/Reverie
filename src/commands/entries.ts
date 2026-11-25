@@ -13,7 +13,8 @@ import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
 import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAliases, resolveKey, renameAlias } from '../alias';
-import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey, moveConfirm } from '../confirm';
+import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey, moveConfirm, flagsGating } from '../confirm';
+import { keysOpeningSameEntry } from '../utils/entryIdentity';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
@@ -349,16 +350,33 @@ async function promptAndEncrypt(value: string, passwordFile?: string): Promise<s
 }
 
 /**
- * Does `key` still read after a rename moved it? It does when the same key is
- * stored in the other scope, which a rename in this one does not touch. An
+ * Does `key` still read after a rename moved it? Asked of both stores,
+ * whatever scope the rename had: the same key in the other store is not
+ * touched by the rename, and the flag being moved gated that entry too. An
  * entry that cannot be read is still there.
  */
-function stillReads(key: string, scope?: Scope): boolean {
+function stillReads(key: string): boolean {
   try {
-    return getValue(key, scope) !== undefined;
+    return getValue(key) !== undefined;
   } catch {
     return true;
   }
+}
+
+/**
+ * What still gates `key` after a command cleared a flag from it, as a
+ * message, or null when nothing does. Clearing takes the flag listed under
+ * the name given, in the list of the store it is given for — nothing else,
+ * or it would take the flag of another entry. So the key can still be gated,
+ * and reporting it cleared would be false.
+ */
+export function stillGatedNote(key: string): string | null {
+  const held = flagsGating(key);
+  if (held.length === 0) return null;
+  const bin = getBinaryName();
+  const where = held.map(h => `'${h.key}' in the ${h.scope} list`).join(' and ');
+  const fix = held.map(h => `\`${bin} confirm remove ${h.scope === 'global' ? '-G ' : ''}${h.key}\``).join(', ');
+  return `'${key}' still requires confirmation: it is flagged as ${where}. A flag is removed only under the name and in the list it is in: ${fix}.`;
 }
 
 /**
@@ -401,18 +419,20 @@ export function confirmTargetProblem(key: string, scope?: Scope, setting = true)
       message: `'${key}' is a namespace, not an entry. A confirmation flag goes on an entry that holds a command: set it on the entries under '${key}'.`,
     };
   }
-  // A read is answered only by the key as stored (directoryStore's getOne),
-  // so another spelling is normally a miss already. The list is still
-  // checked: it names the stored key for the message, and it holds where
-  // the filesystem cannot say what a file is called.
+  // The lookup above cannot tell the entry from another spelling of it: on a
+  // filesystem that folds names either one opens the entry's file. The
+  // store's key list can. Unicode normalization is not a different spelling
+  // here: HFS+ and exFAT list an NFC key back in NFD, and refusing the form
+  // the user typed would leave them no way to name the entry.
   const stored = storedKeys(scope);
-  if (typeof value !== 'object' && !stored.includes(key)) {
+  const nfc = key.normalize('NFC');
+  if (typeof value !== 'object' && !stored.some(k => k === key || k.normalize('NFC') === nfc)) {
     const lower = key.toLowerCase();
-    const otherSpelling = stored.find(k => k.toLowerCase() === lower);
+    const otherSpelling = stored.find(k => k.toLowerCase() === lower) ?? keysOpeningSameEntry(key, stored)[0];
     if (otherSpelling !== undefined) {
       return {
         code: 'NOT_FOUND',
-        message: `Entry '${key}' not found. The stored key is '${otherSpelling}': keys keep their case, so name it that way.`,
+        message: `Entry '${key}' not found. The stored key is '${otherSpelling}': keys keep their spelling, so name it that way.`,
       };
     }
   }
@@ -427,6 +447,9 @@ async function handlePostSetConfirm(key: string, confirm: boolean | undefined, s
     setConfirm(key, scope);
   } else if (confirm === false) {
     removeConfirm(key, scope);
+    // The value is stored either way; say so if the key is still gated.
+    const note = stillGatedNote(key);
+    if (note) printWarning(note);
   } else if (process.stdin.isTTY) {
     // #215: with the confirmation list unreadable the answer could not be
     // saved — the value is already written, so do not ask.
@@ -467,7 +490,13 @@ export async function setEntry(key: string, value: string | undefined, force = f
           printSuccess(`Entry '${key}' now requires confirmation to run.`);
         } else {
           removeConfirm(key, scope);
-          printSuccess(`Entry '${key}' no longer requires confirmation to run.`);
+          const note = stillGatedNote(key);
+          if (note) {
+            printError(note, 'INVALID_INPUT');
+            process.exitCode = 1;
+          } else {
+            printSuccess(`Entry '${key}' no longer requires confirmation to run.`);
+          }
         }
         if (alias) {
           setAlias(alias, key, scope);
@@ -1080,6 +1109,10 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   // refuse before the value moves.
   assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
+  // Which of the entries about to move does the gate ask about? Asked now:
+  // it looks at their files, and afterwards those are gone.
+  const gatedLeaves = renamedLeaves(oldKey, newKey, value).filter(([from]) => hasConfirm(from));
+
   // Move the value. A refused collision (#216 / #224) is thrown before
   // anything is written; report it and leave the source where it is.
   try {
@@ -1134,8 +1167,8 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     saveAliases(aliases, scope);
   }
 
-  // Move confirm metadata: the flag of each entry that moved.
-  moveConfirm(renamedLeaves(oldKey, newKey, value), scope, key => stillReads(key, scope));
+  // Move confirm metadata: each gated entry that moved is flagged under its new key.
+  moveConfirm(gatedLeaves, scope, stillReads);
 
   // Set a new alias on the renamed key
   if (newAlias) {

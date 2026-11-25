@@ -851,6 +851,10 @@ server.tool(
       // carry over — refuse before the value moves.
       assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
+      // Which of the entries about to move does the gate ask about? Asked
+      // now: it looks at their files, and afterwards those are gone.
+      const gatedLeaves = renamedLeaves(resolvedOld, newKey, value).filter(([from]) => hasConfirm(from));
+
       // Move the value
       if (typeof value === 'string') {
         setValue(newKey, value, scope);
@@ -895,11 +899,12 @@ server.tool(
         saveAliases(aliases, scope);
       }
 
-      // Move confirm metadata: the flag of each entry that moved.
-      // The old name keeps its flag while it still reads: the same key in the
-      // other scope, which this rename did not touch, was gated by it too.
-      moveConfirm(renamedLeaves(resolvedOld, newKey, value), scope, (key) => {
-        try { return getValue(key, scope) !== undefined; } catch { return true; }
+      // Move confirm metadata: each gated entry that moved is flagged under
+      // its new key. The old name keeps its flag while it still reads in
+      // either store, whatever scope this rename had: the same key in the
+      // other store did not move, and was gated by that flag too.
+      moveConfirm(gatedLeaves, scope, (key) => {
+        try { return getValue(key) !== undefined; } catch { return true; }
       });
 
       // Set a new alias on the renamed key
