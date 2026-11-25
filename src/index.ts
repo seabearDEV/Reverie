@@ -15,8 +15,8 @@ import { getBinaryName } from './utils/binaryName';
 import fs from 'fs';
 import { DEFAULT_LLM_INSTRUCTIONS, CLI_LLM_INSTRUCTIONS, getEffectiveInstructions } from './llm-instructions';
 import { withCliInstrumentation } from './utils/instrumentation';
-import { readStdin } from './utils/stdin';
-import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult, recordErrorCode } from './utils/output';
+import { readStdin, readStdinWithin, stdinFirstByteWaitMs } from './utils/stdin';
+import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult, recordErrorCode, addWarning } from './utils/output';
 
 // Early-exit handler for shell tab-completion (must run before Commander parses args)
 const completionFlagIndex = process.argv.indexOf('--get-completions');
@@ -112,6 +112,7 @@ reverie
     }
 
     let value: string | undefined;
+    let stdinGaveUp: string | undefined;
     if (options.prompt) {
       if (!process.stdin.isTTY) {
         printError('--prompt requires an interactive terminal.');
@@ -133,7 +134,21 @@ reverie
       // Read from stdin when it is not a terminal: a pipe, or a file
       // (`< file`, here-string, heredoc — see readStdin for why that differs).
       if (!process.stdin.isTTY) {
-        const stdinValue = (await readStdin()).toString('utf8').trimEnd();
+        // A metadata-only call (-a / --confirm / --no-confirm) can do without
+        // a value, so it does not wait forever for one: if stdin is open and
+        // nothing arrives within the window, apply the flag alone (#225). A
+        // call that needs a value keeps waiting for it.
+        const metadataOnly = Boolean(options.alias) || options.confirm !== undefined;
+        const stdinBytes = metadataOnly ? await readStdinWithin(stdinFirstByteWaitMs()) : await readStdin();
+        if (stdinBytes === null) {
+          // Worded as what happens next, not as done: the update can still be
+          // refused below (no such entry, an unreadable sidecar). Reported
+          // inside the instrumented call, so the telemetry row counts it.
+          const bin = getBinaryName();
+          stdinGaveUp = `No value arrived on stdin within ${stdinFirstByteWaitMs()}ms, so no value is set: continuing with the alias or confirm flag alone. `
+            + `To set a value too, pass it as an argument or pipe it; \`${bin} alias set\` and \`${bin} confirm set\` never read stdin.`;
+        }
+        const stdinValue = (stdinBytes ?? Buffer.alloc(0)).toString('utf8').trimEnd();
         if (stdinValue.length > 0) {
           value = stdinValue;
         } else if (!options.alias && options.confirm === undefined) {
@@ -157,7 +172,15 @@ reverie
     const resolvedKey = resolveKey(key);
     await withCliInstrumentation(
       { tool: 'reverie_set', key: resolvedKey, rawKey: key, scope, writeValue: value, params: { key: resolvedKey, value: value ?? '' } },
-      () => commands.setEntry(resolvedKey, value, options.force, options.encrypt, options.alias, options.confirm, options.global, options.passwordFile)
+      () => {
+        // #225: stderr, like every other warning, so that `> /dev/null` does
+        // not hide the one sign a value was dropped; coded in JSON mode.
+        if (stdinGaveUp !== undefined) {
+          if (isJsonMode()) addWarning(stdinGaveUp, 'STDIN_SILENT');
+          else console.error(`warning: ${stdinGaveUp}`);
+        }
+        return commands.setEntry(resolvedKey, value, options.force, options.encrypt, options.alias, options.confirm, options.global, options.passwordFile);
+      }
     );
     if (options.clear) {
       process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
