@@ -140,8 +140,11 @@ reverie
         const metadataOnly = Boolean(options.alias) || options.confirm !== undefined;
         const stdinBytes = metadataOnly ? await readStdinWithin(stdinFirstByteWaitMs()) : await readStdin();
         if (stdinBytes === null) {
-          printWarning(`No value arrived on stdin within ${stdinFirstByteWaitMs()}ms, so only the flag was applied. `
-            + 'To set a value too, pass it as an argument or pipe it; `rvr alias set` and `rvr confirm set` never read stdin.');
+          // Worded as what happens next, not as done: the update can still be
+          // refused below (no such entry, an unreadable sidecar).
+          const bin = getBinaryName();
+          printWarning(`No value arrived on stdin within ${stdinFirstByteWaitMs()}ms, so no value is set: continuing with the alias or confirm flag alone. `
+            + `To set a value too, pass it as an argument or pipe it; \`${bin} alias set\` and \`${bin} confirm set\` never read stdin.`);
         }
         const stdinValue = (stdinBytes ?? Buffer.alloc(0)).toString('utf8').trimEnd();
         if (stdinValue.length > 0) {
