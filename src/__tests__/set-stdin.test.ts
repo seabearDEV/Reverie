@@ -8,7 +8,7 @@
 // what they exercise does not depend on how the local shell implements
 // redirection.
 
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -139,5 +139,87 @@ describe('set reads its value from stdin', () => {
       }
     }
     expect(stored('stdin.meta')).toBe('untouched');
+  });
+
+  // ── #225: stdin that is open and silent ──────────────────────────────
+  // An agent harness can leave the shell's stdin open with nothing on it. A
+  // metadata-only `set` waited there forever. Every spawn below carries a
+  // kill timer, so a regression fails a test instead of hanging the suite.
+
+  interface Run { status: number | null; stdout: string; stderr: string; killed: boolean; elapsedMs: number }
+  const WINDOW_MS = 300;
+
+  const setWithOpenStdin = (
+    args: string[],
+    opts: { killAfterMs: number; feed?: { afterMs: number; text: string }[]; endAfterMs?: number; json?: boolean },
+  ): Promise<Run> => new Promise(resolve => {
+    const started = Date.now();
+    const child = spawn('bun', ['dist/index.js', ...(opts.json ? ['--json'] : []), 'set', '--global', ...args], {
+      env: { ...env, RVR_STDIN_WAIT_MS: String(WINDOW_MS) },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let killed = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.stdin.on('error', () => { /* the child let go of stdin: expected */ });
+    for (const f of opts.feed ?? []) timers.push(setTimeout(() => { child.stdin.write(f.text); }, f.afterMs));
+    if (opts.endAfterMs !== undefined) timers.push(setTimeout(() => { child.stdin.end(); }, opts.endAfterMs));
+    timers.push(setTimeout(() => { killed = true; child.kill('SIGKILL'); }, opts.killAfterMs));
+    child.on('close', status => {
+      for (const t of timers) clearTimeout(t);
+      resolve({ status, stdout, stderr, killed, elapsedMs: Date.now() - started });
+    });
+  });
+
+  const jsonGet = (...args: string[]) =>
+    JSON.parse(spawnSync('bun', ['dist/index.js', '--json', ...args], { env }).stdout.toString()) as { ok: boolean; error?: { code: string } };
+
+  it('#225: a metadata-only set gives up on a silent stdin and applies the flag alone', async () => {
+    for (const flags of [['--confirm'], ['--no-confirm'], ['-a', 'silentalias']]) {
+      const key = `stdin.silent.${flags[0].replace(/^-+/, '')}`;
+      expect(setFrom({ input: 'original\n' }, [key]).status).toBe(0);
+      const r = await setWithOpenStdin([key, ...flags], { killAfterMs: 8000 });
+      expect(r.killed, `${flags.join(' ')}: still waiting after 8s`).toBe(false);
+      expect(r.status, flags.join(' ')).toBe(0);
+      expect(r.stdout + r.stderr, flags.join(' ')).toContain(`No value arrived on stdin within ${WINDOW_MS}ms`);
+      expect(stored(key), flags.join(' ')).toBe('original');
+    }
+    // The flags were applied: the confirm entry now refuses to run without --yes.
+    expect(jsonGet('run', 'stdin.silent.confirm', '--global').error?.code).toBe('REQUIRES_CONFIRMATION');
+    // …and the alias resolves to its entry (the result is keyed by the entry's key).
+    const viaAlias = JSON.parse(spawnSync('bun', ['dist/index.js', '--json', 'get', 'silentalias'], { env }).stdout.toString()) as { result?: Record<string, string> };
+    expect(viaAlias.result).toEqual({ 'stdin.silent.a': 'original' });
+  });
+
+  it('#225: in JSON mode the give-up is a warning in the envelope and the call succeeds', async () => {
+    expect(setFrom({ input: 'original\n' }, ['stdin.silent.json']).status).toBe(0);
+    const r = await setWithOpenStdin(['stdin.silent.json', '--confirm'], { killAfterMs: 8000, json: true });
+    expect(r.killed).toBe(false);
+    const envelope = JSON.parse(r.stdout) as { ok: boolean; warnings?: { message: string }[] };
+    expect(envelope.ok).toBe(true);
+    expect((envelope.warnings ?? []).some(w => w.message.includes('No value arrived on stdin'))).toBe(true);
+  });
+
+  it('#225: a value whose first byte beats the deadline is taken whole, however late the rest', async () => {
+    const r = await setWithOpenStdin(['stdin.slow', '--confirm'], {
+      killAfterMs: 8000,
+      feed: [{ afterMs: 50, text: 'part one\n' }, { afterMs: WINDOW_MS * 3, text: 'part two\n' }],
+      endAfterMs: WINDOW_MS * 3 + 100,
+    });
+    expect(r.killed).toBe(false);
+    expect(r.status).toBe(0);
+    expect(r.stdout + r.stderr).not.toContain('No value arrived');
+    expect(stored('stdin.slow')).toBe('part one\npart two');
+  });
+
+  it('#225: a set that needs a value still waits for it', async () => {
+    // No flag: there is nothing to apply without a value, so the deadline
+    // does not apply. Killed by the timer well past the window.
+    const r = await setWithOpenStdin(['stdin.needsvalue'], { killAfterMs: WINDOW_MS * 5 });
+    expect(r.killed).toBe(true);
+    expect(stored('stdin.needsvalue')).toBeUndefined();
   });
 });

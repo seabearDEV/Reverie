@@ -30,3 +30,78 @@ export async function readStdin(): Promise<Buffer> {
   }
   return Buffer.concat(chunks);
 }
+
+/**
+ * How long a metadata-only `set` waits for the first byte on stdin before it
+ * gives up and applies its flag alone (#225). Long enough for a command on
+ * the other end of a pipe to start writing; short enough that an agent whose
+ * harness leaves stdin open and silent is not left hanging until its own
+ * timeout. `RVR_STDIN_WAIT_MS` overrides it.
+ */
+export const DEFAULT_STDIN_FIRST_BYTE_WAIT_MS = 2000;
+
+export function stdinFirstByteWaitMs(): number {
+  const raw = process.env.RVR_STDIN_WAIT_MS;
+  if (raw === undefined || raw === '') return DEFAULT_STDIN_FIRST_BYTE_WAIT_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_STDIN_FIRST_BYTE_WAIT_MS;
+}
+
+/**
+ * Read all of stdin, but give up if nothing at all arrives within
+ * `firstByteMs`. Returns null when it gave up, and the bytes otherwise —
+ * empty when stdin was closed with nothing on it.
+ *
+ * The deadline is for the first byte only. Once anything has arrived the
+ * read runs to end of input however long that takes, so a value is never
+ * cut short: it is either taken whole or, when its producer had written
+ * nothing by the deadline, not taken at all.
+ *
+ * For the one caller that can do without a value: `set <key>` carrying only
+ * `-a`, `--confirm` or `--no-confirm`. A non-empty stdin is still the value
+ * there (#221); a stdin that is open and silent used to block forever.
+ */
+export function readStdinWithin(firstByteMs: number): Promise<Buffer | null> {
+  let regularFile = false;
+  try {
+    regularFile = fs.fstatSync(0).isFile();
+  } catch { /* fall through to the stream */ }
+  if (regularFile) return Promise.resolve(fs.readFileSync(0));
+
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    const chunks: Buffer[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const detach = (): void => {
+      if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
+      stdin.off('data', onData);
+      stdin.off('end', onEnd);
+      stdin.off('error', onError);
+    };
+    function onData(chunk: Buffer | string): void {
+      if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    function onEnd(): void {
+      detach();
+      resolve(Buffer.concat(chunks));
+    }
+    function onError(err: Error): void {
+      detach();
+      reject(err);
+    }
+
+    timer = setTimeout(() => {
+      detach();
+      // Let go of stdin so the open pipe does not keep the process alive.
+      stdin.pause();
+      stdin.destroy();
+      resolve(null);
+    }, firstByteMs);
+
+    stdin.on('data', onData);
+    stdin.once('end', onEnd);
+    stdin.once('error', onError);
+  });
+}

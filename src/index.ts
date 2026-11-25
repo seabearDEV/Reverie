@@ -6,7 +6,7 @@ import { removeAlias, resolveKey, loadAliases, setAlias, renameAlias } from './a
 import { setConfirm, removeConfirm, loadConfirmKeys } from './confirm';
 import { color } from './formatting';
 import { showHelp, showExamples } from './formatting';
-import { askPassword, askConfirmation, printError } from './commands/helpers';
+import { askPassword, askConfirmation, printError, printWarning } from './commands/helpers';
 import { version } from '../package.json';
 import { getCompletions, generateBashScript, generateZshScript, installCompletions } from './completions';
 import { withPager } from './utils/pager';
@@ -15,7 +15,7 @@ import { getBinaryName } from './utils/binaryName';
 import fs from 'fs';
 import { DEFAULT_LLM_INSTRUCTIONS, CLI_LLM_INSTRUCTIONS, getEffectiveInstructions } from './llm-instructions';
 import { withCliInstrumentation } from './utils/instrumentation';
-import { readStdin } from './utils/stdin';
+import { readStdin, readStdinWithin, stdinFirstByteWaitMs } from './utils/stdin';
 import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult } from './utils/output';
 
 // Early-exit handler for shell tab-completion (must run before Commander parses args)
@@ -128,7 +128,17 @@ reverie
       // Read from stdin when it is not a terminal: a pipe, or a file
       // (`< file`, here-string, heredoc — see readStdin for why that differs).
       if (!process.stdin.isTTY) {
-        const stdinValue = (await readStdin()).toString('utf8').trimEnd();
+        // A metadata-only call (-a / --confirm / --no-confirm) can do without
+        // a value, so it does not wait forever for one: if stdin is open and
+        // nothing arrives within the window, apply the flag alone (#225). A
+        // call that needs a value keeps waiting for it.
+        const metadataOnly = Boolean(options.alias) || options.confirm !== undefined;
+        const stdinBytes = metadataOnly ? await readStdinWithin(stdinFirstByteWaitMs()) : await readStdin();
+        if (stdinBytes === null) {
+          printWarning(`No value arrived on stdin within ${stdinFirstByteWaitMs()}ms, so only the flag was applied. `
+            + 'To set a value too, pass it as an argument or pipe it; `rvr alias set` and `rvr confirm set` never read stdin.');
+        }
+        const stdinValue = (stdinBytes ?? Buffer.alloc(0)).toString('utf8').trimEnd();
         if (stdinValue.length > 0) {
           value = stdinValue;
         } else if (!options.alias && options.confirm === undefined) {

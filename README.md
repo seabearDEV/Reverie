@@ -216,6 +216,8 @@ curl -s https://api.example.com/token | rvr set api.token
 
 After setting an entry, you'll be asked interactively whether it should require confirmation to run. Use `--confirm` or `--no-confirm` to skip the prompt.
 
+A `set` with no value and only `-a`, `--confirm` or `--no-confirm` updates the alias or the flag. If stdin is a pipe or a file with something on it, that is taken as the value. If stdin is open and nothing arrives within two seconds (an agent's shell often looks like this), the flag is applied alone and a warning says so; `RVR_STDIN_WAIT_MS` changes the wait. `rvr alias set` and `rvr confirm set` never read stdin.
+
 ### Retrieving Data
 
 When inside a project directory (one with a `.reverie/` store), `get` shows project entries by default. Use `-G` for global entries or `-A` for both. Outside a project, `get` shows global entries. Looking up a specific key always falls through from project to global automatically.
