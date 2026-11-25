@@ -26,6 +26,15 @@ cheap, catches known classes and regressions:
   inverted `get does NOT execute` (commands.test), and the non-TTY confirm
   fail-closed test. A future refactor that re-opens a fixed vuln fails CI.
 
+- **Differential check for the run gate** (`scripts/gate-differential/`, README
+  there). A change to the confirmation gate, or to how `rename`, `remove` or
+  `confirm set` touch the confirmation list, has to keep every entry the
+  previous build gates gated. The scripts run the same random command
+  sequences through both builds and compare what each gates. Run it before
+  merging such a change. It is not in CI: it needs two builds and takes
+  minutes. It found three regressions in #234 that tests, mutation checks and
+  the author's own review had passed.
+
 Note: no npm publishing (`project.distributionChannels`), so npm supply-chain
 exposure is limited to the dev/build dependency tree, not a published artifact.
 
