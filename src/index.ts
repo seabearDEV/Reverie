@@ -6,7 +6,7 @@ import { removeAlias, resolveKey, loadAliases, setAlias, renameAlias } from './a
 import { setConfirm, removeConfirm, loadConfirmKeys } from './confirm';
 import { color } from './formatting';
 import { showHelp, showExamples } from './formatting';
-import { askPassword, askConfirmation, printError, printWarning } from './commands/helpers';
+import { askPassword, askConfirmation, printError } from './commands/helpers';
 import { version } from '../package.json';
 import { getCompletions, generateBashScript, generateZshScript, installCompletions } from './completions';
 import { withPager } from './utils/pager';
@@ -16,7 +16,7 @@ import fs from 'fs';
 import { DEFAULT_LLM_INSTRUCTIONS, CLI_LLM_INSTRUCTIONS, getEffectiveInstructions } from './llm-instructions';
 import { withCliInstrumentation } from './utils/instrumentation';
 import { readStdin, readStdinWithin, stdinFirstByteWaitMs } from './utils/stdin';
-import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult, recordErrorCode } from './utils/output';
+import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult, recordErrorCode, addWarning } from './utils/output';
 
 // Early-exit handler for shell tab-completion (must run before Commander parses args)
 const completionFlagIndex = process.argv.indexOf('--get-completions');
@@ -112,6 +112,7 @@ reverie
     }
 
     let value: string | undefined;
+    let stdinGaveUp: string | undefined;
     if (options.prompt) {
       if (!process.stdin.isTTY) {
         printError('--prompt requires an interactive terminal.');
@@ -141,10 +142,11 @@ reverie
         const stdinBytes = metadataOnly ? await readStdinWithin(stdinFirstByteWaitMs()) : await readStdin();
         if (stdinBytes === null) {
           // Worded as what happens next, not as done: the update can still be
-          // refused below (no such entry, an unreadable sidecar).
+          // refused below (no such entry, an unreadable sidecar). Reported
+          // inside the instrumented call, so the telemetry row counts it.
           const bin = getBinaryName();
-          printWarning(`No value arrived on stdin within ${stdinFirstByteWaitMs()}ms, so no value is set: continuing with the alias or confirm flag alone. `
-            + `To set a value too, pass it as an argument or pipe it; \`${bin} alias set\` and \`${bin} confirm set\` never read stdin.`);
+          stdinGaveUp = `No value arrived on stdin within ${stdinFirstByteWaitMs()}ms, so no value is set: continuing with the alias or confirm flag alone. `
+            + `To set a value too, pass it as an argument or pipe it; \`${bin} alias set\` and \`${bin} confirm set\` never read stdin.`;
         }
         const stdinValue = (stdinBytes ?? Buffer.alloc(0)).toString('utf8').trimEnd();
         if (stdinValue.length > 0) {
@@ -170,7 +172,15 @@ reverie
     const resolvedKey = resolveKey(key);
     await withCliInstrumentation(
       { tool: 'reverie_set', key: resolvedKey, rawKey: key, scope, writeValue: value, params: { key: resolvedKey, value: value ?? '' } },
-      () => commands.setEntry(resolvedKey, value, options.force, options.encrypt, options.alias, options.confirm, options.global, options.passwordFile)
+      () => {
+        // #225: stderr, like every other warning, so that `> /dev/null` does
+        // not hide the one sign a value was dropped; coded in JSON mode.
+        if (stdinGaveUp !== undefined) {
+          if (isJsonMode()) addWarning(stdinGaveUp, 'STDIN_SILENT');
+          else console.error(`warning: ${stdinGaveUp}`);
+        }
+        return commands.setEntry(resolvedKey, value, options.force, options.encrypt, options.alias, options.confirm, options.global, options.passwordFile);
+      }
     );
     if (options.clear) {
       process.stdout.write('\x1b[2J\x1b[3J\x1b[H');

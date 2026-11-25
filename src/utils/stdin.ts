@@ -40,11 +40,24 @@ export async function readStdin(): Promise<Buffer> {
  */
 export const DEFAULT_STDIN_FIRST_BYTE_WAIT_MS = 2000;
 
+/**
+ * The longest delay a timer takes: 2^31-1 ms, about 24.8 days. Past it Bun
+ * (and Node) reset the delay to 1 ms, so the largest values — the ones chosen
+ * to switch the deadline off — gave up at once and dropped a piped value,
+ * while the warning named a wait that never happened.
+ */
+export const MAX_STDIN_FIRST_BYTE_WAIT_MS = 2_147_483_647;
+
+/**
+ * The wait in whole milliseconds. Unset, blank, negative or not a number: the
+ * default. Anything larger than a timer can hold: the longest it can.
+ */
 export function stdinFirstByteWaitMs(): number {
-  const raw = process.env.RVR_STDIN_WAIT_MS;
+  const raw = process.env.RVR_STDIN_WAIT_MS?.trim();
   if (raw === undefined || raw === '') return DEFAULT_STDIN_FIRST_BYTE_WAIT_MS;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_STDIN_FIRST_BYTE_WAIT_MS;
+  if (Number.isNaN(parsed) || parsed < 0) return DEFAULT_STDIN_FIRST_BYTE_WAIT_MS;
+  return Math.min(Math.floor(parsed), MAX_STDIN_FIRST_BYTE_WAIT_MS);
 }
 
 /**

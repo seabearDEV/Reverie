@@ -158,6 +158,7 @@ Reverie honors a small set of environment variables for deployment-time configur
 | `RVR_TEST` | Set to `1` (or `true`) to tag telemetry/audit rows `test: true`. Tagged rows are excluded from `stats`/`audit` by default (`--include-test` / `include_test` opts back in) so test runs never distort usage data. | unset |
 | `RVR_OUTPUT` | When set to `json`, every command emits the structured JSON envelope on stdout (equivalent to passing `--json`), session-wide. Diagnostics and prompts go to stderr. | unset |
 | `RVR_SESSION` | Shared session id for CLI-driven agents: invocations with the same id count as one session, with guardrail state (write-amp window, miss-path tracking) persisted to `~/.reverie/sessions/<id>.json` (TTL-pruned after 24h). Unset → the harness's own session id is used when Reverie detects one (Claude Code today); otherwise each invocation is its own session. | unset |
+| `RVR_STDIN_WAIT_MS` | How long, in milliseconds, a `set` carrying only `-a`, `--confirm` or `--no-confirm` waits for a first byte on a stdin that is open and silent before it applies the flag alone. `0` does not wait; a value too large for a timer is capped at about 24.8 days. | `2000` |
 | `RVR_DISABLE_LOCKING` | **Test-only.** When set to `1`, `withFileLock` falls back to running its closure without acquiring the file lock if lock acquisition fails. The default (production) behavior since v1.11 is to fail closed and propagate the lock error. Production code should never set this — there are no known production environments where lock acquisition is expected to fail. Tests that intentionally exercise contended-lock scenarios use this opt-out instead. | unset |
 
 ### Notes
@@ -216,7 +217,7 @@ curl -s https://api.example.com/token | rvr set api.token
 
 After setting an entry, you'll be asked interactively whether it should require confirmation to run. Use `--confirm` or `--no-confirm` to skip the prompt.
 
-A `set` with no value and only `-a`, `--confirm` or `--no-confirm` updates the alias or the flag. If stdin is a pipe or a file with something on it, that is taken as the value. If stdin is open and nothing arrives within two seconds (an agent's shell often looks like this), the flag is applied alone and a warning says so; `RVR_STDIN_WAIT_MS` changes the wait. `rvr alias set` and `rvr confirm set` never read stdin.
+A `set` with no value and only `-a`, `--confirm` or `--no-confirm` updates the alias or the flag. If stdin is a pipe or a file with something on it, that is taken as the value. If stdin is open and nothing arrives within two seconds (an agent's shell often looks like this), the flag is applied alone and a warning on stderr says so (`warnings[]` code `STDIN_SILENT` in JSON); `RVR_STDIN_WAIT_MS` changes the wait. `rvr alias set` and `rvr confirm set` never read stdin.
 
 ### Retrieving Data
 
