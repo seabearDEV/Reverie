@@ -3,7 +3,7 @@ import { loadConfig, getConfigSetting, setConfigSetting } from '../config';
 import { printError } from './helpers';
 import { debug } from '../utils/debug';
 import { getBinaryName } from '../utils/binaryName';
-import { isJsonMode, setResult, failJson } from '../utils/output';
+import { isJsonMode, setResult } from '../utils/output';
 
 export function handleConfig(setting?: string, value?: string, options?: { list?: boolean }) {
   debug('handleConfig called', { setting, value, options });
@@ -70,11 +70,8 @@ export function configSet(setting: string, value: string): { key: string; value:
     console.log(`${setting} set to ${value}`);
     return { key: setting, value, previous };
   } catch (error) {
-    if (isJsonMode()) {
-      failJson('IO', `Error setting config ${setting}: ${String(error)}`);
-    } else {
-      printError(`Error setting config ${setting}: ${String(error)}`);
-    }
+    // One code in both modes (#203): printError routes to the envelope in JSON mode.
+    printError(`Error setting config ${setting}: ${String(error)}`, 'IO');
     return undefined;
   }
 }

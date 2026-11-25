@@ -284,6 +284,7 @@ vi.mock('../utils/telemetry', () => ({
   appendMissPath: vi.fn(() => Promise.resolve()),
   getSessionId: vi.fn(() => 'mock-session'),
   extractNamespace: vi.fn((key?: string) => key ? key.split('.')[0] : '*'),
+  keyIsEntryKey: vi.fn((tool: string) => tool !== 'reverie_config_get' && tool !== 'reverie_config_set'),
 }));
 
 vi.mock('../utils/audit', () => ({

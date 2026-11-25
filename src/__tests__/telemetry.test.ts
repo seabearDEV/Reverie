@@ -11,7 +11,7 @@ vi.mock('../utils/paths', () => ({
 }));
 
 // Import after mocks
-import { logToolCall, loadTelemetry, computeStats, TelemetryEntry } from '../utils/telemetry';
+import { logToolCall, loadTelemetry, computeStats, TelemetryEntry, BYTES_PER_TOKEN } from '../utils/telemetry';
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-telemetry-'));
@@ -503,10 +503,10 @@ describe('computeStats', () => {
       { ts: now - 80, tool: 'reverie_get', session: 's1', op: 'read', ns: 'b', hit: false, responseSize: 100 },
     ]);
     const stats = computeStats();
-    // hits: 400 + 2000 = 2400 bytes / 4 = 600 tokens
-    expect(stats.estimatedTokensSaved).toBe(600);
-    // bootstrap: 2000 / 4 = 500 tokens
-    expect(stats.estimatedTokensSavedBootstrap).toBe(500);
+    // hits: 400 + 2000 = 2400 bytes / BYTES_PER_TOKEN (3) = 800 tokens
+    expect(stats.estimatedTokensSaved).toBe(800);
+    // bootstrap: 2000 / 3 = 666.7, rounded
+    expect(stats.estimatedTokensSavedBootstrap).toBe(667);
   });
 
   it('computes exploration tokens saved by namespace', () => {
@@ -529,7 +529,7 @@ describe('computeStats', () => {
   it('computes bootstrap exploration cost from response size', () => {
     const now = Date.now();
     // 8000 bytes ≈ 100 entries at ~80 bytes each → 100 × 200 = 20000 tokens
-    // delivery floor: 8000 / 4 = 2000 → max(2000, 20000) = 20000
+    // delivery floor: 8000 / 3 ≈ 2667 → max(2667, 20000) = 20000
     writeEntries([
       { ts: now - 100, tool: 'reverie_context', session: 's1', op: 'read', ns: '*', hit: true, responseSize: 8000 },
     ]);
@@ -591,5 +591,87 @@ describe('computeStats', () => {
     expect(stats.mcpSessions).toBe(0);
     expect(stats.bootstrapRate).toBe(0);
     expect(stats.writeBackRate).toBe(0);
+  });
+});
+
+describe('what a row is counted as (#203, #204, #206)', () => {
+  const seed = (rows: Partial<TelemetryEntry>[]) => {
+    const now = Date.now();
+    const lines = rows.map((r, i) => JSON.stringify({ ts: now - 1000 + i, session: 's1', op: 'read', ns: 'arch', tool: 'reverie_get', ...r }));
+    fs.writeFileSync(path.join(tmpDir, 'telemetry.jsonl'), lines.join('\n') + '\n');
+  };
+
+  it('#206: logToolCall files a config tool under no namespace', async () => {
+    await logToolCall('reverie_config_set', 'bootstrap_max_response_bytes', 'cli');
+    await logToolCall('reverie_config_get', 'bootstrap_gist_chars', 'cli');
+    const rows = fs.readFileSync(path.join(tmpDir, 'telemetry.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as TelemetryEntry);
+    expect(rows.map(r => r.ns)).toEqual(['*', '*']);
+  });
+
+  it('#206: rows already logged with a config key as their namespace are left out of coverage', () => {
+    seed([
+      { tool: 'reverie_config_set', op: 'write', ns: 'bootstrap_max_response_bytes' },
+      { tool: 'reverie_config_set', op: 'write', ns: 'bootstrap_max_response_bytes' },
+      { tool: 'reverie_set', op: 'write', ns: 'arch' },
+    ]);
+    expect(Object.keys(computeStats().namespaceCoverage)).toEqual(['arch']);
+  });
+
+  it('#203: misses are split by what went wrong', () => {
+    seed([
+      { hit: true, success: true },
+      { hit: false, success: false, errorCode: 'NOT_FOUND' },
+      { hit: false, success: false, errorCode: 'NOT_FOUND' },
+      { hit: false, success: false, errorCode: 'STORE_UNREADABLE' },
+      { hit: false, success: true, tool: 'reverie_find' },   // a search that matched nothing
+      { hit: false },                                        // logged before rows carried a code
+    ]);
+    const stats = computeStats();
+    expect(stats.misses).toBe(5);
+    expect(stats.missesByCode).toEqual({ NOT_FOUND: 2, STORE_UNREADABLE: 1, empty: 1, unrecorded: 1 });
+  });
+
+  it('#204: every token estimate divides by the one constant', () => {
+    expect(BYTES_PER_TOKEN).toBe(3);
+    seed([
+      { hit: true, responseSize: 300 },
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 3000 },
+    ]);
+    const stats = computeStats();
+    expect(stats.estimatedTokensSaved).toBe(1100);          // (300 + 3000) / 3
+    expect(stats.estimatedTokensSavedBootstrap).toBe(1000); // 3000 / 3
+    expect(stats.deliveryCostTokens).toBe(1100);
+  });
+
+  it('a bootstrap is credited by the entries it showed, as text or as a --json envelope', () => {
+    // The same front page — 20 entries in full, 100 as index lines — read
+    // twice. The envelope is larger; the entries are the same.
+    seed([
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 24000, pinned: 20, indexed: 100 },
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 32000, pinned: 20, indexed: 100 },
+    ]);
+    // 120 entries × 200 = 24,000 each; the delivery floors (8,000 and 10,667) are lower.
+    expect(computeStats().explorationBreakdown['bootstrap']).toEqual({ hits: 2, tokensSaved: 48000 });
+  });
+
+  it('a bootstrap row without counts is estimated from its size, and delivery stays the floor', () => {
+    seed([
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 8000 },                        // logged before rows carried counts: 8000 / 80 = 100 entries → 20,000
+      { tool: 'reverie_context', ns: '*', hit: true, responseSize: 9000, pinned: 2, indexed: 0 }, // 2 × 200 is under the floor, 9000 / 3 = 3,000
+    ]);
+    expect(computeStats().explorationBreakdown['bootstrap']).toEqual({ hits: 2, tokensSaved: 23000 });
+  });
+
+  it('#206: a config read is credited no exploration and names no namespace', () => {
+    seed([
+      { tool: 'reverie_config_get', ns: 'bootstrap_max_response_bytes', hit: true, responseSize: 30 }, // logged before #206
+      { tool: 'reverie_config_get', ns: '*', hit: true, responseSize: 30 },
+      { hit: true, responseSize: 300 },
+    ]);
+    const stats = computeStats();
+    // Reading a setting avoids no exploration of the codebase.
+    expect(Object.keys(stats.explorationBreakdown)).toEqual(['arch']);
+    expect(Object.keys(stats.calibration)).toEqual(['arch']);
+    expect(stats.estimatedExplorationTokensSaved).toBe(3000);
   });
 });

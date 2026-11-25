@@ -7,7 +7,7 @@ import { loadConfirmKeys } from '../confirm';
 import { isEncrypted } from '../utils/crypto';
 import { interpretEscapes, visibleLength, wordWrap } from '../utils/wordWrap';
 import { getBinaryName } from '../utils/binaryName';
-import { isJsonMode, failJson, addWarning, ErrorCode } from '../utils/output';
+import { isJsonMode, failJson, addWarning, recordErrorCode, ErrorCode } from '../utils/output';
 
 export function printSuccess(message: string): void {
   // In JSON mode success is conveyed by the envelope's `ok:true`; suppress the
@@ -23,6 +23,7 @@ export function printError(message: string, code: ErrorCode = 'RUNTIME'): void {
     failJson(code, message);
     return;
   }
+  recordErrorCode(code);
   console.error(color.red('✗ ') + message);
   // Surface failure via the process exit code so scripts wrapping rvr can
   // detect errors. Pre-fix the CLI returned 0 on most printError paths.

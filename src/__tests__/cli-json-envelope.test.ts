@@ -410,4 +410,199 @@ describe('CLI JSON envelope (#117)', () => {
       expect(env.result !== undefined, `${cmd}: ok envelope without result`).toBe(true);
     }
   });
+
+  // ── What a row records about the call (#192, #203, #206) ─────────────
+
+  interface Row { tool: string; ns?: string; success?: boolean; errorCode?: string; responseSize?: number; hit?: boolean }
+  const lastRow = (file: string): Row => {
+    const lines = fs.readFileSync(path.join(testDir, file), 'utf8').trim().split('\n');
+    return JSON.parse(lines[lines.length - 1]) as Row;
+  };
+
+  it('#192: a --json read records the bytes of the envelope it wrote, not 0', () => {
+    run('set rows.sized "a value long enough to be worth measuring"');
+    const { stdout } = run('--json get rows.sized');
+    const bytes = Buffer.byteLength(stdout, 'utf8');
+    expect(bytes).toBeGreaterThan(0);
+    expect(lastRow('telemetry.jsonl').responseSize).toBe(bytes);
+    expect(lastRow('audit.jsonl').responseSize).toBe(bytes);
+  });
+
+  it('#192: a --json failure records the bytes of its error envelope', () => {
+    const { stdout } = run('--json get rows.absent');
+    expect(parse(stdout).ok).toBe(false);
+    expect(lastRow('telemetry.jsonl').responseSize).toBe(Buffer.byteLength(stdout, 'utf8'));
+  });
+
+  it('#203: a read of a missing key is recorded as NOT_FOUND, in text and JSON mode', () => {
+    for (const args of ['get rows.absent', '--json get rows.absent']) {
+      expect(run(args).status, args).toBe(1);
+      for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+        const row = lastRow(file);
+        expect(row.tool, `${args} ${file}`).toBe('reverie_get');
+        expect(row.success, `${args} ${file}`).toBe(false);
+        expect(row.errorCode, `${args} ${file}`).toBe('NOT_FOUND');
+      }
+    }
+  });
+
+  it('#203: a different failure carries a different code', () => {
+    expect(run('context --tier bogus').status).toBe(1);
+    expect(lastRow('telemetry.jsonl').errorCode).toBe('INVALID_INPUT');
+    expect(lastRow('audit.jsonl').errorCode).toBe('INVALID_INPUT');
+  });
+
+  it('#203: a refused write keeps its code in text mode', () => {
+    // No --global and no project: the write is refused (#99). `run` would add
+    // --global, so spawn directly.
+    let status = 0;
+    try {
+      execSync('bun dist/index.js set rows.refused "v"', { env: baseEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e: unknown) {
+      status = (e as { status?: number }).status ?? 1;
+    }
+    expect(status).toBe(1);
+    expect(lastRow('telemetry.jsonl').errorCode).toBe('PROJECT_UNRESOLVED');
+    expect(lastRow('audit.jsonl').errorCode).toBe('PROJECT_UNRESOLVED');
+  });
+
+  it('#203: a call that succeeds carries no error code', () => {
+    run('set rows.fine "v"');
+    expect(run('get rows.fine').status).toBe(0);
+    for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+      const row = lastRow(file);
+      expect(row.success, file).toBe(true);
+      expect('errorCode' in row, file).toBe(false);
+    }
+  });
+
+  it('#206: a config setting name is not recorded as a namespace', () => {
+    expect(run('config set bootstrap_gist_chars 120').status).toBe(0);
+    const row = lastRow('telemetry.jsonl');
+    expect(row.tool).toBe('reverie_config_set');
+    expect(row.ns).toBe('*');
+  });
+
+  // ── Each call is judged on its own outcome (#203) ────────────────────
+
+  const lastRows = (file: string, n: number): Row[] =>
+    fs.readFileSync(path.join(testDir, file), 'utf8').trim().split('\n').slice(-n).map(l => JSON.parse(l) as Row);
+  const outcome = (r: Row) => [r.success, r.errorCode];
+
+  it('#203: a --json run whose command exits 0 is recorded as a success', () => {
+    // The JSON run path assigns the command's exit code, 0 included; a call
+    // that leaves the exit code at 0 has not failed.
+    run('set rows.ok "true"');
+    const { stdout, status } = run('--json run rows.ok');
+    expect(status).toBe(0);
+    expect(parse(stdout).ok).toBe(true);
+    for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+      const row = lastRow(file);
+      expect(row.tool, file).toBe('reverie_run');
+      expect(row.success, file).toBe(true);
+      expect('errorCode' in row, file).toBe(false);
+    }
+  });
+
+  it('#203: text and JSON mode record the same code for the same failure', () => {
+    run('set rows.fails "exit 3"');
+    const cases: [string, string][] = [
+      ["find --regex '['", 'INVALID_INPUT'],
+      ['find x --keys --values', 'INVALID_INPUT'],
+      ['stale abc', 'INVALID_INPUT'],
+      ['run rows.fails', 'COMMAND_FAILED'],
+    ];
+    for (const [args, code] of cases) {
+      for (const mode of ['', '--json ']) {
+        const label = mode + args;
+        expect(run(label).status, label).not.toBe(0);
+        for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+          expect(lastRow(file).errorCode, `${label} ${file}`).toBe(code);
+        }
+      }
+    }
+  });
+
+  it('#203: lint on a store with an unreadable file is STORE_UNREADABLE in both modes', () => {
+    const torn = path.join(testDir, 'store', 'rows.torn.json');
+    fs.writeFileSync(torn, ['{', '<<<<<<< HEAD', '  "value": "ours"', '=======', '  "value": "theirs"', '>>>>>>> theirs', '}', ''].join('\n'));
+    try {
+      for (const args of ['lint', '--json lint']) {
+        expect(run(args).status, args).toBe(1);
+        for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+          expect(lastRow(file).errorCode, `${args} ${file}`).toBe('STORE_UNREADABLE');
+        }
+      }
+    } finally {
+      fs.rmSync(torn, { force: true });
+    }
+  });
+
+  it('#203: each pair of a batch set is judged on its own', () => {
+    // The exit code is already 1 when the second refusal comes, so "did the
+    // exit code change" cannot see it.
+    expect(run('set __proto__=1 constructor=2').status).toBe(1);
+    for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+      expect(lastRows(file, 2).map(outcome), file).toEqual([[false, 'RUNTIME'], [false, 'RUNTIME']]);
+    }
+    // A pair that is stored after one that was refused is a success, and the
+    // process still exits 1.
+    expect(run('set __proto__=1 rows.mid=2 constructor=3').status).toBe(1);
+    for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+      expect(lastRows(file, 3).map(outcome), file).toEqual([[false, 'RUNTIME'], [true, undefined], [false, 'RUNTIME']]);
+    }
+  });
+
+  it('a batch --json set writes one envelope, and it agrees with the exit status', () => {
+    const { stdout, status } = run('--json set rows.b1=1 __proto__=2 rows.b3=3');
+    expect(status).toBe(1);
+    const env = parse(stdout); // one envelope: the whole of stdout parses
+    expect(env.ok).toBe(false);
+    expect(env.error.code).toBe('RUNTIME');
+    expect(env.error.message).toContain('__proto__');
+    expect(env.result).toEqual({ key: 'rows.b1' });
+    const rows = lastRows('telemetry.jsonl', 3);
+    expect(rows.map(outcome)).toEqual([[true, undefined], [false, 'RUNTIME'], [true, undefined]]);
+    // Written once, after the last pair: that row carries its bytes.
+    expect(rows.map(r => r.responseSize)).toEqual([0, 0, Buffer.byteLength(stdout, 'utf8')]);
+  });
+
+  it('a batch --json set that stops at a malformed pair still reports the failure', () => {
+    const { stdout, status } = run('--json set rows.c1=1 notapair');
+    expect(status).toBe(1);
+    const env = parse(stdout);
+    expect(env.ok).toBe(false);
+    expect(env.error.message).toContain('notapair');
+  });
+
+  it('a batch --json set whose pairs are all stored is ok', () => {
+    const { stdout, status } = run('--json set rows.d1=1 rows.d2=2');
+    expect(status).toBe(0);
+    expect(parse(stdout)).toMatchObject({ ok: true, result: { key: 'rows.d1' } });
+    expect(parse(run('--json get rows.d2').stdout).result).toEqual({ 'rows.d2': '2' });
+  });
+
+  it('a batch --json set names an unreadable store file once, not once per pair', () => {
+    // Every call adds a warning per unreadable file; a batch runs one call
+    // per pair into the same envelope.
+    const torn = path.join(testDir, 'store', 'rows.torn.json');
+    fs.writeFileSync(torn, ['{', '<<<<<<< HEAD', '  "value": "ours"', '=======', '  "value": "theirs"', '>>>>>>> theirs', '}', ''].join('\n'));
+    try {
+      const { stdout, status } = run('--json set rows.e1=1 rows.e2=2 rows.e3=3');
+      expect(status).toBe(0);
+      const warnings = (parse(stdout).warnings ?? []) as { code: string }[];
+      expect(warnings.filter(w => w.code === 'STORE_UNREADABLE')).toHaveLength(1);
+    } finally {
+      fs.rmSync(torn, { force: true });
+    }
+  });
+
+  it('#206: a config read is not fed to the miss tracker', () => {
+    const env = { RVR_SESSION: 'rows-206' };
+    expect(run('get rows.nowhere', env).status).toBe(1);                 // opens a window on `rows`
+    expect(run('config get bootstrap_gist_chars', env).status).toBe(0);  // not a lookup: closes nothing
+    expect(run('config get no_such_setting', env).status).toBe(1);       // not a miss: opens nothing
+    const state = JSON.parse(fs.readFileSync(path.join(testDir, 'sessions', 'rows-206.json'), 'utf8')) as { missWindows: { namespace: string }[] };
+    expect(state.missWindows.map(w => w.namespace)).toEqual(['rows']);
+  });
 });

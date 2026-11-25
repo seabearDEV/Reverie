@@ -7,7 +7,7 @@ import { SearchOptions } from '../types';
 import { isEncrypted } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { interpolate } from '../utils/interpolate';
-import { isJsonMode, setResult, failJson } from '../utils/output';
+import { isJsonMode, setResult, failJson, recordErrorCode } from '../utils/output';
 
 type MatchFn = (text: string) => boolean;
 
@@ -112,7 +112,7 @@ export function searchEntries(searchTerm: string, options: SearchOptions = {}): 
 
   if (options.keys && options.values) {
     if (json) failJson('INVALID_INPUT', '--keys and --values are mutually exclusive.');
-    else { console.error('Error: --keys and --values are mutually exclusive.'); process.exitCode = 1; }
+    else { recordErrorCode('INVALID_INPUT'); console.error('Error: --keys and --values are mutually exclusive.'); process.exitCode = 1; }
     return { dataCount: 0, aliasCount: 0 };
   }
 
@@ -130,7 +130,7 @@ export function searchEntries(searchTerm: string, options: SearchOptions = {}): 
   } catch (err) {
     const msg = `Invalid regex: ${err instanceof Error ? err.message : String(err)}`;
     if (json) failJson('INVALID_INPUT', msg);
-    else { console.error(msg); process.exitCode = 1; }
+    else { recordErrorCode('INVALID_INPUT'); console.error(msg); process.exitCode = 1; }
     return { dataCount: 0, aliasCount: 0 };
   }
 

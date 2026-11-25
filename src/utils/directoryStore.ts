@@ -24,6 +24,7 @@ import { withFileLock } from './fileLock';
 import { flattenObject, expandFlatKeys } from './objectPath';
 import { debug } from './debug';
 import { StoreUnreadableError, UnreadableFile, classifyUnparseable, keysCollide, nameCollisionError } from './unreadable';
+import { collidesWithAny } from './keyCollision';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -902,17 +903,18 @@ export function createDirectoryStore(
    * bumps the seqlock epoch — but skips the full `scanAndSync` that the
    * normal `save()` path performs.
    *
-   * Returns `false` (without writing) if a collision is detected:
+   * Returns `false` (without writing) if a collision is detected, comparing
+   * keys case-insensitively:
    *   - **Parent-leaf collision:** any ancestor of `key` exists as a stored
-   *     leaf (e.g. `key="a.b.c"` and `a.json` or `a.b.json` exists). The
-   *     write would require restructuring the parent into a subtree.
+   *     leaf (e.g. `key="a.b.c"` and `a.json` or `a.b.json` exists).
    *   - **Child collision:** any stored entry has `key + '.'` as a prefix
-   *     (e.g. `key="a"` and `a.b.json` exists). The write would require
-   *     unlinking the children to keep the in-memory tree consistent.
+   *     (e.g. `key="a"` and `a.b.json` exists).
+   *   - **Case collision:** a stored key differs from `key` only by case
+   *     (#216) — the same file on a case-insensitive filesystem.
    *
-   * In either case the caller (`storage.ts:setValue`) falls back to the full
-   * `save()` path, which already handles these conversions correctly via its
-   * delete/write delta computation.
+   * In each case the caller (`storage.ts:setValue`) falls back to the slow
+   * path, which loads the tree and refuses the write, naming the entries in
+   * the way (#224). It used to restructure there, silently removing them.
    */
   function setOne(key: string, value: CodexValue, updated: number): boolean {
     if (!isValidEntryKey(key)) {
@@ -945,23 +947,14 @@ export function createDirectoryStore(
         }
       }
 
-      // Parent-leaf collision: walk up the dotted prefixes.
-      const parts = key.split('.');
-      for (let i = 1; i < parts.length; i++) {
-        const parent = parts.slice(0, i).join('.');
-        if (dirEntries.includes(parent + ENTRY_FILE_SUFFIX)) {
-          return false;  // caller falls back to slow path
-        }
-      }
-
-      // Child collision: any existing entry whose key starts with `${key}.`.
-      const childPrefix = key + '.';
-      for (const f of dirEntries) {
-        if (!isEntryFilename(f)) continue;
-        const otherKey = keyFromFilename(f);
-        if (otherKey.startsWith(childPrefix)) {
-          return false;  // caller falls back to slow path
-        }
+      // Collision with another entry: an ancestor that is a leaf, an entry
+      // under this key, or a key that differs only by case (#216 — one file
+      // on a case-insensitive filesystem). Compared case-insensitively on
+      // every filesystem. The caller falls back to the slow path, which
+      // names the entries in the way and refuses (#224).
+      const otherKeys = dirEntries.filter(isEntryFilename).map(keyFromFilename);
+      if (collidesWithAny(key, otherKeys)) {
+        return false;
       }
 
       // Read the existing entry before anything is touched: to preserve
