@@ -498,12 +498,15 @@ export function flagEntry(key: string, scope?: Scope): { message: string; result
     return undefined;
   }
   const named = set.key === key ? `Entry '${key}'` : `Entry '${set.key}' (as typed: '${key}')`;
+  // The global list though -G was not given: the entry is stored only there
+  // (or was, when the flag was written — see setConfirm).
+  const toGlobal = set.scope === 'global' && scope !== 'global';
   const where = set.globalOnly
     ? ` It is stored only in the global store, so its flag is in the global list and applies in every project.`
-    : '';
+    : toGlobal ? ' Its flag is in the global list.' : '';
   return {
     message: `${named} now requires confirmation to run.${where}`,
-    result: { key: set.key, confirm: true, ...(set.key !== key ? { typed: key } : {}), ...(set.globalOnly ? { list: 'global' as const } : {}) },
+    result: { key: set.key, confirm: true, ...(set.key !== key ? { typed: key } : {}), ...(toGlobal ? { list: 'global' as const } : {}) },
   };
 }
 
