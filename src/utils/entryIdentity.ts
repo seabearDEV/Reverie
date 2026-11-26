@@ -113,12 +113,13 @@ export function opensEntryFile(dir: string, key: string): boolean {
  *
  * Asked of the filesystem, as everything here is: a stat of `key`'s path,
  * then of each stored key's until one is the same file. Only runs that far
- * when `key` opens a file it is not stored as.
+ * when `key` opens a file it is not stored as. A caller asking for many keys
+ * passes a Set: a rename asks once per moved entry.
  */
-export function storedSpellingOf(dir: string, key: string, storedKeys: Iterable<string>): string | undefined {
-  const keys = [...storedKeys];
-  if (keys.includes(key)) return undefined;
+export function storedSpellingOf(dir: string, key: string, storedKeys: ReadonlySet<string> | readonly string[]): string | undefined {
+  if ('has' in storedKeys ? storedKeys.has(key) : storedKeys.includes(key)) return undefined;
   const id = entryFileId(dir, key);
   if (id === undefined) return undefined;
-  return keys.find(other => entryFileId(dir, other) === id);
+  for (const other of storedKeys) if (entryFileId(dir, other) === id) return other;
+  return undefined;
 }

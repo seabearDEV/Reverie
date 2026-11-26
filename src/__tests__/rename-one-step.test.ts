@@ -476,6 +476,8 @@ describe('#259: undoing a write that failed part-way', () => {
     expect(process.exitCode).toBe(1);
     const said = (console.error as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n');
     expect(said).toContain("'ns.k' is stored both as an entry and as a namespace ('ns.k.sub')");
+    // A way out that works: copy keeps a half, and rm takes the pair.
+    expect(said).toContain('`rvr rm ns.k` then removes both');
     expect(fs.readdirSync(tmp.storeDir).filter(f => f.endsWith('.json') && f !== '_epoch.json').sort()).toEqual(before);
   });
 });

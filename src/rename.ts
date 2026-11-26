@@ -136,7 +136,8 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
         const under = moving.filter(o => o.startsWith(`${pair}.`));
         const named = under.slice(0, 3).map(k => `'${k}'`).join(', ') + (under.length > 3 ? `, and ${under.length - 3} more` : '');
         throw new RenameRefusal(`Cannot rename '${oldKey}': '${pair}' is stored both as an entry and as a namespace (${named}), `
-          + `which cannot both exist, and a rename would lose one of them. Resolve that first; \`rvr lint\` lists the pair.`, 'INVALID_INPUT');
+          + `and a rename would lose one of them, so nothing was renamed. \`rvr copy\` what you want to keep to a free key; `
+          + `\`rvr rm ${pair}\` then removes both.`, 'INVALID_INPUT');
       }
       if (source !== oldKey) {
         const problem = renameDestinationProblem(source, newKey, isValidEntryKey);
@@ -158,7 +159,7 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
       // #216 / #224 / #246: no new key may land on an entry it does not name.
       // Checked with the source still in place, as the separate writes were.
       assertKeysWritable(target.data.entries, moved.map(([, to]) => to));
-      const targetKeys = storedKeys(target);
+      const targetKeys = new Set(storedKeys(target));
       for (const [, to] of moved) {
         // #253: a twin under the same name in another normalization is that
         // key, not a collision — as for every other write (foldTwin).
