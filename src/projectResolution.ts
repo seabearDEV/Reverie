@@ -111,7 +111,7 @@ function buildMessage(d: ResolverDiagnostic): string {
   } else {
     lines.push('  - run `reverie_init` (or `rvr init`) here to create a project store');
   }
-  lines.push('  - retry with explicit scope:"global" (MCP) or --scope global (CLI) for an');
+  lines.push('  - retry with explicit scope:"global" (MCP) or -G / --global (CLI) for an');
   lines.push('    intentional global-store write');
 
   return lines.join('\n');

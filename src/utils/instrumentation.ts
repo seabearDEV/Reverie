@@ -294,8 +294,9 @@ export async function withCliInstrumentation<T>(
         : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
         : 'RUNTIME';
       failJson(code, err instanceof Error ? err.message : String(err));
-    } else if (err instanceof StoreUnreadableError) {
-      // An expected, self-explaining failure: one line, not a stack trace.
+    } else if (err instanceof StoreUnreadableError || err instanceof ProjectResolutionError) {
+      // An expected, self-explaining failure: its message, not a stack trace
+      // (#249: confirm and alias set/remove reach here outside a project).
       originalConsoleError.call(console, `${color.red('✗ ')}${err.message}`);
       process.exitCode = 1;
     } else {
