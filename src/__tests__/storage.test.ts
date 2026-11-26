@@ -3,6 +3,7 @@ import { handleError, loadData, saveData, getErrorMessage, getValue, setValue, r
 vi.mock('../store', () => ({
   loadEntries: vi.fn(() => ({})),
   saveEntries: vi.fn(),
+  updateEntries: vi.fn(),
   loadEntriesMerged: vi.fn(() => ({})),
   clearStoreCaches: vi.fn(),
   findProjectFile: vi.fn(() => null),

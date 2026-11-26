@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { withFileLock } from '../utils/fileLock';
+import { withFileLock, LockTimeoutError, STORE_LOCK_WAIT_MS } from '../utils/fileLock';
 
 let tmpDir: string;
 let testFile: string;
@@ -99,5 +99,29 @@ describe('withFileLock', () => {
     const result = withFileLock(nonExistent, () => 'ok');
     expect(result).toBe('ok');
     expect(fs.existsSync(nonExistent + '.lock')).toBe(false);
+  });
+
+  // #254: a store write waits up to STORE_LOCK_WAIT_MS for other writers'
+  // transactions; everything else keeps the short default, so a held lock
+  // costs session bookkeeping and the startup migration check ~31ms, not 1s.
+  describe('how long a caller waits for a held lock (#254)', () => {
+    const hold = () => fs.writeFileSync(testFile + '.lock', String(process.pid));
+    const elapsed = (fn: () => void) => { const t = Date.now(); fn(); return Date.now() - t; };
+
+    it('the default gives up after about 31ms, with a LockTimeoutError', () => {
+      hold();
+      let thrown: unknown;
+      const ms = elapsed(() => { try { withFileLock(testFile, () => 'x'); } catch (err) { thrown = err; } });
+      expect(thrown).toBeInstanceOf(LockTimeoutError);
+      expect(ms).toBeLessThan(500);
+    });
+
+    it('a store write waits up to STORE_LOCK_WAIT_MS', () => {
+      hold();
+      let thrown: unknown;
+      const ms = elapsed(() => { try { withFileLock(testFile, () => 'x', STORE_LOCK_WAIT_MS); } catch (err) { thrown = err; } });
+      expect(thrown).toBeInstanceOf(LockTimeoutError);
+      expect(ms).toBeGreaterThanOrEqual(STORE_LOCK_WAIT_MS - 50);
+    });
   });
 });

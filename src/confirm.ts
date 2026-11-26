@@ -1,8 +1,9 @@
 import { debug } from './utils/debug';
-import { Scope, loadConfirmMap, saveConfirmMap, loadConfirmMapMerged } from './store';
+import { Scope, loadConfirmMap, saveConfirmMap, updateConfirmMap, loadConfirmMapMerged } from './store';
 import { resolveScopeForWrite } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
 import { entriesOpenedBy, keysOpeningSameEntry } from './utils/entryIdentity';
+import { removeFlatKeysUnder } from './utils/objectPath';
 
 
 export function loadConfirmKeys(scope?: Scope  ): Record<string, true> {
@@ -12,6 +13,7 @@ export function loadConfirmKeys(scope?: Scope  ): Record<string, true> {
   return loadConfirmMap(scope);
 }
 
+/** Replace the list wholesale (reset). A change to the list goes through updateConfirmMap (#254). */
 export function saveConfirmKeys(data: Record<string, true>, scope?: Scope  ): void {
   const effectiveScope = resolveScopeForWrite(scope);
   saveConfirmMap(data, effectiveScope);
@@ -54,9 +56,7 @@ function gatingAmong(key: string, flagged: string[]): string[] {
 // Mark a key as requiring confirmation
 export function setConfirm(key: string, scope?: Scope  ): void {
   const effectiveScope = resolveScopeForWrite(scope);
-  const keys = loadConfirmMap(effectiveScope);
-  keys[key] = true;
-  saveConfirmMap(keys, effectiveScope);
+  updateConfirmMap(keys => ({ ...keys, [key]: true }), effectiveScope);
   debug(`Confirm set for key: "${key}"`);
 }
 
@@ -69,12 +69,16 @@ export function removeConfirm(key: string, scope?: Scope  ): boolean {
   // #215: an unreadable list loads as empty, so "the key is not in it" would
   // be reported as a removal that happened. Refuse instead.
   assertSidecarsWritable(() => effectiveScope, ['confirm']);
-  const keys = loadConfirmMap(effectiveScope);
-  if (!(key in keys)) return false;
-  delete keys[key];
-  saveConfirmMap(keys, effectiveScope);
-  debug(`Confirm removed for key: "${key}" (${effectiveScope})`);
-  return true;
+  if (!(key in loadConfirmMap(effectiveScope))) return false;
+  // #254: removed from the list as it stands under the lock.
+  const removed = changeConfirmList(effectiveScope, keys => {
+    if (!(key in keys)) return null;
+    const next = { ...keys };
+    delete next[key];
+    return next;
+  });
+  if (removed) debug(`Confirm removed for key: "${key}" (${effectiveScope})`);
+  return removed;
 }
 
 // Check if a key carries the confirm flag (checks merged), as the gate reads
@@ -138,15 +142,16 @@ export function flagsGating(key: string): { key: string; scope: 'project' | 'glo
 export function moveConfirm(gated: readonly (readonly [from: string, to: string])[], scope?: Scope  ): void {
   if (gated.length === 0) return;
   const effectiveScope = resolveScopeForWrite(scope);
-  const keys = loadConfirmMap(effectiveScope);
-  let changed = false;
-  for (const [, to] of gated) {
-    if (keys[to] === true) continue;
-    keys[to] = true;
-    changed = true;
-  }
-  if (!changed) return;
-  saveConfirmMap(keys, effectiveScope);
+  const flagEach = (keys: Record<string, true>): Record<string, true> | null => {
+    const missing = gated.filter(([, to]) => keys[to] !== true);
+    if (missing.length === 0) return null;
+    const next = { ...keys };
+    for (const [, to] of missing) next[to] = true;
+    return next;
+  };
+  // Every new key already flagged: nothing to write.
+  if (flagEach(loadConfirmMap(effectiveScope)) === null) return;
+  if (!changeConfirmList(effectiveScope, flagEach)) return;
   debug(`Confirm carried to ${gated.length} renamed entr${gated.length === 1 ? 'y' : 'ies'} (${effectiveScope})`);
 }
 
@@ -157,17 +162,31 @@ export function removeConfirmForKey(key: string, scope?: Scope  ): void {
 }
 
 function removeConfirmFromScope(key: string, scope: 'project' | 'global'): void {
-  const keys = loadConfirmMap(scope);
   // Exact, like the removal it follows: see "Changing the list is exact".
-  const prefix = key + '.';
+  const dropUnder = (keys: Record<string, true>): Record<string, true> | null => {
+    const next = { ...keys };
+    return removeFlatKeysUnder(next, key) ? next : null;
+  };
+  // Nothing listed under the key: nothing to write.
+  if (dropUnder(loadConfirmMap(scope)) === null) return;
+  changeConfirmList(scope, dropUnder);
+}
+
+/**
+ * Apply `change` to the list as it stands under the store lock (#254), never
+ * to a copy loaded earlier: a flag set in between would be dropped. `change`
+ * returns the new list, or null when there is nothing to change. True when
+ * it wrote.
+ */
+function changeConfirmList(
+  scope: 'project' | 'global',
+  change: (keys: Record<string, true>) => Record<string, true> | null,
+): boolean {
   let changed = false;
-  for (const k of Object.keys(keys)) {
-    if (k === key || k.startsWith(prefix)) {
-      delete keys[k];
-      changed = true;
-    }
-  }
-  if (changed) {
-    saveConfirmMap(keys, scope);
-  }
+  updateConfirmMap(keys => {
+    const next = change(keys);
+    changed = next !== null;
+    return next;
+  }, scope);
+  return changed;
 }

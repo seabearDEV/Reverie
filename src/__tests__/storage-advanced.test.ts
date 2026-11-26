@@ -1,6 +1,6 @@
 import type { Mock } from 'bun:test';
 import { getValue, setValue, removeValue, getEntriesFlat } from '../storage';
-import { saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta, loadEntries, loadEntriesMerged } from '../store';
+import { updateEntries, loadEntries, loadEntriesMerged } from '../store';
 
 // State accessed by both the mock factory and the tests. Was previously
 // exposed as __reset/__setProjectEntries on the mocked store namespace,
@@ -32,32 +32,23 @@ vi.mock('../store', () => {
     clearStoreCaches: vi.fn(),
     findProjectFile: vi.fn(() => testState.hasProject ? '/fake/.codexcli.json' : null),
     clearProjectFileCache: vi.fn(),
-    saveEntriesAndTouchMeta: vi.fn((data: any, key: string, scope?: string) => {
-      if (scope === 'project') {
-        Object.keys(projectEntries).forEach(k => delete projectEntries[k]);
-        Object.assign(projectEntries, data);
-        projectMeta[key] = Date.now();
-      } else {
-        Object.keys(globalEntries).forEach(k => delete globalEntries[k]);
-        Object.assign(globalEntries, data);
-        globalMeta[key] = Date.now();
-      }
-    }),
-    saveEntriesAndRemoveMeta: vi.fn((data: any, key: string, scope?: string) => {
-      if (scope === 'project') {
-        Object.keys(projectEntries).forEach(k => delete projectEntries[k]);
-        Object.assign(projectEntries, data);
-        delete projectMeta[key];
-      } else {
-        Object.keys(globalEntries).forEach(k => delete globalEntries[k]);
-        Object.assign(globalEntries, data);
-        delete globalMeta[key];
-      }
+    // #254: a change is a function of the store as it stands; applied here
+    // to this mock's state for the scope it names.
+    updateEntries: vi.fn((fn: (entries: any, meta: Record<string, number>) => boolean | void, scope?: string) => {
+      const entries = scope === 'project' ? projectEntries : globalEntries;
+      const meta = scope === 'project' ? projectMeta : globalMeta;
+      const nextEntries = structuredClone(entries);
+      const nextMeta = { ...meta };
+      if (fn(nextEntries, nextMeta) === false) return;
+      Object.keys(entries).forEach(k => delete entries[k]);
+      Object.assign(entries, nextEntries);
+      Object.keys(meta).forEach(k => delete meta[k]);
+      Object.assign(meta, nextMeta);
     }),
     // bun:test (#112): omitting these from the mock falls through to the
     // REAL store impls (live bindings preserve un-mocked exports), which
     // hit the actual filesystem. Stub them as no-ops so the slow path
-    // (loadEntries+saveEntriesAndTouchMeta) is exercised — that's what
+    // (updateEntries) is exercised — that's what
     // the tests assert against.
     setEntryFast: vi.fn(() => false),
     getEntryFast: vi.fn(() => undefined),
@@ -144,16 +135,14 @@ describe('storage layer — setValue', () => {
   it('setValue sets value in auto-resolved scope', () => {
     testState.hasProject = false;
     setValue('test.key', 'value');
-    expect((saveEntriesAndTouchMeta as Mock<typeof saveEntriesAndTouchMeta>)).toHaveBeenCalled();
+    expect((updateEntries as Mock<typeof updateEntries>)).toHaveBeenCalled();
   });
 
   it('setValue with project scope targets project store', () => {
     setValue('test.key', 'value', 'project');
-    expect((saveEntriesAndTouchMeta as Mock<typeof saveEntriesAndTouchMeta>)).toHaveBeenCalledWith(
-      expect.anything(),
-      'test.key',
-      'project',
-    );
+    expect((updateEntries as Mock<typeof updateEntries>)).toHaveBeenCalledWith(expect.any(Function), 'project');
+    expect(projectEntries).toEqual({ test: { key: 'value' } });
+    expect(projectMeta['test.key']).toBeGreaterThan(0);
   });
 });
 
@@ -165,11 +154,9 @@ describe('storage layer — removeValue', () => {
 
     const removed = removeValue('foo');
     expect(removed).toBe(true);
-    expect((saveEntriesAndRemoveMeta as Mock<typeof saveEntriesAndRemoveMeta>)).toHaveBeenCalledWith(
-      expect.anything(),
-      'foo',
-      'project',
-    );
+    expect((updateEntries as Mock<typeof updateEntries>)).toHaveBeenCalledWith(expect.any(Function), 'project');
+    expect(projectEntries).toEqual({});
+    expect(globalEntries).toEqual({ foo: 'global' });
   });
 
   it('removeValue with auto scope no longer falls through to global (#99)', () => {
@@ -185,11 +172,8 @@ describe('storage layer — removeValue', () => {
     expect(removed).toBe(false);
     // Confirm the explicit-scope path still works
     expect(removeValue('foo', 'global')).toBe(true);
-    expect((saveEntriesAndRemoveMeta as Mock<typeof saveEntriesAndRemoveMeta>)).toHaveBeenCalledWith(
-      expect.anything(),
-      'foo',
-      'global',
-    );
+    expect((updateEntries as Mock<typeof updateEntries>)).toHaveBeenCalledWith(expect.any(Function), 'global');
+    expect(globalEntries).toEqual({});
   });
 
   it('removeValue returns false when key does not exist anywhere', () => {

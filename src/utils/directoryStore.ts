@@ -20,7 +20,12 @@ import path from 'path';
 import { CodexData, CodexValue } from '../types';
 import type { ScopedStore, UnifiedData } from '../store';
 import { atomicWriteFileSync } from './atomicWrite';
-import { withFileLock } from './fileLock';
+import { STORE_LOCK_WAIT_MS, withFileLock } from './fileLock';
+
+/** A store write's lock: it may wait for other writers' transactions (#254). */
+function withStoreLock<T>(dir: string, fn: () => T): T {
+  return withFileLock(getStoreLockKey(dir), fn, STORE_LOCK_WAIT_MS);
+}
 import { flattenObject, expandFlatKeys } from './objectPath';
 import { debug } from './debug';
 import { StoreUnreadableError, UnreadableFile, classifyUnparseable, keysCollide, nameCollisionError } from './unreadable';
@@ -525,6 +530,27 @@ export function createDirectoryStore(
   }
 
   /**
+   * A sidecar as it is on disk right now, for update() under the lock
+   * (#254). Not through refreshSidecar: that keeps its copy while the mtime
+   * matches, and two writes inside one mtime tick leave it stale. Missing is
+   * the `-1` sentinel, as there, so save() still creates the file.
+   */
+  function rereadSidecar<T extends Record<string, unknown>>(
+    filePath: string,
+    kind: 'aliases' | 'confirm'
+  ): CachedSidecar<T> {
+    let mtimeMs: number;
+    try {
+      mtimeMs = fs.statSync(filePath).mtimeMs;
+    } catch (err) {
+      if (isENOENT(err)) return { data: {} as T, mtimeMs: -1 };
+      throw err;
+    }
+    const { data, unreadable } = readSidecar<T>(filePath, kind);
+    return unreadable ? { data, mtimeMs, unreadable } : { data, mtimeMs };
+  }
+
+  /**
    * Has a file recorded as unreadable changed, or gone, since the scan that
    * recorded it (#215)? The directory-mtime fast skip below assumes every
    * writer adds or removes a directory entry. The store's own atomic writes
@@ -724,6 +750,11 @@ export function createDirectoryStore(
       // the common case without preventing further mismatches.
     }
 
+    return snapshot();
+  }
+
+  /** The cached state as UnifiedData, in fresh objects a caller may mutate. */
+  function snapshot(): UnifiedData {
     // Assemble the nested `entries` tree from the flat per-key cache.
     const flat: Record<string, CodexValue> = {};
     const meta: Record<string, number> = {};
@@ -754,27 +785,75 @@ export function createDirectoryStore(
     return result;
   }
 
+  /**
+   * Replace the whole store with `data`: every entry absent from it is
+   * deleted, both sidecars become exactly its maps. For a caller whose new
+   * state does not depend on the current one (import replace, reset). A
+   * caller that read the store to compute `data` must use update() instead —
+   * whatever another process wrote since that read is deleted here (#254).
+   */
   function save(data: UnifiedData): void {
+    update(() => data);
+  }
+
+  /**
+   * Read-modify-write as one transaction under the store lock (#254).
+   *
+   * `fn` gets the store as it stands under the lock — rescanned, both
+   * sidecars re-read from disk — in fresh objects it may mutate, and returns
+   * the state to write (or null: write nothing). The write is the same diff
+   * save() always did, against that same state, so what another process
+   * wrote before the lock is in what `fn` sees and survives unless `fn`
+   * itself removes it. Before this, every write loaded first, outside the
+   * lock, and the full save deleted what was written in between.
+   *
+   * `fn` must be synchronous and must not touch this store: the lock is not
+   * re-entrant (a nested write waits for it and fails), and the epoch is odd
+   * (a nested load spins in its seqlock retry). If `fn` throws, nothing is
+   * written and the epoch goes back to even.
+   */
+  function update(fn: (current: UnifiedData) => UnifiedData | null): void {
     const dir = getDirPath();
     ensureDir();
     ensureStoreSeeds(dir);
 
-    withFileLock(getStoreLockKey(dir), () => {
+    withStoreLock(dir, () => {
       // 0. Begin commit: bump epoch to the next odd value. Readers that
       //    observe an odd epoch loop in their seqlock retry until we finish.
       //    readEpoch() returns 0 if the file is missing, so the first save
-      //    on a fresh store transitions 0 → 1 → 2.
+      //    on a fresh store transitions 0 → 1 → 2. Ahead of the scan, so a
+      //    reader that overlaps the scan retries.
       const startEpoch = readEpoch(dir);
       const inProgressEpoch = startEpoch + (startEpoch % 2 === 0 ? 1 : 2);
       writeEpoch(dir, inProgressEpoch);
 
-      // 1. Flatten new entries to leaves (authoritative new state).
+      let data: UnifiedData | null;
+      try {
+        // 1. The store as it stands, read under the lock. A full scan: the
+        //    directory-mtime fast skip trusts a timestamp, and on a
+        //    filesystem with coarse mtimes another process's write can
+        //    share one with our last scan. Sidecars re-read from disk for
+        //    the same reason (see rereadSidecar).
+        dirMtimeMs = -1;
+        scanAndSync();
+        aliasesCache = rereadSidecar<Record<string, string>>(path.join(dir, ALIASES_FILE), 'aliases');
+        confirmCache = rereadSidecar<Record<string, true>>(path.join(dir, CONFIRM_FILE), 'confirm');
+
+        // 2. The caller's change, decided from that state.
+        data = fn(snapshot());
+      } catch (err) {
+        writeEpoch(dir, inProgressEpoch + 1);
+        throw err;
+      }
+
+      if (data === null) {
+        writeEpoch(dir, inProgressEpoch + 1);
+        refreshDirToken(dir);
+        return;
+      }
+
+      // 3. Compute deltas, from the new entries flattened to leaves.
       const newFlat = flattenObject(data.entries);
-
-      // 2. Re-scan under the lock for authoritative current state.
-      scanAndSync();
-
-      // 3. Compute deltas.
       const toDelete: string[] = [];
       for (const key of entryCache.keys()) {
         if (!(key in newFlat)) toDelete.push(key);
@@ -893,14 +972,23 @@ export function createDirectoryStore(
 
       // 7. Refresh the dir-mtime fast-skip token. Our own writes bumped the
       //    dir mtime, and without this the next load() always pays a full
-      //    rescan. Safe here: scanAndSync ran under this lock (step 2) and
-      //    every later mutation was ours, so the caches are authoritative.
-      try {
-        dirMtimeMs = fs.statSync(dir).mtimeMs;
-      } catch {
-        dirMtimeMs = -1;
-      }
+      //    rescan. Safe here: scanAndSync ran under this lock (step 1) and
+      //    every later mutation was ours.
+      refreshDirToken(dir);
     });
+  }
+
+  /**
+   * Refresh the dir-mtime fast-skip token after writes of our own. Only
+   * after a scan under the lock: then every later change was ours, and the
+   * caches are authoritative.
+   */
+  function refreshDirToken(dir: string): void {
+    try {
+      dirMtimeMs = fs.statSync(dir).mtimeMs;
+    } catch {
+      dirMtimeMs = -1;
+    }
   }
 
   /**
@@ -969,7 +1057,7 @@ export function createDirectoryStore(
     ensureDir();
     ensureStoreSeeds(dir);
 
-    return withFileLock(getStoreLockKey(dir), () => {
+    return withStoreLock(dir, () => {
       // Whether the dir-mtime fast-skip token is current right now. Unlike
       // save(), this path never scans, so we may only refresh the token after
       // writing if it was already valid — refreshing a stale token would make
@@ -1081,7 +1169,7 @@ export function createDirectoryStore(
     });
   }
 
-  return { load, save, clear, getOne, setOne, unreadable };
+  return { load, save, update, clear, getOne, setOne, unreadable };
 }
 
 // ── Migration ──────────────────────────────────────────────────────────
@@ -1130,6 +1218,14 @@ export function migrateFileToDirectory(
   oldFilePath: string,
   newDirPath: string
 ): DirectoryMigrationResult {
+  // Every process asks this at startup, reads included. With the directory
+  // in place and no old file there is nothing to migrate — the locked path
+  // would answer the same — so don't wait on a lock another writer holds.
+  if (!fs.existsSync(oldFilePath)) {
+    try {
+      if (fs.statSync(newDirPath).isDirectory()) return { status: 'already-present', entryCount: 0 };
+    } catch { /* no directory yet: take the lock and look again */ }
+  }
   return withFileLock(getStoreLockKey(newDirPath), () =>
     migrateFileToDirectoryLocked(oldFilePath, newDirPath)
   );
