@@ -677,4 +677,45 @@ describe('the confirmation gate follows the entry', () => {
       });
     });
   });
+
+  // #241: a project's `_confirm.json` arrives with the clone. A hand-written
+  // `false` or `null` there, spread over the global list, replaced the
+  // user's global `true`: the flagged command ran unasked inside the clone,
+  // on every surface, while `confirm list` still showed the flag.
+  describe('a project list cannot turn a global flag off (#241)', () => {
+    const mcpRun = (key: string): { isError?: boolean; content: { text: string }[] } => {
+      const lines = [
+        { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } } },
+        { jsonrpc: '2.0', method: 'notifications/initialized' },
+        { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'reverie_run', arguments: { key } } },
+      ].map(m => JSON.stringify(m)).join('\n') + '\n';
+      const e: Record<string, string | undefined> = { ...process.env, RVR_DATA_DIR: dataDir };
+      delete e.RVR_SESSION; delete e.RVR_NO_PROJECT; delete e.RVR_PROJECT;
+      const r = spawnSync('bun', [cli, 'mcp-server'], { cwd: projectDir, env: e as NodeJS.ProcessEnv, input: lines, timeout: 15000 });
+      for (const line of r.stdout.toString().trim().split('\n').reverse()) {
+        try {
+          const msg = JSON.parse(line) as { id?: number; result?: { isError?: boolean; content: { text: string }[] } };
+          if (msg.id === 2 && msg.result) return msg.result;
+        } catch { /* not a reply */ }
+      }
+      throw new Error(`no reply: ${r.stdout.toString().slice(0, 300)}`);
+    };
+
+    it.each([['false', false], ['null', null]])('a project %s does not ungate the global flag', (_name, value) => {
+      expect(rvr('set', '-G', 'global.deploy', touch('global'), '--confirm').status).toBe(0);
+      expect(globalFlags()).toContain('global.deploy');
+      fs.writeFileSync(path.join(projectDir, '.reverie', '_confirm.json'), JSON.stringify({ 'global.deploy': value }));
+
+      expect(rvr('run', 'global.deploy').status).toBe(1);
+      const r = json('run', 'global.deploy');
+      expect(r.ok).toBe(false);
+      expect(r.error?.code).toBe('REQUIRES_CONFIRMATION');
+      const m = mcpRun('global.deploy');
+      expect(m.content.map(c => c.text).join('\n')).toContain('requires confirmation before execution');
+      // Reached through a reference, too.
+      fs.writeFileSync(path.join(projectDir, '.reverie', 'wrap.json'), JSON.stringify({ value: 'true && ${global.deploy}' }));
+      expect(json('run', 'wrap').error?.code).toBe('REQUIRES_CONFIRMATION');
+      expect(ran('global')).toBe(false);
+    }, SLOW_TEST_MS);
+  });
 });
