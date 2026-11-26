@@ -353,17 +353,19 @@ function readStoreFile(filePath: string): string {
  * Reads a sidecar file. A missing or empty file is an empty map. A file that
  * does not parse to an object is ALSO returned as an empty map, but flagged
  * `unreadable` (#215): callers must not mistake it for "no aliases" / "no
- * confirmation flags", and save() must not rewrite it.
+ * confirmation flags", and save() must not rewrite it. So is a path that
+ * exists and cannot be read (#283): a symlink, a directory, no permission.
+ * That used to read as an empty map, and a cloned repository shipping
+ * `_aliases.json` as a directory made a commit fail at its last write.
  */
 function readSidecar<T>(filePath: string, kind: 'aliases' | 'confirm'): { data: T; unreadable?: UnreadableFile } {
   let raw: string;
   try {
     raw = readStoreFile(filePath);
   } catch (err) {
-    if (!isENOENT(err)) {
-      debug(`Failed to read sidecar ${filePath}: ${String(err)}`);
-    }
-    return { data: {} as T };
+    if (isENOENT(err)) return { data: {} as T };
+    debug(`Failed to read sidecar ${filePath}: ${String(err)}`);
+    return { data: {} as T, unreadable: { kind, path: filePath, reason: 'read' } };
   }
   if (!raw.trim()) return { data: {} as T };
   try {
@@ -392,6 +394,25 @@ function probeEntryFile(filePath: string, key: string): UnreadableFile | undefin
   return parseEntryWrapper(raw)
     ? undefined
     : { kind: 'entry', path: filePath, key, reason: classifyUnparseable(raw) };
+}
+
+/**
+ * What a commit's write replaced, to put back if a later write fails: the
+ * file's bytes, or — for a symlink, which the store never reads (#283) — the
+ * link's own target path.
+ */
+type PriorFile = { path: string; content: string } | { path: string; link: string };
+
+/** Put a symlink back at `filePath`, in one rename over what is there now. */
+function restoreSymlink(filePath: string, target: string): void {
+  const tmp = `${filePath}.${process.pid}.${Date.now()}.link`;
+  fs.symlinkSync(target, tmp);
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch { /* nothing to clean up */ }
+    throw err;
+  }
 }
 
 /** Device and inode of the file at `filePath` itself (a symlink is not followed), or undefined. */
@@ -635,7 +656,8 @@ export function createDirectoryStore(
   ): CachedSidecar<T> {
     let stat: fs.Stats;
     try {
-      stat = fs.statSync(filePath);
+      // lstat: a symlinked sidecar is reported as one (#283), dangling or not.
+      stat = fs.lstatSync(filePath);
     } catch (err) {
       if (isENOENT(err)) {
         // File missing. If we already had a "missing" sentinel, keep it;
@@ -663,7 +685,7 @@ export function createDirectoryStore(
   ): CachedSidecar<T> {
     let mtimeMs: number;
     try {
-      mtimeMs = fs.statSync(filePath).mtimeMs;
+      mtimeMs = fs.lstatSync(filePath).mtimeMs;
     } catch (err) {
       if (isENOENT(err)) return { data: {} as T, mtimeMs: -1 };
       throw err;
@@ -691,7 +713,7 @@ export function createDirectoryStore(
     if (confirmCache?.unreadable) recorded.push([confirmCache.unreadable.path, confirmCache.mtimeMs]);
     for (const [filePath, mtimeMs] of recorded) {
       try {
-        if (fs.statSync(filePath).mtimeMs !== mtimeMs) return true;
+        if (fs.lstatSync(filePath).mtimeMs !== mtimeMs) return true;
       } catch {
         return true; // gone, or not statable: let the full scan decide
       }
@@ -1107,12 +1129,12 @@ export function createDirectoryStore(
       // the file the key's path opens, not by the key: on a filesystem that
       // folds names the write of `Deploy` lands in the file of a stored
       // `deploy`, and undoing it by unlinking that path deleted `deploy`.
-      const replaced: ({ path: string; content: string } | undefined)[] = [];
+      const replaced: (PriorFile | undefined)[] = [];
       // The cached keys by the file each opens, built the first time a write
       // lands in a file not cached under its own key: once per commit, not
       // once per such write (an import re-casing many keys).
       let cachedByFile: Map<string, string> | undefined;
-      const priorOf = (key: string): { path: string; content: string } | undefined => {
+      const priorOf = (key: string): PriorFile | undefined => {
         const filePath = entryFilePath(dir, key);
         const exact = entryCache.get(key);
         if (exact) return { path: filePath, content: serializeEntryWrapper(exact.wrapper) };
@@ -1130,8 +1152,13 @@ export function createDirectoryStore(
         if (other !== undefined && cached) {
           return { path: entryFilePath(dir, other), content: serializeEntryWrapper(cached.wrapper) };
         }
+        // A file the scan did not read: never through a symlink (#159, #283).
+        // The scan skips a symlinked entry file, and reading it here took the
+        // link target's bytes — `~/.aws/credentials` — which the undo then
+        // wrote into the store as a regular file. The link itself is put back.
         try {
-          return { path: filePath, content: fs.readFileSync(filePath, 'utf8') };
+          if (fs.lstatSync(filePath).isSymbolicLink()) return { path: filePath, link: fs.readlinkSync(filePath) };
+          return { path: filePath, content: readStoreFile(filePath) };
         } catch {
           return undefined;
         }
@@ -1176,7 +1203,8 @@ export function createDirectoryStore(
           const [key] = written[i];
           const prior = replaced[i];
           try {
-            if (prior) atomicWriteFileSync(prior.path, prior.content);
+            if (prior && 'link' in prior) restoreSymlink(prior.path, prior.link);
+            else if (prior) atomicWriteFileSync(prior.path, prior.content);
             else fs.unlinkSync(entryFilePath(dir, key));
           } catch (undo) {
             undoFailed = true;

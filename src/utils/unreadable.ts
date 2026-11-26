@@ -15,8 +15,12 @@ import path from 'path';
 
 export type UnreadableKind = 'entry' | 'aliases' | 'confirm';
 
-/** `conflict`: git conflict markers. `parse`: anything else that fails to parse. */
-export type UnreadableReason = 'conflict' | 'parse';
+/**
+ * `conflict`: git conflict markers. `parse`: anything else that fails to
+ * parse. `read`: not a regular file the store can read — a symbolic link
+ * (never followed, #159), a directory, or a file it may not read (#283).
+ */
+export type UnreadableReason = 'conflict' | 'parse' | 'read';
 
 export interface UnreadableFile {
   kind: UnreadableKind;
@@ -66,9 +70,11 @@ function subject(f: UnreadableFile): string {
   return f.kind === 'aliases' ? 'the alias map' : 'the confirmation list';
 }
 
-/** `<path> has unresolved git conflict markers` / `<path> is not a valid store file`. */
+/** `<path> has unresolved git conflict markers` / `<path> is not a valid store file` / `<path> is not a regular file …`. */
 export function describeUnreadable(f: UnreadableFile): string {
-  const why = f.reason === 'conflict' ? 'has unresolved git conflict markers' : 'is not a valid store file';
+  const why = f.reason === 'conflict' ? 'has unresolved git conflict markers'
+    : f.reason === 'read' ? 'is not a regular file the store can read (a symbolic link, a directory, or a file without read permission)'
+    : 'is not a valid store file';
   return `${displayPath(f.path)} ${why}`;
 }
 
@@ -81,7 +87,8 @@ export function describeUnreadable(f: UnreadableFile): string {
  * the other committer's entry.
  */
 export function resolutionHint(f: UnreadableFile): string {
-  return f.reason === 'conflict' ? conflictHint(displayPath(f.path)) : restoreHint(`Restore ${displayPath(f.path)}`, 'that file');
+  if (f.reason === 'conflict') return conflictHint(displayPath(f.path));
+  return f.reason === 'read' ? readHint(`Replace ${displayPath(f.path)}`, 'it') : restoreHint(`Restore ${displayPath(f.path)}`, 'that file');
 }
 
 function conflictHint(p: string): string {
@@ -99,21 +106,29 @@ function restoreHint(lead: string, it: string): string {
 }
 
 /**
+ * For a path that is not a regular file (#283): a link a cloned repository
+ * shipped, a directory in the file's place. Version control would only bring
+ * the link back, so the way out is a real file or none.
+ */
+function readHint(lead: string, it: string): string {
+  return `${lead} with a regular file, or delete ${it} by hand (the store does not follow a symbolic link, read a directory, or remove a file it cannot read).`;
+}
+
+/**
  * The fix stated once for a list of files: one line when they are all the
- * same kind of broken, two labelled lines when the list mixes conflicts with
- * files that are merely invalid — the git commands do nothing for those.
+ * same kind of broken, one labelled line per kind when the list mixes them —
+ * the git commands do nothing for a file that is merely invalid.
  */
 function sharedHints(files: UnreadableFile[]): string[] {
-  const conflict = files.some(f => f.reason === 'conflict');
-  const parse = files.some(f => f.reason === 'parse');
-  if (conflict && parse) {
-    const lower = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
-    return [
-      `With conflict markers: ${lower(conflictHint('<file>'))}`,
-      `Not a valid store file: ${lower(restoreHint('Restore each', 'it'))}`,
-    ];
-  }
-  return [conflict ? conflictHint('<file>') : restoreHint('Restore each', 'it')];
+  const hints: [UnreadableReason, string, string][] = [
+    ['conflict', 'With conflict markers', conflictHint('<file>')],
+    ['parse', 'Not a valid store file', restoreHint('Restore each', 'it')],
+    ['read', 'Not a regular file', readHint('Replace each', 'it')],
+  ];
+  const present = hints.filter(([reason]) => files.some(f => f.reason === reason));
+  if (present.length === 1) return [present[0][2]];
+  const lower = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
+  return present.map(([, label, hint]) => `${label}: ${lower(hint)}`);
 }
 
 /** What the store is doing without the file. */
@@ -148,6 +163,10 @@ function buildMessage(files: UnreadableFile[], attempted: 'read' | 'write', lead
   }
   if (attempted === 'read') {
     return `Cannot read ${subject(f)}: ${describeUnreadable(f)}${more}. It exists; this is not "not found". ${resolutionHint(f)}`;
+  }
+  // A path that is not a regular file holds nothing of the store's to lose.
+  if (f.reason === 'read') {
+    return `Refusing to write ${subject(f)}: ${describeUnreadable(f)}${more}. Nothing was written. ${resolutionHint(f)} Then retry.`;
   }
   // "Both sides" is true of a conflict only; a truncated file has no sides.
   const lost = f.kind === 'entry' ? (f.reason === 'conflict' ? 'both sides of it' : 'what is left of it')
