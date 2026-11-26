@@ -18,6 +18,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { createDirectoryStore } from '../utils/directoryStore';
+import { computeImportSections } from '../utils/importSections';
 import { assertDistHonorsDataDir } from './helpers/spawnGuard';
 
 let tmpRoot: string;
@@ -160,4 +161,85 @@ describe('a pair on the command line (#267)', () => {
     expect(reply?.result?.content[0].text).toBe('Removed: ns.k.sub');
     expect(files(store())).toEqual(['ns.k.json', 'ns.other.json']);
   }, 30000);
+});
+
+// Review of #267: a replace import kept the hidden half, because the tree it
+// replaced could not show it — and with `all`, the file's confirmation list
+// replaced the one that flagged it, so `run` ran it unconfirmed. A replace
+// now names every hidden key it does not keep; a merge keeps them.
+describe('a replace import drops the hidden half (#267)', () => {
+  const sources = { entries: () => ({}), aliases: () => ({}), confirm: () => ({}), hidden: () => ['ns.k.sub', 'ns.k.sub.x', 'ns.j.y'] };
+
+  it('computeImportSections: a replace lists every hidden key it does not keep; a merge, none', () => {
+    const replace = computeImportSections({ entries: { ns: { k: 'v', j: { y: 'kept' } } } }, false, sources);
+    expect(replace.removed).toEqual(['ns.k.sub', 'ns.k.sub.x']);
+    expect(computeImportSections({ entries: { ns: { k: 'v' } } }, true, sources).removed).toBeUndefined();
+    expect(computeImportSections({ aliases: { a: 'ns.k' } }, false, sources).removed).toBeUndefined();
+  });
+
+  let dataDir: string;
+  const env = () => ({ ...process.env, RVR_DATA_DIR: dataDir, RVR_NO_PROJECT: '1' });
+  const rvr = (...args: string[]) => {
+    const r = spawnSync('bun', ['dist/index.js', ...args], { env: env(), input: '', timeout: 15000 });
+    return { stdout: r.stdout.toString(), stderr: r.stderr.toString(), status: r.status };
+  };
+  const mcp = (name: string, args: Record<string, unknown>) => {
+    const lines = [
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } } },
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } },
+    ].map(m => JSON.stringify(m)).join('\n') + '\n';
+    const r = spawnSync('bun', ['dist/index.js', 'mcp-server'], { env: env(), input: lines, timeout: 15000 });
+    return r.stdout.toString().trim().split('\n').map(l => { try { return JSON.parse(l) as { id?: number; result?: { isError?: boolean; content: { text: string }[] } }; } catch { return {}; } })
+      .find(m => m.id === 2)?.result;
+  };
+  const store = () => path.join(dataDir, 'store');
+  const hiddenThere = () => fs.existsSync(path.join(store(), 'ns.k.sub.json'));
+  const listed = () => JSON.parse(fs.readFileSync(path.join(store(), '_confirm.json'), 'utf8')) as Record<string, true>;
+
+  beforeAll(() => assertDistHonorsDataDir());
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-pair-import-'));
+    expect(rvr('set', '-G', 'ns.other', 'o').status).toBe(0);
+    writeEntry(store(), 'ns.k', 'echo ENTRY');
+    writeEntry(store(), 'ns.k.sub', 'echo HIDDEN');
+    expect(rvr('confirm', 'set', '-G', 'ns.k.sub').status).toBe(0);
+  });
+  afterEach(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+
+  it('CLI, all: the hidden half goes with the flag the file replaced; run finds nothing to run', () => {
+    const file = path.join(dataDir, 'imp-all.json');
+    fs.writeFileSync(file, JSON.stringify({ entries: { ns: { k: 'echo ENTRY' } }, aliases: {}, confirm: {} }));
+    expect(rvr('data', 'import', 'all', file, '-G', '-f').status).toBe(0);
+    expect(hiddenThere()).toBe(false);
+    expect(files(store())).toEqual(['ns.k.json']);
+    const run = rvr('run', '-G', 'ns.k.sub');
+    expect(run.stdout).not.toContain('HIDDEN');
+    expect(run.status).not.toBe(0);
+  }, 60000);
+
+  it('CLI, entries: the hidden half goes; a merge keeps it', () => {
+    const file = path.join(dataDir, 'imp-entries.json');   // not 'entries.json': a legacy file name in the data dir
+    fs.writeFileSync(file, JSON.stringify({ ns: { k: 'echo ENTRY', other: 'o' } }));
+    expect(rvr('data', 'import', 'entries', file, '-G', '-m', '-f').status).toBe(0);
+    expect(hiddenThere()).toBe(true);
+    expect(rvr('data', 'import', 'entries', file, '-G', '-f').status).toBe(0);
+    expect(hiddenThere()).toBe(false);
+    expect(files(store())).toEqual(['ns.k.json', 'ns.other.json']);
+    expect(listed()['ns.k.sub']).toBe(true);   // the flag stays: a flag too many gates nothing
+  }, 60000);
+
+  it('MCP, all and entries', () => {
+    const all = mcp('reverie_import', { type: 'all', merge: false, scope: 'global', data: { entries: { ns: { k: 'echo ENTRY' } }, aliases: {}, confirm: {} } });
+    expect(all?.isError).toBeFalsy();
+    expect(hiddenThere()).toBe(false);
+    const run = mcp('reverie_run', { key: 'ns.k.sub', scope: 'global' });
+    expect(run?.content.map(c => c.text).join('\n')).not.toContain('HIDDEN');
+
+    writeEntry(store(), 'ns.k.sub', 'echo HIDDEN');
+    expect(mcp('reverie_import', { type: 'entries', merge: true, scope: 'global', data: { ns: { k: 'echo ENTRY' } } })?.isError).toBeFalsy();
+    expect(hiddenThere()).toBe(true);
+    expect(mcp('reverie_import', { type: 'entries', merge: false, scope: 'global', data: { ns: { k: 'echo ENTRY' } } })?.isError).toBeFalsy();
+    expect(hiddenThere()).toBe(false);
+  }, 60000);
 });

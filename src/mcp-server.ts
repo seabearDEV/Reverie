@@ -1521,6 +1521,7 @@ server.tool(
           entries: () => current.entries,
           aliases: () => current.aliases,
           confirm: () => current.confirm,
+          hidden: () => current.hidden,
         },
       ), scope);
 

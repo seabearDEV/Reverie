@@ -7,6 +7,8 @@ export interface ImportSections {
   entries?: CodexData;
   aliases?: Record<string, string>;
   confirm?: Record<string, true>;
+  /** #267: the hidden entries a replace drops (see UnifiedData.removed). */
+  removed?: string[];
 }
 
 /**
@@ -34,6 +36,8 @@ export function computeImportSections(
     entries: () => CodexData;
     aliases: () => Record<string, string>;
     confirm: () => Record<string, true>;
+    /** #267: entries stored under another entry, which `entries()` cannot show. */
+    hidden?: () => readonly string[];
   },
 ): ImportSections {
   const next: ImportSections = {};
@@ -53,6 +57,14 @@ export function computeImportSections(
       next.entries = deepMerge(existing, incomingEntries) as CodexData;
     } else {
       next.entries = incoming as CodexData;
+      // #267: a replace replaces every entry, the ones stored under another
+      // entry (`ns.k.sub` beside `ns.k`) too. The tree cannot show them, so
+      // the store keeps them unless the write names them: a replace that
+      // kept `ns.k` kept a hidden `ns.k.sub` — and dropped its flag when the
+      // file replaced the confirmation list, so it ran unconfirmed.
+      const kept = flattenObject(incoming);
+      const removed = (current.hidden?.() ?? []).filter(k => !Object.hasOwn(kept, k));
+      if (removed.length > 0) next.removed = removed;
     }
   }
   if (sections.aliases) {

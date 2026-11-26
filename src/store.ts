@@ -348,6 +348,8 @@ export interface StoreSections {
   entries?: CodexData | undefined;
   aliases?: Record<string, string> | undefined;
   confirm?: Record<string, true> | undefined;
+  /** #267: hidden keys the write removes (see UnifiedData.removed). */
+  removed?: string[] | undefined;
 }
 
 /**
@@ -355,10 +357,12 @@ export interface StoreSections {
  * imports are atomic (#77): no tear between sections on process death or
  * disk error. `fn` gets the store's sections as they stand under its lock —
  * the merge base of a merge import (#254) — and returns the sections to
- * write. Section keys left undefined preserve the current value.
+ * write. Section keys left undefined preserve the current value. `hidden`
+ * lists the entries stored under another entry, which `entries` cannot
+ * show (#267); a replace names the ones it drops in `removed`.
  */
 export function updateAll(
-  fn: (current: { entries: CodexData; aliases: Record<string, string>; confirm: Record<string, true> }) => StoreSections,
+  fn: (current: { entries: CodexData; aliases: Record<string, string>; confirm: Record<string, true>; hidden: string[] }) => StoreSections,
   scope?: Scope,
 ): void {
   // Bulk transactional write (#77): import handlers + reset paths route here.
@@ -370,6 +374,7 @@ export function updateAll(
       entries: structuredClone(current.entries),
       aliases: { ...current.aliases },
       confirm: { ...current.confirm },
+      hidden: [...(current.hidden ?? [])],
     });
 
     // Stamp _meta for new/changed leaves when entries are written. Without
@@ -388,6 +393,7 @@ export function updateAll(
       }),
       ...(sections.aliases !== undefined && { aliases: sections.aliases }),
       ...(sections.confirm !== undefined && { confirm: sections.confirm }),
+      ...(sections.removed !== undefined && { removed: sections.removed }),
     };
   });
 }

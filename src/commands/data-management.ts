@@ -368,6 +368,7 @@ export async function importData(type: string, file: string, options: ImportOpti
         entries: () => current.entries,
         aliases: () => current.aliases,
         confirm: () => current.confirm,
+        hidden: () => current.hidden,
       },
     ), scope);
 
