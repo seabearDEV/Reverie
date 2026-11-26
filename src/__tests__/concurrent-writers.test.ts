@@ -2,134 +2,31 @@
  * #254: concurrent writers must not delete each other's entries and flags.
  *
  * Every store write is a read, a change and a write. These tests put a second
- * writer — process B, modelled as its own store instance over the same
- * directory, so with its own caches — at the points where it can land: B
- * commits one write just before EACH time process A goes for the store lock
- * (the lock is free then, as it would be for a real second process), and one
- * more after A last read the store and before A's command starts. A's
- * command runs through the real callers, against a real store in a temp dir.
+ * writer — process B, its own store instance over the same directory — at the
+ * points where it can land: B commits one write just before EACH time
+ * process A goes for the store lock (the lock is free then, as it would be
+ * for a real second process), and one more after A last read the store and
+ * before A's command starts. A's command runs through the real callers,
+ * against a real store in a temp dir. See helpers/interleave.ts.
  *
  * Whatever A read before taking the lock is stale by the time it writes. The
  * rule under test: what A writes is decided from the store as it stands under
  * the lock, so every write of B's survives next to A's.
- *
- * No timing: the interleaving is driven from the lock acquisition itself.
  */
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
-import { createDirectoryStore } from '../utils/directoryStore';
-import { clearDataDirectoryCache } from '../utils/paths';
 import { flattenObject } from '../utils/objectPath';
-import { clearStoreCaches, loadAliasMap, loadConfirmMap, loadEntries } from '../store';
-import type { ScopedStore, UnifiedData } from '../store';
 import { setConfirm, removeConfirm, removeConfirmForKey, moveConfirm } from '../confirm';
 import { setAlias, removeAlias, renameAlias, removeAliasesForKey } from '../alias';
 import { removeValue } from '../storage';
 import { copyEntry, renameEntry, removeEntry } from '../commands/entries';
 import { importData } from '../commands/data-management';
+import {
+  useTempGlobalStore, otherProcess, onDisk, seed, entryKeys, interleave, survived,
+  bEntry, bFlag, bAlias, bMixed, type BWrite,
+} from './helpers/interleave';
 
-let root: string;
-let storeDir: string;
-const savedEnv = { data: process.env.RVR_DATA_DIR, noProject: process.env.RVR_NO_PROJECT };
-const originalLog = console.log;
-const originalError = console.error;
-
-beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'rvr-254-'));
-  storeDir = path.join(root, 'store');
-  // The global store under a temp data dir; no project resolves from the cwd.
-  process.env.RVR_DATA_DIR = root;
-  process.env.RVR_NO_PROJECT = '1';
-  clearDataDirectoryCache();
-  clearStoreCaches();
-  console.log = vi.fn();
-  console.error = vi.fn();
-});
-
-afterEach(() => {
-  vi.restoreAllMocks();
-  console.log = originalLog;
-  console.error = originalError;
-  if (savedEnv.data === undefined) delete process.env.RVR_DATA_DIR; else process.env.RVR_DATA_DIR = savedEnv.data;
-  if (savedEnv.noProject === undefined) delete process.env.RVR_NO_PROJECT; else process.env.RVR_NO_PROJECT = savedEnv.noProject;
-  clearDataDirectoryCache();
-  clearStoreCaches();
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-/** Another process: a store instance of its own over the same directory. */
-function otherProcess(): ScopedStore {
-  return createDirectoryStore(() => storeDir, () => { fs.mkdirSync(storeDir, { recursive: true }); });
-}
-
-/** The store as a fresh reader sees it. */
-function onDisk(): UnifiedData {
-  return otherProcess().load();
-}
-
-function seed(data: Partial<UnifiedData>): void {
-  otherProcess().save({ entries: {}, aliases: {}, confirm: {}, ...data });
-  clearStoreCaches();
-}
-
-/** One write by B, under a name of its own (`n` counts B's writes). */
-type BWrite = (b: ScopedStore, n: number) => string;
-
-const bEntry: BWrite = (b, n) => {
-  const key = `b.entry${n}`;
-  if (!b.setOne(key, `v${n}`, Date.now())) throw new Error(`setOne(${key}) declined`);
-  return key;
-};
-const bFlag: BWrite = (b, n) => {
-  const key = `b.flag${n}`;
-  const d = b.load();
-  d.confirm[key] = true;
-  b.save(d);
-  return key;
-};
-const bAlias: BWrite = (b, n) => {
-  const name = `balias${n}`;
-  const d = b.load();
-  d.aliases[name] = `b.target${n}`;
-  b.save(d);
-  return name;
-};
-
-/**
- * Run A's command with B writing in every gap: once after A last read the
- * store (A's caches are then stale), and once just before each of A's lock
- * acquisitions. Returns the names B wrote.
- */
-async function interleave(op: () => unknown, bWrite: BWrite): Promise<string[]> {
-  const b = otherProcess();
-  const written: string[] = [];
-
-  // A has read the store — as the caller of any command has — and B writes.
-  loadEntries('global');
-  loadAliasMap('global');
-  loadConfirmMap('global');
-  written.push(bWrite(b, written.length));
-
-  const lockPath = storeDir + '.lock';
-  const realOpen = fs.openSync.bind(fs);
-  let inB = false;
-  vi.spyOn(fs, 'openSync').mockImplementation(((p: fs.PathLike, ...rest: unknown[]) => {
-    if (!inB && String(p) === lockPath) {
-      inB = true;
-      try { written.push(bWrite(b, written.length)); } finally { inB = false; }
-    }
-    return (realOpen as (...args: unknown[]) => number)(p, ...rest);
-  }) as typeof fs.openSync);
-  try {
-    await op();
-  } finally {
-    vi.restoreAllMocks();
-  }
-  return written;
-}
-
-const entryKeys = (d: UnifiedData): string[] => Object.keys(flattenObject(d.entries)).sort();
+const tmp = useTempGlobalStore();
 
 describe('#254: a write by another process survives', () => {
   describe('the confirmation list', () => {
@@ -185,7 +82,6 @@ describe('#254: a write by another process survives', () => {
         renamed = true;
         const d = b.load();
         const flat = flattenObject(d.entries);
-        delete (d.entries.g as Record<string, string>).x;
         delete d.entries.g;
         d.entries.h = { x: flat['g.x'] };
         d.confirm['h.x'] = true;
@@ -249,15 +145,11 @@ describe('#254: a write by another process survives', () => {
 
     it('rm keeps the entries, aliases and flags written meanwhile', async () => {
       seed({ entries: { a: { x: '1' }, keep: { me: '1' } }, aliases: { ax: 'a.x' }, confirm: { 'a.x': true } });
-      const mixed: BWrite = (b, n) => [bEntry, bFlag, bAlias][n % 3](b, n);
-      const bKeys = await interleave(() => removeEntry('a', true, true), mixed);
+      const bKeys = await interleave(() => removeEntry('a', true, true), bMixed);
       const d = onDisk();
-      const keys = entryKeys(d);
       expect(bKeys.length).toBeGreaterThanOrEqual(3);
-      for (const k of bKeys) {
-        expect(keys.includes(k) || d.confirm[k] === true || d.aliases[k] !== undefined).toBe(true);
-      }
-      expect(keys).not.toContain('a.x');
+      for (const k of bKeys) expect(survived(d, k)).toBe(true);
+      expect(entryKeys(d)).not.toContain('a.x');
       expect(d.aliases.ax).toBeUndefined();
       expect(d.confirm['a.x']).toBeUndefined();
     });
@@ -281,10 +173,9 @@ describe('#254: a write by another process survives', () => {
 
     it('a rename keeps the flags and aliases set meanwhile, and carries its own', async () => {
       seed({ entries: { g: { x: 'true' } }, aliases: { gx: 'g.x' }, confirm: { 'g.x': true } });
-      const mixed: BWrite = (b, n) => (n % 2 === 0 ? bFlag : bAlias)(b, n);
-      const bKeys = await interleave(() => renameEntry('g.x', 'h.x', false, undefined, true), mixed);
+      const bKeys = await interleave(() => renameEntry('g.x', 'h.x', false, undefined, true), bMixed);
       const d = onDisk();
-      for (const k of bKeys) expect(d.confirm[k] === true || d.aliases[k] !== undefined).toBe(true);
+      for (const k of bKeys) expect(survived(d, k)).toBe(true);
       expect(d.confirm['h.x']).toBe(true);
       expect(d.aliases.gx).toBe('h.x');
       expect(entryKeys(d)).toContain('h.x');
@@ -292,12 +183,35 @@ describe('#254: a write by another process survives', () => {
 
     it('a merge import keeps the entries set meanwhile', async () => {
       seed({ entries: { old: { k: '1' } } });
-      const file = path.join(root, 'import.json');
+      const file = path.join(tmp.root, 'import.json');
       fs.writeFileSync(file, JSON.stringify({ imported: { k: '2' } }));
       const bKeys = await interleave(() => importData('entries', file, { merge: true, force: true, global: true }), bEntry);
       const keys = entryKeys(onDisk());
       for (const k of bKeys) expect(keys).toContain(k);
       expect(keys).toEqual(expect.arrayContaining(['old.k', 'imported.k']));
+    });
+  });
+
+  describe('the store primitive', () => {
+    it('reads a sidecar rewritten inside one mtime tick', () => {
+      // A filesystem with coarse timestamps can give two writes of
+      // _confirm.json one mtime. update() must not trust the cache keyed on
+      // it: pinned here, so the rewrite looks unchanged by mtime.
+      seed({ confirm: { 'x.a': true } });
+      const confirmPath = path.join(tmp.storeDir, '_confirm.json');
+      const tick = 1_700_000_000; // whole seconds round-trip to the cached mtimeMs
+      fs.utimesSync(confirmPath, tick, tick);
+      const a = otherProcess();
+      a.load();
+
+      const b = otherProcess();
+      const d = b.load();
+      d.confirm['x.b'] = true;
+      b.save(d);
+      fs.utimesSync(confirmPath, tick, tick);
+
+      a.update(current => ({ ...current, confirm: { ...current.confirm, 'x.c': true } }));
+      expect(onDisk().confirm).toEqual({ 'x.a': true, 'x.b': true, 'x.c': true });
     });
   });
 });
