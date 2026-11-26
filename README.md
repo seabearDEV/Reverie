@@ -401,6 +401,8 @@ rvr alias rename oldalias newalias
 rvr rename server.old server.new --set-alias sn
 ```
 
+A rename is one step: the value, the aliases that point at it and the new keys' confirmation flags move together, or nothing changes. Name the entry as it is stored. On a filesystem that ignores case, `rvr rename Commands.Deploy …` opens the file of `commands.deploy`, and the rename is refused with the stored name rather than copying the entry. A rename is also refused while either store's confirmation list cannot be read.
+
 ### Editing Data
 
 Open a stored value in your `$EDITOR` (or `$VISUAL`) for inline editing:
@@ -748,7 +750,7 @@ rvr confirm remove commands.deploy
 rvr run commands.deploy -y
 ```
 
-The key has to name an entry: `confirm set` and `set <key> --confirm` refuse a key that is not in the store and a namespace. A flagged command asks for confirmation under any spelling that reaches it, directly, through a `${reference}` or through an alias: on a filesystem that ignores case, `rvr run commands.Deploy` opens the entry stored as `commands.deploy`, and is gated like it. `confirm remove` clears the flag listed under the name it is given, and tells you if the key is still gated by another one. Renaming an entry or a namespace flags the new keys of the gated entries it moves and leaves the old names flagged, and removing one leaves its flags listed too: a flag gates its name in every project, and the global list may be gating another project's entry of the same name. Clear a flag with `confirm remove` once nothing uses it.
+The key has to name an entry: `confirm set` and `set <key> --confirm` refuse a key that is not in the store and a namespace. A flagged command asks for confirmation under any spelling that reaches it, directly, through a `${reference}` or through an alias: on a filesystem that ignores case, `rvr run commands.Deploy` opens the entry stored as `commands.deploy`, and is gated like it. `confirm remove` clears the flag listed under the name it is given, and tells you if the key is still gated by another one. Renaming an entry or a namespace flags the new keys of the gated entries it moves and leaves the old names flagged (a rename is refused while either list cannot be read, since it could not carry a flag from that list), and removing one leaves its flags listed too: a flag gates its name in every project, and the global list may be gating another project's entry of the same name. Clear a flag with `confirm remove` once nothing uses it.
 
 ### Staleness Detection
 
