@@ -637,13 +637,89 @@ compdef _${bin}_completions ${bin}
 `;
 }
 
+// --- Shell wrapper for `run` ---
+
+/**
+ * Version of the wrapper text. Bump it when the text changes, so that
+ * `config completions install` replaces an older wrapper in place: the marker
+ * alone only says one is installed.
+ */
+export const SHELL_WRAPPER_VERSION = 2;
+
+/** The comment that opens every version of the wrapper block. */
+export function shellWrapperMarker(bin: string): string {
+  return `# Reverie shell wrapper (${bin})`;
+}
+
+/**
+ * The `run` wrapper: a shell function that runs `<bin> run … --source` and
+ * evals what it prints, so a stored `cd`/`export`/`alias` acts on the user's
+ * shell. Bash and zsh read the same text.
+ *
+ * #281: it evals only a run whose stdout is the command. `--json` (or
+ * RVR_OUTPUT=json) and `--dry` pass straight through to the binary: their
+ * output is an envelope or a preview, never code, and the old wrapper evaled
+ * the envelope, which quotes store file names a cloned repository chose. The
+ * binary never emits an envelope with --source either, for wrappers installed
+ * before this one.
+ */
+export function generateShellWrapper(bin: string = getBinaryName()): string {
+  // Same hyphen-handling as generateZshScript: zsh/bash allow `-` in command and
+  // function names but not in `local`/parameter names. Use binVar in those slots.
+  const binVar = bin.replace(/-/g, '_');
+  return `${shellWrapperMarker(bin)} v${SHELL_WRAPPER_VERSION} — eval "${bin} run" in the current shell so cd/export/alias work
+# --json, RVR_OUTPUT=json and --dry go straight to ${bin}: what they print is never evaluated.
+${bin}() {
+  local subcmd="" has_help=false pass=false
+  for arg in "$@"; do
+    if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+      has_help=true
+    elif [[ "$arg" == "--json" || "$arg" == --json=* || "$arg" == "--dry" ]]; then
+      pass=true
+    elif [[ "$arg" != -* && -z "$subcmd" ]]; then
+      subcmd="$arg"
+    fi
+  done
+  if [[ "\${RVR_OUTPUT:-}" == "json" ]]; then
+    pass=true
+  fi
+  if [[ "$has_help" == false && "$pass" == false && ("$subcmd" == "run" || "$subcmd" == "r") ]]; then
+    local __${binVar}_cmd __${binVar}_exit
+    __${binVar}_cmd="$(command ${bin} "$@" --source)"
+    __${binVar}_exit=$?
+    [[ $__${binVar}_exit -ne 0 ]] && return $__${binVar}_exit
+    if [[ -n "$__${binVar}_cmd" ]]; then
+      eval "$__${binVar}_cmd"
+    fi
+  else
+    command ${bin} "$@"
+  fi
+}
+`;
+}
+
+/**
+ * `content` with an older wrapper block replaced by `block`: from the marker
+ * line through the first line after it that is a lone `}` — the end of the
+ * function every version wrote. Undefined when no block is found as written
+ * (moved, or edited by hand); the caller then says so instead.
+ */
+export function replaceShellWrapper(content: string, bin: string, block: string): string | undefined {
+  const marker = shellWrapperMarker(bin);
+  const at = content.indexOf(marker);
+  if (at === -1 || (at > 0 && content[at - 1] !== '\n')) return undefined;
+  const close = /^\}[ \t]*$/m.exec(content.slice(at));
+  if (!close) return undefined;
+  let end = at + close.index + close[0].length;
+  if (content[end] === '\n') end++;
+  if (!content.slice(at, end).includes(`\n${bin}() {\n`)) return undefined;
+  return content.slice(0, at) + block + content.slice(end);
+}
+
 // --- Install helper ---
 
 export function installCompletions(): void {
   const bin = getBinaryName();
-  // Same hyphen-handling as generateZshScript: zsh/bash allow `-` in command and
-  // function names but not in `local`/parameter names. Use binVar in those slots.
-  const binVar = bin.replace(/-/g, '_');
   const shell = process.env.SHELL ?? '';
   let rcFile: string;
   let scriptCmd: string;
@@ -676,37 +752,26 @@ export function installCompletions(): void {
     console.log(`Completions installed in ${rcFile}`);
   }
 
-  // Install shell wrapper for `run` / `r` (eval in current shell)
+  // Install shell wrapper for `run` / `r` (eval in current shell). An older
+  // version is replaced in place (#281: it evaled `--json` output).
   // Re-read content since completions block may have been appended above
   const wrapperContent = fs.existsSync(rcFile) ? fs.readFileSync(rcFile, 'utf8') : '';
-  const wrapperMarker = `# Reverie shell wrapper (${bin})`;
+  const wrapperMarker = shellWrapperMarker(bin);
+  const wrapperBlock = generateShellWrapper(bin);
 
-  if (wrapperContent.includes(wrapperMarker)) {
+  if (wrapperContent.includes(`${wrapperMarker} v${SHELL_WRAPPER_VERSION} `)) {
     console.log(`Shell wrapper already installed in ${rcFile}`);
+  } else if (wrapperContent.includes(wrapperMarker)) {
+    const updated = replaceShellWrapper(wrapperContent, bin, wrapperBlock);
+    if (updated !== undefined) {
+      fs.writeFileSync(rcFile, updated, 'utf8');
+      console.log(`Shell wrapper updated in ${rcFile}`);
+    } else {
+      console.error(`An older shell wrapper is in ${rcFile}, and it is not laid out as installed, so it was left alone.`);
+      console.error(`Delete it — the "${wrapperMarker}" comment and the ${bin}() function under it — and run this again.`);
+    }
   } else {
-    const wrapperBlock = `
-${wrapperMarker} — eval "${bin} run" in the current shell so cd/export/alias work
-${bin}() {
-  local subcmd="" has_help=false
-  for arg in "$@"; do
-    if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-      has_help=true
-    elif [[ "$arg" != -* && -z "$subcmd" ]]; then
-      subcmd="$arg"
-    fi
-  done
-  if [[ "$has_help" == false && ("$subcmd" == "run" || "$subcmd" == "r") ]]; then
-    local __${binVar}_cmd __${binVar}_exit
-    __${binVar}_cmd="$(command ${bin} "$@" --source)"
-    __${binVar}_exit=$?
-    [[ $__${binVar}_exit -ne 0 ]] && return $__${binVar}_exit
-    [[ -n "$__${binVar}_cmd" ]] && eval "$__${binVar}_cmd"
-  else
-    command ${bin} "$@"
-  fi
-}
-`;
-    fs.appendFileSync(rcFile, wrapperBlock, 'utf8');
+    fs.appendFileSync(rcFile, `\n${wrapperBlock}`, 'utf8');
     console.log(`Shell wrapper installed in ${rcFile}`);
   }
 

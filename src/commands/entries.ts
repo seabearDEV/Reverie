@@ -26,6 +26,7 @@ import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys,
 import { getBinaryName } from '../utils/binaryName';
 import { isJsonMode, setResult, failJson, addWarning, recordErrorCode, type ErrorCode } from '../utils/output';
 import { markValueStored } from '../utils/writeAmp';
+import { writeSourceCommand } from '../utils/sourceOutput';
 
 function toScope(global?: boolean  ): Scope | undefined {
   return global ? 'global' : undefined;
@@ -299,7 +300,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     if (execValue === undefined) return;
 
     if (options.source) {
-      process.stdout.write(execValue + '\n');
+      writeSourceCommand(execValue + '\n');   // the one stdout write (#281)
     } else if (options.capture) {
       try {
         const stdout = execSync(execValue, { encoding: 'utf-8', shell: process.env.SHELL ?? '/bin/sh' });

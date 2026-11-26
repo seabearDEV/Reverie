@@ -810,10 +810,10 @@ By default, `rvr run` executes commands in a child process. This means shell bui
 
 After running `rvr config completions install`, a shell wrapper function is added to your shell profile that fixes this. When you use `rvr run` (or `rvr r`), the wrapper:
 
-1. Calls the real `rvr` binary with `--source`, which outputs the raw command to stdout instead of executing it
+1. Calls the real `rvr` binary with `--source`, which prints the resolved command to stdout instead of executing it — the command and nothing else; warnings and everything else go to stderr
 2. Captures that output and `eval`s it in your current shell
 
-All other `rvr` commands pass through to the binary unchanged.
+All other `rvr` commands pass through to the binary unchanged. So does a `run` with `--json` (or with `RVR_OUTPUT=json` set) or `--dry`: what it prints is a JSON envelope or a preview, and the wrapper never evaluates it. `--source` itself never prints JSON: given `--json` or `RVR_OUTPUT=json`, it prints the command as usual and notes on stderr that JSON output is off.
 
 ```bash
 # Store a navigation command
@@ -825,7 +825,7 @@ rvr r paths.myproject -y
 # Without the wrapper, cd would run in a child process and have no effect
 ```
 
-The wrapper is installed automatically by `rvr config completions install`. If you already have completions installed, run it again to add the wrapper, then `source` your shell profile.
+The wrapper is installed automatically by `rvr config completions install`. If you already have completions installed, run it again to add the wrapper, then `source` your shell profile. Running it again also updates a wrapper installed by an earlier version, which evaluated `--json` output; one you have edited by hand is left alone, and the install tells you how to remove it.
 
 ### Shell Tab-Completion
 
