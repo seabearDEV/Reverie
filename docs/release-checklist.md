@@ -197,4 +197,4 @@ an advisory in the next minor version's CHANGELOG.
 - [ ] Update `project.<version>` Reverie entry (or create the next one) with status
 - [ ] Close the milestone
 - [ ] Open issues for any deferred items mentioned in the release notes
-- [ ] Publish the draft security advisories held for this release: `grep -l "HELD FOR" docs/security/advisory-*.md`. On each GHSA form set the patched version to the tag just pushed, then publish; mark the source record PUBLISHED. For 1.4.0: GHSA-9653-mh42-mfjj (#234, `advisory-confirm-gate-spelling.md`)
+- [ ] Publish the draft security advisories held for this release: `grep -l "HELD FOR" docs/security/advisory-*.md`. On each GHSA form set the patched version to the tag just pushed, then publish; mark the source record PUBLISHED. For 1.4.0: GHSA-9653-mh42-mfjj (#234, `advisory-confirm-gate-spelling.md`) and GHSA-vj74-g5wx-8hvv (#242, `advisory-exec-output.md`)
