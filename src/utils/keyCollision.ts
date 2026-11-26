@@ -181,6 +181,44 @@ export function findCollidingPairs(keys: Iterable<string>): [string, string][] {
 }
 
 /**
+ * #267: entries stored under another entry. A key is an entry or a
+ * namespace, never both, yet a hand edit or a git merge can leave
+ * `ns.k.json` beside `ns.k.sub.json`. The tree the store hands its callers
+ * holds the entry, and everything stored under it is hidden. Maps each
+ * hidden key to the entry it is hidden under (the topmost one). Exact names:
+ * keys that differ by case are lint's case check.
+ */
+export function entriesUnderEntries(keys: Iterable<string>): Map<string, string> {
+  const all = new Set(keys);
+  const hidden = new Map<string, string>();
+  for (const key of all) {
+    for (let i = key.indexOf('.'); i !== -1; i = key.indexOf('.', i + 1)) {
+      const prefix = key.slice(0, i);
+      if (all.has(prefix)) {
+        hidden.set(key, prefix);
+        break;
+      }
+    }
+  }
+  return hidden;
+}
+
+// The entry keys each store's last scan listed, one per file (#267), for
+// lint: the tree it reads cannot show both halves of such a pair. Fed by
+// store.ts, as the unreadable-file registry is, so that lint.ts needs no new
+// import from '../store' — which several suites mock with explicit factories.
+const storedKeySources = new Map<'project' | 'global', () => string[]>();
+
+export function registerStoredKeysSource(id: 'project' | 'global', list: () => string[]): void {
+  storedKeySources.set(id, list);
+}
+
+/** The keys `id`'s last scan in this process listed; none when it has not scanned. No I/O. */
+export function storedKeysOf(id: 'project' | 'global'): string[] {
+  return storedKeySources.get(id)?.() ?? [];
+}
+
+/**
  * Why `oldKey` cannot be renamed to `newKey`, or null when it can be tried.
  *
  * A rename removes the old key with everything under it. When it wrote the

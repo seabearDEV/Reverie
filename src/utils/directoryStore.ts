@@ -31,7 +31,7 @@ function withStoreLock<T>(dir: string, fn: () => T): T {
 import { flattenObject, expandFlatKeys } from './objectPath';
 import { debug } from './debug';
 import { StoreUnreadableError, UnreadableFile, classifyUnparseable, keysCollide, nameCollisionError } from './unreadable';
-import { KeyCollisionError, collidesWithAny } from './keyCollision';
+import { KeyCollisionError, collidesWithAny, entriesUnderEntries } from './keyCollision';
 import { toStoreWriteError } from './storeWriteError';
 
 // ── Test guard (#274) ──────────────────────────────────────────────────
@@ -873,9 +873,16 @@ export function createDirectoryStore(
   /** The cached state as UnifiedData, in fresh objects a caller may mutate. */
   function snapshot(): UnifiedData {
     // Assemble the nested `entries` tree from the flat per-key cache.
+    // #267: an entry and entries under it, both on disk, cannot both be in
+    // the tree. The entry is, always: which one won used to be whichever the
+    // cache listed last, so it depended on directory order and could flip
+    // after a write. The rest are listed as `hidden`, and update() keeps
+    // their files.
+    const hidden = entriesUnderEntries(entryCache.keys());
     const flat: Record<string, CodexValue> = {};
     const meta: Record<string, number> = {};
     for (const [key, cached] of entryCache) {
+      if (hidden.has(key)) continue;
       flat[key] = cached.wrapper.value;
       if (cached.wrapper.meta?.updated !== undefined) {
         meta[key] = cached.wrapper.meta.updated;
@@ -899,6 +906,7 @@ export function createDirectoryStore(
     if (Object.keys(meta).length > 0) {
       result._meta = meta;
     }
+    if (hidden.size > 0) result.hidden = [...hidden.keys()].sort();
     return result;
   }
 
@@ -981,10 +989,23 @@ export function createDirectoryStore(
       if (data === null) return;
 
       // 3. Compute deltas, from the new entries flattened to leaves.
+      //    #267: an entry stored under another entry is not in the tree
+      //    `fn` got (see snapshot), so it is absent from what `fn` returns
+      //    whatever `fn` did. Its file is deleted only when the write
+      //    removes it: by naming it, or a key above it, in `removed`, or by
+      //    removing the entry it is hidden under (`rm ns.k` takes
+      //    `ns.k.sub` with it). Every other write — an alias, a flag, a
+      //    rename elsewhere — deleted it without a word.
       const newFlat = flattenObject(data.entries);
+      const hidden = entriesUnderEntries(entryCache.keys());
+      const removed = data.removed ?? [];
       const toDelete: string[] = [];
       for (const key of entryCache.keys()) {
-        if (!(key in newFlat)) toDelete.push(key);
+        if (Object.hasOwn(newFlat, key)) continue;
+        const under = hidden.get(key);
+        if (under === undefined
+          || !Object.hasOwn(newFlat, under)
+          || removed.some(r => key === r || key.startsWith(`${r}.`))) toDelete.push(key);
       }
       const toWrite: [string, CodexValue, number | undefined][] = [];
       for (const [key, value] of Object.entries(newFlat)) {

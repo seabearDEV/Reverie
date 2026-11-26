@@ -2,9 +2,9 @@ import { getEntriesFlat, Scope } from '../storage';
 import { color } from '../formatting';
 import { findProjectFile } from '../store';
 import { interpolateForRead, unresolvedWarning } from '../utils/interpolate';
-import { isJsonMode, setResult, failJson, recordErrorCode } from '../utils/output';
+import { isJsonMode, setResult, failJson, recordErrorCode, addWarning } from '../utils/output';
 import { describeUnreadable, displayPath, listUnreadableFiles, markUnreadableShown, resolutionHint } from '../utils/unreadable';
-import { findCollidingPairs } from '../utils/keyCollision';
+import { entriesUnderEntries, findCollidingPairs, storedKeysOf } from '../utils/keyCollision';
 import fs from 'fs';
 import path from 'path';
 
@@ -150,6 +150,46 @@ function caseCheckedKeys(flat: Record<string, string>, global: boolean | undefin
   }
 }
 
+/** An entry with entries stored under it (#267), as lint reports it. */
+interface EntryNamespacePair {
+  entry: string;
+  under: string[];
+}
+
+/** What to do about such a pair; `entry` named when there is one. */
+function entryNamespaceFix(entry = '<entry>'): string {
+  return `Listings and reads of the namespace show only the entry, and \`rvr rename\` refuses it. `
+    + `\`rvr copy\` what you want to keep to a free key; \`rvr rm ${entry}\` then removes both.`;
+}
+
+function entryNamespaceHeadline(n: number): string {
+  return `${n} key${n === 1 ? ' is' : 's are'} stored both as an entry and as a namespace`;
+}
+
+function describeEntryNamespacePair({ entry, under }: EntryNamespacePair): string {
+  const named = under.slice(0, 3).map(k => `'${k}'`).join(', ') + (under.length > 3 ? `, and ${under.length - 3} more` : '');
+  return `'${entry}' and ${named}`;
+}
+
+/**
+ * #267: entries stored under another entry — `ns.k.json` beside
+ * `ns.k.sub.json`, after a hand edit or a git merge. The tree lint reads
+ * holds only the entry, so the keys come from the store's own scan (see
+ * storedKeysOf), in the one store lint looks at, as for case pairs.
+ */
+function findEntryNamespacePairs(global: boolean | undefined): EntryNamespacePair[] {
+  const id = global || !findProjectFile() ? 'global' : 'project';
+  const byEntry = new Map<string, string[]>();
+  for (const [key, entry] of entriesUnderEntries(storedKeysOf(id))) {
+    const under = byEntry.get(entry);
+    if (under) under.push(key);
+    else byEntry.set(entry, [key]);
+  }
+  return [...byEntry.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([entry, under]) => ({ entry, under: under.sort() }));
+}
+
 function loadCustomSchema(): string[] | null {
   const projectFile = findProjectFile();
   if (!projectFile) return null;
@@ -234,6 +274,11 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
   // each is two files in two directories.
   const caseCollisions = findCollidingPairs(caseCheckedKeys(flat, options.global));
 
+  // #267: an entry with entries stored under it. The store shows the entry
+  // and hides the rest, and writes used to delete the hidden files. A broken
+  // store, like the case pairs: it fails the command.
+  const entryPairs = findEntryNamespacePairs(options.global);
+
   if (isJsonMode()) {
     const payload: Record<string, unknown> = {
       issues: namespaceIssues,
@@ -251,11 +296,19 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
       }));
     }
     if (caseCollisions.length > 0) payload.caseCollisions = caseCollisions.map(keys => ({ keys }));
+    if (entryPairs.length > 0) {
+      payload.entryNamespacePairs = entryPairs;
+      for (const pair of entryPairs) {
+        addWarning(`'${pair.entry}' is stored both as an entry and as a namespace (${describeEntryNamespacePair(pair)}). ${entryNamespaceFix(pair.entry)}`, 'ENTRY_NAMESPACE_PAIR');
+      }
+    }
     setResult(payload);
     if (unreadable.length > 0) {
       failJson('STORE_UNREADABLE', `${unreadable.length} store file${unreadable.length === 1 ? '' : 's'} cannot be read: ${unreadable.map(describeUnreadable).join('; ')}.`);
     } else if (caseCollisions.length > 0) {
       failJson('INVALID_INPUT', `${caseCollisionHeadline(caseCollisions.length)}: ${caseCollisions.map(describePair).join('; ')}. ${CASE_COLLISION_FIX}`);
+    } else if (entryPairs.length > 0) {
+      failJson('INVALID_INPUT', `${entryNamespaceHeadline(entryPairs.length)}: ${entryPairs.map(describeEntryNamespacePair).join('; ')}. ${entryNamespaceFix(entryPairs.length === 1 ? entryPairs[0].entry : undefined)}`);
     }
     return;
   }
@@ -281,6 +334,15 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
     // The code the JSON branch reports (#203) — which, with both findings,
     // is the unreadable files': leave that one recorded.
     if (unreadable.length === 0) recordErrorCode('INVALID_INPUT');
+    process.exitCode = 1;
+  }
+
+  if (entryPairs.length > 0) {
+    console.log(color.red(color.bold(`\n${entryNamespaceHeadline(entryPairs.length)}:\n`)));
+    for (const pair of entryPairs) console.log(`  ${color.red(describeEntryNamespacePair(pair))}`);
+    console.log(`    ${color.gray(entryNamespaceFix(entryPairs.length === 1 ? entryPairs[0].entry : undefined))}`);
+    console.log('');
+    if (unreadable.length === 0 && caseCollisions.length === 0) recordErrorCode('INVALID_INPUT');
     process.exitCode = 1;
   }
 

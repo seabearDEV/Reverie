@@ -802,6 +802,8 @@ rvr lint -G
 
 Default namespaces: `project`, `commands`, `arch`, `conventions`, `context`, `files`, `deps`, `system`. Entries outside them are listed as guidance and `lint` still exits 0. Declaring extra namespaces is not supported for directory stores yet.
 
+`lint` exits 1 when the store itself needs repair: a file that does not parse, two keys that differ only by case, or a key stored both as an entry and as a namespace (`ns.k.json` beside `ns.k.sub.json`, after a hand edit or a git merge). In that last case listings show only the entry, and `rename` refuses it; `rvr copy` what you want to keep to a free key, then `rvr rm ns.k` removes both. `--json` lists such keys in `result.entryNamespacePairs`.
+
 ### Shell Wrapper
 
 By default, `rvr run` executes commands in a child process. This means shell builtins like `cd`, `export`, and `alias` have no effect on your current shell.

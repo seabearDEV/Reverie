@@ -19,6 +19,7 @@ import { createDirectoryStore, migrateFileToDirectory } from './utils/directoryS
 import { flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 import { debug } from './utils/debug';
 import { registerUnreadableSource, type UnreadableFile } from './utils/unreadable';
+import { registerStoredKeysSource } from './utils/keyCollision';
 import { resolveScopeForWrite } from './projectResolution';
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -28,6 +29,18 @@ export interface UnifiedData {
   aliases: Record<string, string>;
   confirm: Record<string, true>;
   _meta?: Record<string, number> | undefined;
+  /**
+   * #267: entry keys stored under another entry (`ns.k.sub` beside `ns.k`, left by
+   * a hand edit or a git merge), which `entries` cannot show. Set by a load,
+   * only when there are any; a write ignores it.
+   */
+  hidden?: string[] | undefined;
+  /**
+   * #267: keys a write removes, each with every entry stored under it — the
+   * hidden ones too, which the tree cannot show removed. A write deletes no
+   * hidden entry otherwise, unless it removes the entry it is hidden under.
+   */
+  removed?: string[] | undefined;
 }
 
 export type Scope = 'project' | 'global' | 'auto';
@@ -549,6 +562,10 @@ export function loadConfirmMapMerged(): Record<string, true> {
 
 registerUnreadableSource('project', () => projectStore?.unreadable() ?? [], () => { getProjectStore()?.load(); });
 registerUnreadableSource('global', () => globalStore?.unreadable() ?? [], () => { getGlobalStore().load(); });
+
+// #267: the keys each store holds, one per file, for lint — read the same way.
+registerStoredKeysSource('project', () => projectStore?.storedKeys() ?? []);
+registerStoredKeysSource('global', () => globalStore?.storedKeys() ?? []);
 
 // ── Cache management ───────────────────────────────────────────────────
 

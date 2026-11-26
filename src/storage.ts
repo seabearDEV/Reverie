@@ -337,16 +337,25 @@ export function removeValue(key: string, scope?: Scope  ): boolean {
   // dropped so a misconfigured workspace cannot silently delete from global.
   // Users who need to remove a global entry must pass -G (CLI) / scope:'global' (MCP).
   const effectiveScope = resolveScopeForWrite(scope);
-  // Nothing under this key: nothing to write.
-  if (!removeNestedValue(loadEntries(effectiveScope), key)) return false;
+  // Nothing under this key: nothing to write. #267: an entry stored under
+  // another entry (`ns.k.sub` beside `ns.k`) is not in the tree, but `get`
+  // reads it from its file, and so does this check.
+  if (!removeNestedValue(loadEntries(effectiveScope), key) && getEntryFast(key, effectiveScope) === undefined) return false;
   // #254: the removal itself, decided again under the lock — the tree
   // loaded above is already stale, and saving it would delete every entry
   // another process wrote since.
   let removed = false;
-  updateEntries((entries, meta) => {
-    removed = removeNestedValue(entries, key);
-    if (removed) removeFlatKeysUnder(meta, key);
-    return removed;
+  updateStore(current => {
+    const inTree = removeNestedValue(current.entries, key);
+    // #267: named in `removed`, the key goes with every entry stored under
+    // it, the ones the tree cannot show included: `rm ns.k` takes a hidden
+    // `ns.k.sub` along, and `rm ns.k.sub` removes that file alone.
+    const hidden = (current.hidden ?? []).some(k => k === key || k.startsWith(`${key}.`));
+    removed = inTree || hidden;
+    if (!removed) return null;
+    const meta = { ...(current._meta ?? {}) };
+    removeFlatKeysUnder(meta, key);
+    return { ...current, _meta: meta, removed: [key] };
   }, effectiveScope);
   return removed;
 }
