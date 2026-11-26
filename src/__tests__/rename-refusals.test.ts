@@ -117,6 +117,23 @@ describe('rename refusals that write nothing (#247, #245)', () => {
     });
   });
 
+  // A -G rename and a -G flag take the project store's lock too (#259), to
+  // read its list and its entries consistently. A project this process
+  // cannot write has no lock to take; the store is read as it is, as before.
+  it('-G from inside a project this process cannot write: still works', () => {
+    expect(rvr('set', '-G', 'g.x', 'true').status).toBe(0);
+    fs.chmodSync(projectDir, 0o555);
+    try {
+      expect(rvr('confirm', 'set', '-G', 'g.x').status).toBe(0);
+      expect(rvr('set', 'g.x', '--confirm', '-G').status).toBe(0);
+      expect(rvr('rename', '-G', 'g.x', 'h.x').status).toBe(0);
+    } finally {
+      fs.chmodSync(projectDir, 0o755);
+    }
+    expect(JSON.parse(fs.readFileSync(path.join(globalStore(), '_confirm.json'), 'utf8'))).toEqual({ 'g.x': true, 'h.x': true });
+    expect(fs.existsSync(path.join(globalStore(), 'h.x.json'))).toBe(true);
+  });
+
   describe('#245: a confirmation list that cannot be read', () => {
     const BROKEN = '{\n<<<<<<< ours\n  "a": true\n=======\n  "b": true\n>>>>>>> theirs\n}\n';
 

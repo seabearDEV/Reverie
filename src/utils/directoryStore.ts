@@ -344,6 +344,12 @@ function isENOENT(err: unknown): boolean {
   );
 }
 
+/** A filesystem refusal to create a file here: no permission, or a read-only volume. */
+function isUnwritableError(err: unknown): boolean {
+  const code = !!err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+  return code === 'EACCES' || code === 'EPERM' || code === 'EROFS';
+}
+
 // ── Epoch (seqlock for torn-read detection) ───────────────────────────
 //
 // The store uses a seqlock pattern to let readers (load()) detect that
@@ -994,7 +1000,9 @@ export function createDirectoryStore(
    */
   function inspect<T>(fn: (current: UnifiedData) => T): T {
     const dir = getDirPath();
+    let entered = false;
     const read = (): T => {
+      entered = true;
       dirMtimeMs = -1;
       scanAndSync();
       aliasesCache = rereadSidecar<Record<string, string>>(path.join(dir, ALIASES_FILE), 'aliases');
@@ -1005,7 +1013,18 @@ export function createDirectoryStore(
     // is missing, no store has ever been written here and there is nothing
     // to hold still: read the empty store without the lock.
     if (!fs.existsSync(path.dirname(path.resolve(getStoreLockKey(dir))))) return read();
-    return withStoreLock(dir, read);
+    try {
+      return withStoreLock(dir, read);
+    } catch (err) {
+      // Where this process may not create the lock file (a project checked
+      // out read-only, or owned by another user) it cannot write this store
+      // either, and holding it still is not ours to do: read it as it is,
+      // as a reader does. Only a failure to take the lock is retried this
+      // way, never one from `fn`.
+      if (entered || !isUnwritableError(err)) throw err;
+      debug(`inspect(${dir}): no lock (${String(err)}), reading without it`);
+      return read();
+    }
   }
 
   /**
