@@ -8,6 +8,7 @@ import { debug } from './utils/debug';
 import { VALID_DATA_TYPES, VALID_RESET_TYPES } from './commands/helpers';
 import { VALID_CONFIG_KEYS } from './config';
 import { getBinaryName } from './utils/binaryName';
+import { getDataDirectory } from './utils/paths';
 
 // --- Types ---
 
@@ -708,24 +709,76 @@ ${bin}() {
 }
 
 /**
- * `content` with an older wrapper block replaced by `block`: from the marker
- * line through the first line after it that is a lone `}` — the end of the
- * function every version wrote. Undefined when no block is found as written
- * (moved, or edited by hand); the caller then says so instead.
+ * Every wrapper block an earlier version installed, rendered for `bin`, byte
+ * for byte from the marker line to the function's closing line. From git
+ * history: one text since the Reverie rename, whose variable names used the
+ * binary name as is until #111 and its underscore form after (the same for
+ * `rvr`). Earlier markers named codexCLI and a `ccli` function, not this
+ * binary. When SHELL_WRAPPER_VERSION is bumped, add this version's text.
+ */
+function shippedShellWrappers(bin: string): string[] {
+  const v1 = (v: string): string => `${shellWrapperMarker(bin)} — eval "${bin} run" in the current shell so cd/export/alias work
+${bin}() {
+  local subcmd="" has_help=false
+  for arg in "$@"; do
+    if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+      has_help=true
+    elif [[ "$arg" != -* && -z "$subcmd" ]]; then
+      subcmd="$arg"
+    fi
+  done
+  if [[ "$has_help" == false && ("$subcmd" == "run" || "$subcmd" == "r") ]]; then
+    local __${v}_cmd __${v}_exit
+    __${v}_cmd="$(command ${bin} "$@" --source)"
+    __${v}_exit=$?
+    [[ $__${v}_exit -ne 0 ]] && return $__${v}_exit
+    [[ -n "$__${v}_cmd" ]] && eval "$__${v}_cmd"
+  else
+    command ${bin} "$@"
+  fi
+}
+`;
+  return [...new Set([v1(bin.replace(/-/g, '_')), v1(bin)])];
+}
+
+/**
+ * `content` with an older wrapper block replaced by `block` — only when the
+ * block is exactly one that an earlier version installed. Undefined for
+ * anything else: a block edited by hand cannot be delimited safely (a closing
+ * line changed to `} # end`, `  }` or `};` ran the replacement on into the
+ * next function in the file and deleted it), and the caller says so instead.
  */
 export function replaceShellWrapper(content: string, bin: string, block: string): string | undefined {
-  const marker = shellWrapperMarker(bin);
-  const at = content.indexOf(marker);
+  const at = content.indexOf(shellWrapperMarker(bin));
   if (at === -1 || (at > 0 && content[at - 1] !== '\n')) return undefined;
-  const close = /^\}[ \t]*$/m.exec(content.slice(at));
-  if (!close) return undefined;
-  let end = at + close.index + close[0].length;
-  if (content[end] === '\n') end++;
-  if (!content.slice(at, end).includes(`\n${bin}() {\n`)) return undefined;
-  return content.slice(0, at) + block + content.slice(end);
+  for (const shipped of shippedShellWrappers(bin)) {
+    if (content.startsWith(shipped, at)) return content.slice(0, at) + block + content.slice(at + shipped.length);
+    // The last line of the file, with no newline after it.
+    if (content.slice(at) === shipped.slice(0, -1)) return content.slice(0, at) + block;
+  }
+  return undefined;
 }
 
 // --- Install helper ---
+
+/**
+ * The one line for an rc file the wrapper update could not write. Saves the
+ * current wrapper in the data directory so it can be pasted by hand — into
+ * the file the rc is generated from, if it is — and says where.
+ */
+function wrapperNotUpdated(rcFile: string, bin: string, marker: string, block: string, err: unknown): string {
+  const why = (err as NodeJS.ErrnoException | undefined)?.code ?? String(err);
+  let saved: string | undefined;
+  try {
+    saved = path.join(getDataDirectory(), 'shell-wrapper.sh');
+    fs.mkdirSync(path.dirname(saved), { recursive: true });
+    fs.writeFileSync(saved, block, 'utf8');
+  } catch {
+    saved = undefined;
+  }
+  const replacement = saved ? `the one saved in ${saved}` : `the one \`${bin} config completions install\` writes to a writable file`;
+  return `could not update the shell wrapper in ${rcFile} (${why}); the old one evaluates \`--json\` output. Replace the ${bin}() function under "${marker}" there, or in the file it is generated from, with ${replacement}.`;
+}
 
 export function installCompletions(): void {
   const bin = getBinaryName();
@@ -773,8 +826,15 @@ export function installCompletions(): void {
   } else if (wrapperContent.includes(wrapperMarker)) {
     const updated = replaceShellWrapper(wrapperContent, bin, wrapperBlock);
     if (updated !== undefined) {
-      fs.writeFileSync(rcFile, updated, 'utf8');
-      console.log(`Shell wrapper updated in ${rcFile}`);
+      try {
+        fs.writeFileSync(rcFile, updated, 'utf8');
+        console.log(`Shell wrapper updated in ${rcFile}`);
+      } catch (err) {
+        // A read-only rc (home-manager links it into the nix store): say so in
+        // one line, leave the current wrapper where it can be copied from, and
+        // go on to the history step.
+        console.error(`warning: ${wrapperNotUpdated(rcFile, bin, wrapperMarker, wrapperBlock, err)}`);
+      }
     } else {
       console.error(`An older shell wrapper is in ${rcFile}, and it is not laid out as installed, so it was left alone.`);
       console.error(`Delete it — the "${wrapperMarker}" comment and the ${bin}() function under it — and run this again.`);

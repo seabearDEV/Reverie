@@ -862,6 +862,56 @@ describe('Completions', () => {
         expect(consoleErrorSpy.mock.calls.some((call: unknown[]) => String(call[0]).includes('older shell wrapper'))).toBe(true);
       });
 
+      // Only a block exactly as a release wrote it is replaced. A closing line
+      // edited by hand made the old search run on to the next lone `}`.
+      it.each([
+        ['} # end rvr wrapper'],
+        ['  }'],
+        ['};'],
+      ])('a closing line edited to `%s`: not replaced, so the code after it survives', (closing) => {
+        const edited = OLD.replace(/\n\}\n$/, `\n${closing}\n`);
+        const rc = `${before}${edited}myfunc() {\n  echo "my precious function"\n}\nexport AFTER=1\n`;
+        expect(replaceShellWrapper(rc, 'rvr', generateShellWrapper('rvr'))).toBeUndefined();
+      });
+
+      it('a line added inside it: not replaced', () => {
+        const edited = OLD.replace('  local subcmd=""', '  echo hi\n  local subcmd=""');
+        expect(replaceShellWrapper(before + edited + after, 'rvr', generateShellWrapper('rvr'))).toBeUndefined();
+      });
+
+      it('as the last line of the file, with no newline after it: replaced', () => {
+        expect(replaceShellWrapper(before + OLD.slice(0, -1), 'rvr', generateShellWrapper('rvr'))).toBe(before + generateShellWrapper('rvr'));
+      });
+
+      it('both texts shipped for a hyphenated binary are replaced: before #111 and after', () => {
+        const pre111 = OLD.replace(/rvr/g, 'rvr-dev');
+        const post111 = pre111.replace(/__rvr-dev_/g, '__rvr_dev_');
+        expect(post111).toContain('__rvr_dev_cmd');
+        expect(post111).toContain('command rvr-dev "$@" --source');
+        for (const old of [pre111, post111]) {
+          expect(replaceShellWrapper(before + old + after, 'rvr-dev', generateShellWrapper('rvr-dev'))).toBe(before + generateShellWrapper('rvr-dev') + after);
+        }
+      });
+
+      it('an rc it cannot write: one line, the wrapper saved in the data dir, and the install goes on', () => {
+        process.env.SHELL = '/bin/zsh';
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.readFileSync as Mock).mockReturnValue(before + OLD + after);
+        (fs.writeFileSync as Mock).mockImplementation((p: string) => {
+          if (String(p).endsWith('.zshrc')) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        });
+
+        expect(() => installCompletions()).not.toThrow();
+
+        const lines = consoleErrorSpy.mock.calls.map((call: unknown[]) => String(call[0]));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain('could not update the shell wrapper');
+        expect(lines[0]).toContain('(EACCES)');
+        expect(lines[0]).toContain('/mock/shell-wrapper.sh');
+        expect((fs.writeFileSync as Mock).mock.calls.some((call: unknown[]) => call[0] === '/mock/shell-wrapper.sh' && call[1] === generateShellWrapper('rvr'))).toBe(true);
+        expect(consoleSpy.mock.calls.some((call: unknown[]) => String(call[0]).includes('History exclusion'))).toBe(true);
+      });
+
       it('another binary\'s wrapper is not this one', () => {
         expect(replaceShellWrapper(OLD.replace(/rvr/g, 'rvr-dev'), 'rvr', generateShellWrapper('rvr'))).toBeUndefined();
       });

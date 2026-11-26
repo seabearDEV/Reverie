@@ -825,7 +825,7 @@ rvr r paths.myproject -y
 # Without the wrapper, cd would run in a child process and have no effect
 ```
 
-The wrapper is installed automatically by `rvr config completions install`. If you already have completions installed, run it again to add the wrapper, then `source` your shell profile. Running it again also updates a wrapper installed by an earlier version, which evaluated `--json` output; one you have edited by hand is left alone, and the install tells you how to remove it.
+The wrapper is installed automatically by `rvr config completions install`. If you already have completions installed, run it again to add the wrapper, then `source` your shell profile. Running it again also updates a wrapper installed by an earlier version, which evaluated `--json` output; one you have edited by hand is left alone, and the install tells you how to remove it. If your shell profile is read-only (home-manager, for one), the install saves the current wrapper in `~/.reverie/shell-wrapper.sh` for you to paste where the profile is generated from.
 
 ### Shell Tab-Completion
 

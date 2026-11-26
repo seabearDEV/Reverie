@@ -309,3 +309,74 @@ describe.each(SHELLS)('under %s', (sh) => {
     });
   });
 });
+
+describe('`config completions install` on a real rc file (#281)', () => {
+  const home = () => path.join(root, 'home');
+  const rc = () => path.join(home(), '.zshrc');
+  const MINE = 'myfunc() {\n  echo "my precious function"\n}\nexport AFTER=1\n';
+  const HEAD = '# my rc\neval "$(rvr config completions zsh)"\n_rvr_history_filter() { true }\n';
+  /** Install as a binary named `rvr`: a file of that name that loads dist. */
+  const install = () => {
+    const cliDir = path.join(root, 'cli');
+    fs.mkdirSync(cliDir, { recursive: true });
+    fs.writeFileSync(path.join(cliDir, 'rvr'), `require(${JSON.stringify(path.resolve('dist/index.js'))});\n`);
+    const e = env({ SHELL: '/bin/zsh' });
+    const r = spawnSync('bun', [path.join(cliDir, 'rvr'), 'config', 'completions', 'install'], { cwd: root, env: e, input: '', timeout: 15000 });
+    return { stdout: r.stdout.toString(), stderr: r.stderr.toString(), status: r.status };
+  };
+
+  beforeAll(() => { assertDistHonorsDataDir(); });
+
+  it('the wrapper an earlier version installed is replaced, and the rest of the file kept', () => {
+    fs.writeFileSync(rc(), `${HEAD}\n${OLD_WRAPPER}${MINE}`);
+
+    const r = install();
+
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('Shell wrapper updated');
+    expect(fs.readFileSync(rc(), 'utf8')).toBe(`${HEAD}\n${NEW_WRAPPER}${MINE}`);
+  }, SLOW_TEST_MS);
+
+  // The closing line, edited by hand: the replacement used to run on to the
+  // next lone `}` — the end of myfunc — and delete it.
+  it.each([
+    ['} # end rvr wrapper'],
+    ['  }'],
+    ['};'],
+  ])('a wrapper whose closing line reads `%s` is left alone, and so is the code after it', (closing) => {
+    const edited = OLD_WRAPPER.replace(/\n\}\n$/, `\n${closing}\n`);
+    expect(edited).not.toBe(OLD_WRAPPER);
+    const before = `${HEAD}\n${edited}${MINE}`;
+    fs.writeFileSync(rc(), before);
+
+    const r = install();
+
+    expect(fs.readFileSync(rc(), 'utf8')).toBe(before);
+    expect(r.stdout).not.toContain('Shell wrapper updated');
+    expect(r.stderr).toContain('An older shell wrapper is in');
+  }, SLOW_TEST_MS);
+
+  it('a read-only rc (a link into the nix store): one line, the wrapper saved to paste by hand, and the history step still runs', () => {
+    const store = path.join(root, 'nix-store');
+    fs.mkdirSync(store);
+    const target = path.join(store, 'zshrc');
+    const before = `${HEAD}\n${OLD_WRAPPER}`;
+    fs.writeFileSync(target, before);
+    fs.chmodSync(target, 0o444);
+    fs.symlinkSync(target, rc());
+
+    const r = install();
+
+    expect(r.status).toBe(0);
+    const errLines = r.stderr.trim().split('\n');
+    expect(errLines).toHaveLength(1);
+    expect(errLines[0]).toMatch(/^warning: could not update the shell wrapper in .*\.zshrc \(EACCES\)/);
+    expect(r.stderr).not.toMatch(/^\s+at /m);
+    expect(r.stderr).not.toMatch(/^\s*\d+ \| /m);
+    expect(r.stdout).toContain('History exclusion already configured');
+    expect(fs.readFileSync(target, 'utf8')).toBe(before);
+    const saved = path.join(root, 'data', 'shell-wrapper.sh');
+    expect(errLines[0]).toContain(saved);
+    expect(fs.readFileSync(saved, 'utf8')).toBe(NEW_WRAPPER);
+  }, SLOW_TEST_MS);
+});
