@@ -15,7 +15,12 @@ function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79
 const LEAVES = ['ops.deploy', 'ops.build', 'jobs.deploy'];
 const SPACES = ['ops', 'jobs'];
 const VALUES = ['true', '${ops.deploy:-true}'];
-const PROBE_KEYS = [...LEAVES, 'tmp.deploy', 'tmp.build', 'tmp.x', 'dp'];
+// Every key a sequence can produce: a rename or copy of a namespace carries its leaf names into any
+// other namespace, so a key such as jobs.run exists only after `rename x jobs`. Probing fewer misses
+// the gate of every entry that moved.
+const NAMESPACES = [...new Set([...SPACES, ...LEAVES.map(k => k.split('.')[0]), 'tmp'])];
+const LEAF_NAMES = [...new Set([...LEAVES, 'tmp.deploy', 'tmp.build', 'tmp.x'].map(k => k.split('.').slice(1).join('.')))];
+const PROBE_KEYS = [...NAMESPACES.flatMap(ns => LEAF_NAMES.map(leaf => `${ns}.${leaf}`)), 'dp'];
 
 function genOp(r) {
   const pick = a => a[Math.floor(r() * a.length)];
