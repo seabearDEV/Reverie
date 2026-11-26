@@ -49,15 +49,14 @@ export function useTempGlobalStore(): { readonly root: string; readonly storeDir
   return state;
 }
 
-/** Another process: a store instance of its own over the same directory. */
-export function otherProcess(): ScopedStore {
-  const dir = state.storeDir;
+/** Another process: a store instance of its own over the same directory (default: the global store). */
+export function otherProcess(dir = state.storeDir): ScopedStore {
   return createDirectoryStore(() => dir, () => { fs.mkdirSync(dir, { recursive: true }); });
 }
 
 /** The store as a fresh reader sees it. */
-export function onDisk(): UnifiedData {
-  return otherProcess().load();
+export function onDisk(dir = state.storeDir): UnifiedData {
+  return otherProcess(dir).load();
 }
 
 export function seed(data: Partial<UnifiedData>): void {
@@ -100,10 +99,10 @@ export function survived(d: UnifiedData, name: string): boolean {
 /**
  * Run A's command with B writing in every gap: once after A last read the
  * store (A's caches are then stale), and once just before each of A's lock
- * acquisitions. Returns the names B wrote.
+ * acquisitions of the store in `dir`. Returns the names B wrote.
  */
-export async function interleave(op: () => unknown, bWrite: BWrite): Promise<string[]> {
-  const b = otherProcess();
+export async function interleave(op: () => unknown, bWrite: BWrite, dir = state.storeDir): Promise<string[]> {
+  const b = otherProcess(dir);
   const written: string[] = [];
 
   // A has read the store — as the caller of any command has — and B writes.
@@ -112,7 +111,7 @@ export async function interleave(op: () => unknown, bWrite: BWrite): Promise<str
   loadConfirmMap('global');
   written.push(bWrite(b, written.length));
 
-  const lockPath = state.storeDir + '.lock';
+  const lockPath = dir + '.lock';
   const realOpen = fs.openSync.bind(fs);
   let inB = false;
   vi.spyOn(fs, 'openSync').mockImplementation(((p: fs.PathLike, ...rest: unknown[]) => {

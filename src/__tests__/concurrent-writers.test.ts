@@ -16,6 +16,8 @@
 import fs from 'fs';
 import path from 'path';
 import { flattenObject } from '../utils/objectPath';
+import { clearProjectFileCache } from '../utils/paths';
+import { clearStoreCaches } from '../store';
 import { setConfirm, removeConfirm, removeConfirmForKey, moveConfirm } from '../confirm';
 import { setAlias, removeAlias, renameAlias, removeAliasesForKey } from '../alias';
 import { removeValue } from '../storage';
@@ -189,6 +191,38 @@ describe('#254: a write by another process survives', () => {
       const keys = entryKeys(onDisk());
       for (const k of bKeys) expect(keys).toContain(k);
       expect(keys).toEqual(expect.arrayContaining(['old.k', 'imported.k']));
+    });
+  });
+
+  describe('the default scope in a project', () => {
+    it('a rename re-points aliases in the project map as it stands, over the global layer', async () => {
+      // In the default scope the rename reads the alias view that layers the
+      // project map over the global one, and writes that view to the
+      // project — global aliases included. Kept as main has it; only the
+      // project layer is read again under the project store's lock.
+      const projectDir = path.join(tmp.root, 'proj', '.reverie');
+      fs.mkdirSync(projectDir, { recursive: true });
+      const saved = { noProject: process.env.RVR_NO_PROJECT, project: process.env.RVR_PROJECT };
+      delete process.env.RVR_NO_PROJECT;
+      process.env.RVR_PROJECT = projectDir;
+      clearProjectFileCache();
+      clearStoreCaches();
+      try {
+        seed({ entries: { g: { k: 'gv' } }, aliases: { ga: 'ops.deploy', other: 'g.k' } });
+        otherProcess(projectDir).save({ entries: { ops: { deploy: 'v' } }, aliases: { pa: 'ops.deploy' }, confirm: {} });
+        clearStoreCaches();
+
+        const bNames = await interleave(() => renameEntry('ops.deploy', 'ops.ship'), bAlias, projectDir);
+        const project = onDisk(projectDir);
+        for (const n of bNames) expect(project.aliases[n]).toBeDefined();
+        expect(project.aliases).toMatchObject({ ga: 'ops.ship', pa: 'ops.ship', other: 'g.k' });
+        expect(entryKeys(project)).toEqual(expect.arrayContaining(['ops.ship']));
+        expect(onDisk().aliases).toEqual({ ga: 'ops.deploy', other: 'g.k' });
+      } finally {
+        if (saved.project === undefined) delete process.env.RVR_PROJECT; else process.env.RVR_PROJECT = saved.project;
+        if (saved.noProject !== undefined) process.env.RVR_NO_PROJECT = saved.noProject;
+        clearProjectFileCache();
+      }
     });
   });
 
