@@ -19,6 +19,7 @@ import { createDirectoryStore, migrateFileToDirectory } from './utils/directoryS
 import { flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 import { debug } from './utils/debug';
 import { registerUnreadableSource, type UnreadableFile } from './utils/unreadable';
+import { registerStoredKeysSource } from './utils/keyCollision';
 import { resolveScopeForWrite } from './projectResolution';
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -28,6 +29,18 @@ export interface UnifiedData {
   aliases: Record<string, string>;
   confirm: Record<string, true>;
   _meta?: Record<string, number> | undefined;
+  /**
+   * #267: entry keys stored under another entry (`ns.k.sub` beside `ns.k`, left by
+   * a hand edit or a git merge), which `entries` cannot show. Set by a load,
+   * only when there are any; a write ignores it.
+   */
+  hidden?: string[] | undefined;
+  /**
+   * #267: keys a write removes, each with every entry stored under it — the
+   * hidden ones too, which the tree cannot show removed. A write deletes no
+   * hidden entry otherwise, unless it removes the entry it is hidden under.
+   */
+  removed?: string[] | undefined;
 }
 
 export type Scope = 'project' | 'global' | 'auto';
@@ -335,6 +348,8 @@ export interface StoreSections {
   entries?: CodexData | undefined;
   aliases?: Record<string, string> | undefined;
   confirm?: Record<string, true> | undefined;
+  /** #267: hidden keys the write removes (see UnifiedData.removed). */
+  removed?: string[] | undefined;
 }
 
 /**
@@ -342,10 +357,12 @@ export interface StoreSections {
  * imports are atomic (#77): no tear between sections on process death or
  * disk error. `fn` gets the store's sections as they stand under its lock —
  * the merge base of a merge import (#254) — and returns the sections to
- * write. Section keys left undefined preserve the current value.
+ * write. Section keys left undefined preserve the current value. `hidden`
+ * lists the entries stored under another entry, which `entries` cannot
+ * show (#267); a replace names the ones it drops in `removed`.
  */
 export function updateAll(
-  fn: (current: { entries: CodexData; aliases: Record<string, string>; confirm: Record<string, true> }) => StoreSections,
+  fn: (current: { entries: CodexData; aliases: Record<string, string>; confirm: Record<string, true>; hidden: string[] }) => StoreSections,
   scope?: Scope,
 ): void {
   // Bulk transactional write (#77): import handlers + reset paths route here.
@@ -357,6 +374,7 @@ export function updateAll(
       entries: structuredClone(current.entries),
       aliases: { ...current.aliases },
       confirm: { ...current.confirm },
+      hidden: [...(current.hidden ?? [])],
     });
 
     // Stamp _meta for new/changed leaves when entries are written. Without
@@ -375,6 +393,7 @@ export function updateAll(
       }),
       ...(sections.aliases !== undefined && { aliases: sections.aliases }),
       ...(sections.confirm !== undefined && { confirm: sections.confirm }),
+      ...(sections.removed !== undefined && { removed: sections.removed }),
     };
   });
 }
@@ -549,6 +568,10 @@ export function loadConfirmMapMerged(): Record<string, true> {
 
 registerUnreadableSource('project', () => projectStore?.unreadable() ?? [], () => { getProjectStore()?.load(); });
 registerUnreadableSource('global', () => globalStore?.unreadable() ?? [], () => { getGlobalStore().load(); });
+
+// #267: the keys each store holds, one per file, for lint — read the same way.
+registerStoredKeysSource('project', () => projectStore?.storedKeys() ?? []);
+registerStoredKeysSource('global', () => globalStore?.storedKeys() ?? []);
 
 // ── Cache management ───────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@ import { color } from './formatting';
 import { getNestedValue, setNestedValue, removeNestedValue, flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 import { KeyCollisionError, assertKeyWritable, findCollidingPairs } from './utils/keyCollision';
 import { LockTimeoutError } from './utils/fileLock';
+import { StoreWriteError, isStoreIoError } from './utils/storeWriteError';
 import { CodexData, CodexValue } from './types';
 import { debug } from './utils/debug';
 import { Scope, loadEntries, saveEntries, updateEntries, updateStore, loadEntriesMerged, findProjectFile, getEntryFast, setEntryFast } from './store';
@@ -61,7 +62,8 @@ export function handleError(message: string, error: unknown, context?: string): 
 
   // #261: another process held the store lock for the whole wait. Nothing
   // was written, and the message says so and what to do: one line, IO.
-  if (error instanceof LockTimeoutError) {
+  // #271: so does a write the filesystem refused, naming the file and why.
+  if (isStoreIoError(error)) {
     if (isJsonMode()) {
       failJson('IO', errorText);
     } else {
@@ -239,6 +241,9 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
     // A writer held the store lock for the whole wait: the slow path would
     // wait on the same lock again and double the time to the same refusal.
     if (err instanceof LockTimeoutError) throw err;
+    // #271: a file the filesystem would not write. The slow path writes the
+    // same file, and fails the same way.
+    if (err instanceof StoreWriteError) throw err;
     debug(`setValue fast-path failed, falling through: ${String(err)}`);
   }
   updateEntries((entries, meta) => {
@@ -332,16 +337,25 @@ export function removeValue(key: string, scope?: Scope  ): boolean {
   // dropped so a misconfigured workspace cannot silently delete from global.
   // Users who need to remove a global entry must pass -G (CLI) / scope:'global' (MCP).
   const effectiveScope = resolveScopeForWrite(scope);
-  // Nothing under this key: nothing to write.
-  if (!removeNestedValue(loadEntries(effectiveScope), key)) return false;
+  // Nothing under this key: nothing to write. #267: an entry stored under
+  // another entry (`ns.k.sub` beside `ns.k`) is not in the tree, but `get`
+  // reads it from its file, and so does this check.
+  if (!removeNestedValue(loadEntries(effectiveScope), key) && getEntryFast(key, effectiveScope) === undefined) return false;
   // #254: the removal itself, decided again under the lock — the tree
   // loaded above is already stale, and saving it would delete every entry
   // another process wrote since.
   let removed = false;
-  updateEntries((entries, meta) => {
-    removed = removeNestedValue(entries, key);
-    if (removed) removeFlatKeysUnder(meta, key);
-    return removed;
+  updateStore(current => {
+    const inTree = removeNestedValue(current.entries, key);
+    // #267: named in `removed`, the key goes with every entry stored under
+    // it, the ones the tree cannot show included: `rm ns.k` takes a hidden
+    // `ns.k.sub` along, and `rm ns.k.sub` removes that file alone.
+    const hidden = (current.hidden ?? []).some(k => k === key || k.startsWith(`${key}.`));
+    removed = inTree || hidden;
+    if (!removed) return null;
+    const meta = { ...(current._meta ?? {}) };
+    removeFlatKeysUnder(meta, key);
+    return { ...current, _meta: meta, removed: [key] };
   }, effectiveScope);
   return removed;
 }

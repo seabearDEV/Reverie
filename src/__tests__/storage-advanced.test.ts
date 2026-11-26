@@ -1,6 +1,6 @@
 import type { Mock } from 'bun:test';
 import { getValue, setValue, removeValue, getEntriesFlat } from '../storage';
-import { updateEntries, loadEntries, loadEntriesMerged } from '../store';
+import { updateEntries, updateStore, loadEntries, loadEntriesMerged } from '../store';
 
 // State accessed by both the mock factory and the tests. Was previously
 // exposed as __reset/__setProjectEntries on the mocked store namespace,
@@ -52,8 +52,19 @@ vi.mock('../store', () => {
     // the tests assert against.
     setEntryFast: vi.fn(() => false),
     getEntryFast: vi.fn(() => undefined),
-    // #268: stubbed so nothing here can reach the real store through it.
-    updateStore: vi.fn(),
+    // #268: one store write of the whole state. #267: removeValue writes
+    // through it. Applied here to this mock's entries and meta for the
+    // scope it names, so nothing here can reach the real store through it.
+    updateStore: vi.fn((fn: (current: any) => any, scope?: string) => {
+      const entries = scope === 'project' ? projectEntries : globalEntries;
+      const meta = scope === 'project' ? projectMeta : globalMeta;
+      const next = fn({ entries: structuredClone(entries), aliases: {}, confirm: {}, _meta: { ...meta } });
+      if (next === null) return;
+      Object.keys(entries).forEach(k => delete entries[k]);
+      Object.assign(entries, next.entries);
+      Object.keys(meta).forEach(k => delete meta[k]);
+      Object.assign(meta, next._meta ?? {});
+    }),
     // #256: setConfirm's read of both stores; not used here. A throw, so a
     // call can never fall through to the real store.
     inspectBothStores: vi.fn(() => { throw new Error('inspectBothStores is not mocked in this suite'); }),
@@ -159,7 +170,8 @@ describe('storage layer — removeValue', () => {
 
     const removed = removeValue('foo');
     expect(removed).toBe(true);
-    expect((updateEntries as Mock<typeof updateEntries>)).toHaveBeenCalledWith(expect.any(Function), 'project');
+    // #267: the removal is one store write that can name what it removes.
+    expect((updateStore as Mock<typeof updateStore>)).toHaveBeenCalledWith(expect.any(Function), 'project');
     expect(projectEntries).toEqual({});
     expect(globalEntries).toEqual({ foo: 'global' });
   });
@@ -177,7 +189,7 @@ describe('storage layer — removeValue', () => {
     expect(removed).toBe(false);
     // Confirm the explicit-scope path still works
     expect(removeValue('foo', 'global')).toBe(true);
-    expect((updateEntries as Mock<typeof updateEntries>)).toHaveBeenCalledWith(expect.any(Function), 'global');
+    expect((updateStore as Mock<typeof updateStore>)).toHaveBeenCalledWith(expect.any(Function), 'global');
     expect(globalEntries).toEqual({});
   });
 

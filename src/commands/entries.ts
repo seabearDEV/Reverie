@@ -1141,7 +1141,11 @@ export async function removeEntry(key: string, force = false, global?: boolean):
     // one; the removal deliberately does not (#99). So a key that exists
     // only in the global store was found, not removed, and reported as
     // "removed successfully". Say what happened, and skip the cascade.
-    printError(`Entry '${key}' not found in the project store. It exists in the global store: pass --global to remove it there.`, 'NOT_FOUND');
+    // With --global both looked in the global store, and only another
+    // process's removal in between gets here (#267: it said "pass --global").
+    printError(global
+      ? `Entry '${key}' not found in the global store.`
+      : `Entry '${key}' not found in the project store. It exists in the global store: pass --global to remove it there.`, 'NOT_FOUND');
     process.exitCode = 1;
     return;
   }

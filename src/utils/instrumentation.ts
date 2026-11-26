@@ -11,7 +11,7 @@ import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
 import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
-import { LockTimeoutError } from './fileLock';
+import { isStoreIoError } from './storeWriteError';
 import { loadConfig } from '../config';
 import { color } from '../formatting';
 import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, takeWriteRefused, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
@@ -283,7 +283,7 @@ export async function withCliInstrumentation<T>(
     errorMsg = String(err);
     thrownCode = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
       : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
-      : err instanceof LockTimeoutError ? 'IO'
+      : isStoreIoError(err) ? 'IO'
       : 'RUNTIME';
     if (err instanceof ProjectResolutionError) {
       refusedReason = 'project_unresolved';
@@ -301,13 +301,14 @@ export async function withCliInstrumentation<T>(
     if (jsonMode) {
       const code = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
         : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
-        : err instanceof LockTimeoutError ? 'IO'
+        : isStoreIoError(err) ? 'IO'
         : 'RUNTIME';
       failJson(code, err instanceof Error ? err.message : String(err));
-    } else if (err instanceof StoreUnreadableError || err instanceof ProjectResolutionError || err instanceof LockTimeoutError) {
+    } else if (err instanceof StoreUnreadableError || err instanceof ProjectResolutionError || isStoreIoError(err)) {
       // An expected, self-explaining failure: its message, not a stack trace
       // (#249: confirm and alias set/remove reach here outside a project;
-      // #261: a store lock another process held for the whole wait).
+      // #261: a store lock another process held for the whole wait; #271: a
+      // store file the filesystem would not write).
       originalConsoleError.call(console, `${color.red('✗ ')}${err.message}`);
       process.exitCode = 1;
     } else {
