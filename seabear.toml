@@ -1,0 +1,7 @@
+# Read by tooling outside this repo, which works only with the repos that
+# carry a [studio] table. Nothing in this repo reads it, and it is not in the
+# published package.
+
+[studio]
+standard = 1
+name = "Reverie"
