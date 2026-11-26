@@ -43,7 +43,7 @@ import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
-import { interpolateFrom, interpolateExec, interpolateObject, collectReferences, gateNamesFor, interpolateForRead, unresolvedWarning, unresolvedOverflowNote } from "./utils/interpolate";
+import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, gateNamesFor, interpolateForRead, unresolvedWarning, unresolvedOverflowNote } from "./utils/interpolate";
 import type { UnresolvedOnRead, EntryStore } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace, keyIsEntryKey } from "./utils/telemetry";
 import { resolveAgentIdentity } from "./utils/agentIdentity";
@@ -186,8 +186,8 @@ interface RunValue {
  * not whichever a lookup by name finds first.
  */
 function runFingerprint(command: string, runs: RunValue[]): string {
-  const reads = new Map<string, unknown>();
-  for (const r of runs) for (const [id, v] of collectReferences(r.value, r.from).reads) reads.set(id, v);
+  // As the gate walks them (#289): in order, each value with its own exec cache.
+  const reads = collectRunReferences(runs, false).reads;
   const values = [...reads].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return crypto.createHash('sha256').update(JSON.stringify([command, runs.map((r) => [r.from, r.value]), values])).digest('hex');
 }
@@ -1079,16 +1079,14 @@ function runGated(
   // as its alias resolves (#279). #158: a confirm-gated command pulled in
   // transitively via ${key}/$(key) must also force the gate — enumerate the
   // referenced keys (no execution) and OR them in. Done here so both the
-  // single-key and chain callsites are covered.
-  let needsConfirm = gateNames.some((k) => hasConfirm(k));
-  if (!needsConfirm) {
-    for (const r of runs) {
-      for (const k of collectReferences(r.value, r.from).keys) {
-        if (hasConfirm(k)) { needsConfirm = true; break; }
-      }
-      if (needsConfirm) break;
-    }
-  }
+  // single-key and chain callsites are covered. #289: walked as exec runs
+  // them — in order, each value with its own exec cache, as below.
+  const trace = collectRunReferences(runs, false);
+  let needsConfirm = gateNames.some((k) => hasConfirm(k)) || [...trace.keys].some((k) => hasConfirm(k));
+  // #289: fail closed when the walk stopped past a command exec would run:
+  // what follows was not checked. The preview says so.
+  const unchecked = walkUnchecked(trace) ? trace.incomplete : undefined;
+  if (unchecked !== undefined) needsConfirm = true;
   // #215: fail closed. A confirmation list that does not parse loads as
   // empty, so "no flag" proves nothing while one is unreadable — every entry
   // is gated until it is resolved. A flag was looked up above, which is the
@@ -1099,8 +1097,9 @@ function runGated(
 
   if (needsConfirm && !opts.force) {
     const fingerprint = runFingerprint(command, runs);
+    const why = unchecked === undefined ? '' : `Not every reference it reaches could be checked for a confirmation flag (${unchecked}).\n`;
     const prompt = () =>
-      `⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call reverie_run again with confirm_token: "${createConfirmToken(key, command, fingerprint)}"`;
+      `⚠ This command requires confirmation before execution:\n$ ${command}\n${why}\nTo execute, call reverie_run again with confirm_token: "${createConfirmToken(key, command, fingerprint)}"`;
     if (opts.confirm_token) {
       const approved = consumeConfirmToken(opts.confirm_token, key);
       if (!approved) {

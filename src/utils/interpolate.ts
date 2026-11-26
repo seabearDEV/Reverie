@@ -76,6 +76,25 @@ export interface ReferenceTrace {
   keys: Set<string>;
   /** Every entry read, as `store:key`, with the value read (null: none). For the MCP confirm token (#243). */
   reads: Map<string, CodexValue | null>;
+  /** How many `$(key)` commands the walk passed: each one the exec pass runs by that point (#289). */
+  execs: number;
+  /**
+   * Why the walk stopped before the end, when it did (#289): the error's
+   * message. What comes after that point was not checked.
+   */
+  incomplete?: string;
+}
+
+/**
+ * Should a run gate on a walk that stopped early (#289)? Only when the exec
+ * pass would have run a command by then. The two passes walk alike, so exec
+ * stops at the same error; with no command run before it, nothing runs, and
+ * the run fails with that error (a reference not found, a `:?`, a cycle). Past
+ * a command, the gate cannot know what follows: it fails closed, as it does
+ * for an unreadable confirmation list.
+ */
+export function walkUnchecked(trace: ReferenceTrace): boolean {
+  return trace.incomplete !== undefined && trace.execs > 0;
 }
 
 /**
@@ -405,7 +424,15 @@ function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCa
   const command = interpolate(resolved, maxDepth - 1, nextSeen, execCache, !noExec, trace, noExec, undefined, store);
 
   // Collect mode (#158): recurse to enumerate nested keys but never execute.
-  if (noExec) return '';
+  // #289: exec runs the command here and, later in the same run, takes its
+  // output from the cache instead of walking the command again — so collect
+  // marks it walked. Walking it again went deeper than exec ever does, hit
+  // the depth limit, and stopped before keys that exec went on to run.
+  if (noExec) {
+    if (trace) trace.execs++;
+    execCache.set(id, '');
+    return '';
+  }
 
   // Execute
   const shell = process.env.SHELL ?? '/bin/sh';
@@ -651,13 +678,31 @@ export function interpolateExec(value: string, from: EntryStore = 'project', exe
  * crafted ref away from missing a gated key.
  */
 export function collectReferences(value: string, from: EntryStore = 'project'): ReferenceTrace {
-  const trace: ReferenceTrace = { keys: new Set<string>(), reads: new Map() };
-  try {
-    interpolate(value, MAX_DEPTH, new Set<string>(), new Map<string, string>(), false, trace, true, undefined, from);
-  } catch {
-    // Collection is best-effort for gating: a cycle or depth-limit throw still
-    // leaves the trace populated with everything reached so far, and the gate
-    // errs toward MORE keys, never fewer.
+  return collectRunReferences([{ value, from }], true);
+}
+
+/**
+ * collectReferences over every value of one run, in the order the exec pass
+ * interpolates them, with the exec cache shared the way exec shares it
+ * (#289): `shareCache` for the CLI, whose segments run with one cache; not
+ * for MCP, which interpolates each chain member with its own. A `$(key)`
+ * already walked is not walked again, as exec does not run it again.
+ *
+ * The walk stops at the first error, as exec does, and says so in
+ * `incomplete`: the trace then holds only what came before. The gate unions
+ * the keys, and fails closed on walkUnchecked.
+ */
+export function collectRunReferences(values: readonly { value: string; from: EntryStore }[], shareCache: boolean): ReferenceTrace {
+  const trace: ReferenceTrace = { keys: new Set<string>(), reads: new Map(), execs: 0 };
+  let execCache = new Map<string, string>();
+  for (const { value, from } of values) {
+    if (!shareCache) execCache = new Map<string, string>();
+    try {
+      interpolate(value, MAX_DEPTH, new Set<string>(), execCache, false, trace, true, undefined, from);
+    } catch (err) {
+      trace.incomplete = err instanceof Error ? err.message : String(err);
+      break;
+    }
   }
   return trace;
 }

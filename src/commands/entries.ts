@@ -22,7 +22,7 @@ import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
-import { interpolateFrom, interpolateExec, interpolateObject, collectReferencedKeys, gateNamesFor, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, UNRESOLVED_WARNING_CODE, type UnresolvedOnRead, type EntryStore } from '../utils/interpolate';
+import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, gateNamesFor, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, UNRESOLVED_WARNING_CODE, type UnresolvedOnRead, type EntryStore } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
 import { isJsonMode, setResult, failJson, addWarning, recordErrorCode, type ErrorCode } from '../utils/output';
 import { markValueStored } from '../utils/writeAmp';
@@ -224,15 +224,20 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
     // confirm-gated command via ${key} or $(key) would otherwise execute it
     // with no prompt. Enumerate the transitive key set (no execution) and
     // gate on any of them carrying confirm metadata — each segment in its
-    // own store (#280), as it will run.
-    const confirmKeys = new Set<string>(gateNames);
-    for (const group of rawCommands) {
-      for (const seg of group) for (const k of collectReferencedKeys(seg.value, seg.from)) confirmKeys.add(k);
-    }
+    // own store (#280), in the order exec runs them, with one exec cache for
+    // the run as exec has (#289).
+    const trace = collectRunReferences(rawCommands.flat(), true);
+    const confirmKeys = new Set<string>([...gateNames, ...trace.keys]);
+    // #289: fail closed when the walk stopped past a command exec would run:
+    // what follows was not checked. The reason goes in the refusal.
+    const unchecked = walkUnchecked(trace) ? trace.incomplete : undefined;
+    const refusal = unchecked === undefined
+      ? 'Entry requires confirmation.'
+      : `Entry requires confirmation: not every reference it reaches could be checked for a confirmation flag (${unchecked}).`;
     // #215: fail closed. An unreadable confirmation list loads as empty, so
     // while one is unreadable every entry is gated. hasConfirm runs first —
     // it does the scan the second check reads.
-    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || confirmListUnreadable();
+    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || unchecked !== undefined || confirmListUnreadable();
 
     // SECURITY: produce the real shell command ONLY when actually executing —
     // this is the single place `$(key)` exec refs run. Callers invoke it past
@@ -268,7 +273,7 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
       // command rides in error.preview.
       if (needsConfirmJson && !options.yes) {
         setResult({ keys: resolvedKeys, command: value });
-        failJson('REQUIRES_CONFIRMATION', `Entry requires confirmation. Re-run with --yes to execute.`, value);
+        failJson('REQUIRES_CONFIRMATION', `${refusal} Re-run with --yes to execute.`, value);
         return;
       }
       const execValue = buildExecCommand();
@@ -306,6 +311,7 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
     const needsConfirm = anyKeyNeedsConfirm;
     if (needsConfirm && !options.yes) {
       if (process.stdin.isTTY) {
+        if (unchecked !== undefined) console.error(`warning: not every reference this command reaches could be checked for a confirmation flag (${unchecked}).`);
         const answer = await askConfirmation('Run this? [y/N] ', options.source ? process.stderr : undefined);
         if (answer.toLowerCase() !== 'y') {
           if (options.source) {
@@ -321,7 +327,7 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
         // unconfirmed on the non-interactive (agent/CI/piped) surface the
         // tripwire is meant to protect. Refuse and tell the caller how to opt in.
         printError(
-          `Entry requires confirmation. Re-run with --yes to execute non-interactively.`,
+          `${refusal} Re-run with --yes to execute non-interactively.`,
           'REQUIRES_CONFIRMATION',
         );
         process.exitCode = 1;
