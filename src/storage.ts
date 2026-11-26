@@ -4,7 +4,7 @@ import { KeyCollisionError, assertKeyWritable, findCollidingPairs } from './util
 import { LockTimeoutError } from './utils/fileLock';
 import { CodexData, CodexValue } from './types';
 import { debug } from './utils/debug';
-import { Scope, loadEntries, saveEntries, updateEntries, loadEntriesMerged, findProjectFile, getEntryFast, setEntryFast } from './store';
+import { Scope, loadEntries, saveEntries, updateEntries, updateStore, loadEntriesMerged, findProjectFile, getEntryFast, setEntryFast } from './store';
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, ProjectResolutionError } from './projectResolution';
 import { StoreUnreadableError, markUnreadableShown, noteWriteRefused, readForWrite } from './utils/unreadable';
@@ -251,6 +251,69 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
     setNestedValue(entries, key, value);
     meta[key] = Date.now();
   }, effectiveScope);
+}
+
+/**
+ * Set a leaf value together with its alias and its confirmation flag, in one
+ * store write (#268): `set <key> <value> --confirm` wrote the value, then the
+ * alias, then the flag, and a lock timeout or a crash between them left the
+ * command stored and ungated. Now all of it lands or none of it does: the
+ * store writes the list first when it gains a flag, and takes back what it
+ * wrote if a later file fails.
+ *
+ * Everything goes to the store `scope` writes, the flag too, under the key as
+ * written — that is the entry the value was just stored as. `confirm` true
+ * lists it, false takes the flag listed under exactly that name (removal is
+ * exact), undefined leaves the list alone. With `value` undefined only the
+ * alias and the flag change (a flag-only `set --no-confirm -a`). The checks
+ * of setValue apply, decided under the lock: a key or an alias that cannot
+ * be stored, and an entry in the way (#216, #224), refuse before anything is
+ * written. Returns whether a flag was taken off.
+ */
+export function setValueWithMeta(
+  key: string,
+  value: string | undefined,
+  scope: Scope | undefined,
+  meta: { alias?: string | undefined; confirm?: boolean | undefined },
+): { flagRemoved: boolean } {
+  if (!isValidEntryKey(key)) {
+    throw new Error(`Invalid store key: ${JSON.stringify(key)}`);
+  }
+  // setAlias's checks, made before the value lands rather than after it.
+  if (meta.alias !== undefined && !isValidEntryKey(meta.alias)) {
+    throw new Error(`Invalid alias name: ${JSON.stringify(meta.alias)}`);
+  }
+  const effectiveScope = resolveScopeForWrite(scope);
+  let flagRemoved = false;
+  updateStore(current => {
+    flagRemoved = false;
+    const next = { ...current };
+    if (value !== undefined) {
+      assertKeyWritable(current.entries, key);
+      setNestedValue(current.entries, key, value);
+      next.entries = current.entries;
+      next._meta = { ...(current._meta ?? {}), [key]: Date.now() };
+    }
+    if (meta.alias !== undefined) {
+      // One alias per entry, as setAlias keeps it.
+      const aliases = { ...current.aliases };
+      for (const [name, target] of Object.entries(aliases)) {
+        if (target === key && name !== meta.alias) delete aliases[name];
+      }
+      aliases[meta.alias] = key;
+      next.aliases = aliases;
+    }
+    if (meta.confirm === true && current.confirm[key] !== true) {
+      next.confirm = { ...current.confirm, [key]: true };
+    } else if (meta.confirm === false && Object.hasOwn(current.confirm, key) && current.confirm[key] === true) {
+      const confirm = { ...current.confirm };
+      delete confirm[key];
+      next.confirm = confirm;
+      flagRemoved = true;
+    }
+    return next;
+  }, effectiveScope);
+  return { flagRemoved };
 }
 
 /**

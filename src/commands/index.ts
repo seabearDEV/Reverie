@@ -1,4 +1,4 @@
-export { runCommand, setEntry, getEntry, editEntry, removeEntry, renameEntry, copyEntry, warnUnresolvedReferences, confirmTargetProblem, stillGatedNote } from './entries';
+export { runCommand, setEntry, getEntry, editEntry, removeEntry, renameEntry, copyEntry, warnUnresolvedReferences, confirmTargetProblem, flagEntry, stillGatedNote } from './entries';
 export { searchEntries } from './search';
 export { exportData, importData, resetData, handleProjectFile } from './data-management';
 export { handleConfig, configSet } from './config-commands';

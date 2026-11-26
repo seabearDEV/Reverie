@@ -107,8 +107,18 @@ vi.mock('../store', () => {
     if (JSON.stringify(next.aliases) !== JSON.stringify(before.aliases)) saveAliasMap(next.aliases);
     if (JSON.stringify(next.confirm) !== JSON.stringify(before.confirm)) saveConfirmMap(next.confirm);
   });
+  // #268: one store write of several sections, over this mock's one store.
+  const updateStore = vi.fn((fn: (c: Sections & { _meta: Record<string, number> }) => Sections | null) => {
+    const before = current();
+    const next = fn({ ...current(), _meta: {} });
+    if (next === null) return;
+    if (JSON.stringify(next.entries) !== JSON.stringify(before.entries)) saveEntries(next.entries);
+    if (JSON.stringify(next.aliases) !== JSON.stringify(before.aliases)) saveAliasMap(next.aliases);
+    if (JSON.stringify(next.confirm) !== JSON.stringify(before.confirm)) saveConfirmMap(next.confirm);
+  });
   return {
     updateUnderBothLocks,
+    updateStore,
     loadEntries:        vi.fn(()  => clone(storeState.entries)),
     saveEntries,
     updateEntries,

@@ -384,6 +384,17 @@ export function saveAll(sections: StoreSections, scope?: Scope): void {
   updateAll(() => sections, scope);
 }
 
+/**
+ * One store write that changes several sections at once (#268): `set <key>
+ * <value> --confirm` writes the entry, its flag and its alias together, so
+ * it completes or writes nothing. `fn` gets the store as it stands under its
+ * lock, in fresh objects it may change, and returns the state to write or
+ * null. See "Writes" above.
+ */
+export function updateStore(fn: (current: UnifiedData) => UnifiedData | null, scope?: Scope): void {
+  resolveStore(resolveScopeForWrite(scope)).update(fn);
+}
+
 /** One store as a two-store transaction sees it, under that store's lock. */
 export interface LockedStore {
   scope: 'project' | 'global';

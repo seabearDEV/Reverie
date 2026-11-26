@@ -3,10 +3,10 @@
 import { Command, Option } from 'commander';
 import * as commands from './commands';
 import { removeAlias, resolveKey, loadAliases, setAlias, renameAlias } from './alias';
-import { setConfirm, removeConfirm, loadConfirmKeys } from './confirm';
+import { removeConfirm, loadConfirmKeys } from './confirm';
 import { color } from './formatting';
 import { showHelp, showExamples } from './formatting';
-import { askPassword, askConfirmation, printError } from './commands/helpers';
+import { askPassword, askConfirmation, printError, printWarning } from './commands/helpers';
 import { version } from '../package.json';
 import { getCompletions, generateBashScript, generateZshScript, installCompletions } from './completions';
 import { withPager } from './utils/pager';
@@ -474,25 +474,14 @@ confirmCommand
     await withCliInstrumentation(
       { tool: 'reverie_confirm_set', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
-        // The key has to name an entry. This command used to skip the check
-        // and report success for a key that named nothing. It is looked up in
-        // both stores whatever list -G selects: a flag gates by name wherever
-        // the entry lives, so `confirm set -G` on a project entry is a
-        // request that can be met.
-        const problem = commands.confirmTargetProblem(resolvedKey, undefined, true, true);
-        if (problem) {
-          printError(problem.message, problem.code);
-          return undefined;
-        }
-        // #259: asked again under the store locks, where the flag is written.
-        // A rename or a removal since the look above leaves nothing under
-        // this name, and a flag there would gate nothing that moved.
-        if (setConfirm(resolvedKey, scope) === false) {
-          printError(`Entry '${resolvedKey}' not found. Cannot update confirm on a non-existent entry.`, 'NOT_FOUND');
-          return undefined;
-        }
-        console.log(`Entry '${resolvedKey}' now requires confirmation to run.`);
-        return { key: resolvedKey, confirm: true };
+        // The key has to name an entry, in either store; the flag goes in the
+        // list -G selects, unless the entry is stored only in the global
+        // store (#256), and under the entry's stored spelling (#255). The
+        // same function serves `set <key> --confirm` (#257).
+        const flagged = commands.flagEntry(resolvedKey, scope);
+        if (!flagged) return undefined;
+        console.log(flagged.message);
+        return flagged.result;
       }
     );
   });
@@ -509,17 +498,21 @@ confirmCommand
       () => {
         const removed = removeConfirm(resolvedKey, scope);
         // Removal is exact, so the key can still be gated: by a flag under
-        // another spelling, or in the other store's list. This used to
-        // print "removed" whatever had happened.
+        // another spelling, in the other store's list, or by a list that
+        // cannot be read. This used to print "removed" whatever had happened.
         const note = commands.stillGatedNote(resolvedKey, removed);
-        if (note) {
-          printError(note, 'INVALID_INPUT');
+        if (note && !removed) {
+          // Nothing was removed, and the key is (or may be) gated: refused.
+          printError(note.message, note.code);
           return undefined;
         }
         console.log(removed
           ? `Confirmation removed from '${resolvedKey}'.`
           : `'${resolvedKey}' did not require confirmation: no flag is listed for it.`);
-        return { key: resolvedKey, confirm: false };
+        // The flag was removed: the command did what it was asked (#257), and
+        // says what still gates the key.
+        if (note) printWarning(note.message);
+        return { key: resolvedKey, confirm: false, ...(note ? { stillGated: true as const } : {}) };
       }
     );
   });

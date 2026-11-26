@@ -8,7 +8,7 @@ import {
   flagsGating,
   gatedAmong,
 } from '../confirm';
-import { keysOpeningSameEntry, entriesOpenedBy, opensEntryFile } from '../utils/entryIdentity';
+import { keysOpeningSameEntry, entriesOpenedBy, opensEntryFile, storedSpellingOf } from '../utils/entryIdentity';
 
 vi.mock('../store', () => {
   let confirmKeys: Record<string, true> = {};
@@ -45,7 +45,7 @@ vi.mock('../utils/entryIdentity', () => ({
   storedSpellingOf: vi.fn(() => undefined),
 }));
 
-import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged } from '../store';
+import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged, findProjectFile, updateUnderBothLocks } from '../store';
 
 describe('Confirm Metadata', () => {
   const originalConsoleLog = console.log;
@@ -101,7 +101,8 @@ describe('Confirm Metadata', () => {
 
   describe('setConfirm', () => {
     it('adds a key to confirm set', () => {
-      expect(setConfirm('commands.new')).toBe(true);
+      // #255/#256: it says where the flag went — the name and the list.
+      expect(setConfirm('commands.new')).toMatchObject({ key: 'commands.new', globalOnly: false });
 
       expect(saveConfirmMap).toHaveBeenCalled();
       const savedData = (saveConfirmMap as Mock).mock.calls[0][0];
@@ -116,6 +117,53 @@ describe('Confirm Metadata', () => {
       expect(setConfirm('commands.new')).toBe(false);
       expect(saveConfirmMap).not.toHaveBeenCalled();
     });
+
+    describe('#255: the name it is listed under', () => {
+      /** One store holding `keys` (and `unreadable` entry keys), as the transaction sees it under its lock. */
+      const storeHolding = (keys: string[], unreadable: string[] = []) => {
+        (updateUnderBothLocks as Mock).mockImplementationOnce((scope: string, fn: (target: unknown, other: unknown) => { confirm: Record<string, true> } | null) => {
+          const next = fn({
+            scope, dir: '/mock/store',
+            data: { entries: {}, aliases: {}, confirm: loadConfirmMap(scope) },
+            keys,
+            unreadable: unreadable.map(key => ({ kind: 'entry', key, path: `/mock/store/${key}.json`, reason: 'conflict' })),
+          }, undefined);
+          if (next !== null) saveConfirmMap(next.confirm, scope);
+        });
+      };
+      const listed = () => Object.keys((saveConfirmMap as Mock).mock.calls[0][0] as object).filter(k => !k.startsWith('commands.')).sort();
+      afterEach(() => { (storedSpellingOf as Mock).mockReturnValue(undefined); });
+
+      it('the exact key, when it is stored', () => {
+        storeHolding(['ops.fix', 'OPS.fix']);
+        expect(setConfirm('ops.fix')).toMatchObject({ key: 'ops.fix' });
+        expect(listed()).toEqual(['ops.fix']);
+      });
+
+      it('the stored key whose file the spelling opens (a fold the filesystem makes)', () => {
+        storeHolding(['ops.fix']);
+        (storedSpellingOf as Mock).mockReturnValue('ops.fix');
+        expect(setConfirm('ops.\ufb01x')).toMatchObject({ key: 'ops.fix' });
+        expect(listed()).toEqual(['ops.fix']);
+      });
+
+      it('an unreadable entry is a candidate too: its file is there', () => {
+        storeHolding([], ['ops.fix']);
+        (storedSpellingOf as Mock).mockImplementation((_dir: string, _key: string, names: string[]) => names.includes('ops.fix') ? 'ops.fix' : undefined);
+        expect(setConfirm('ops.\ufb01x')).toMatchObject({ key: 'ops.fix' });
+      });
+
+      it('the one stored key that differs only by case, where no file is shared (a case-sensitive volume)', () => {
+        storeHolding(['ops.Deploy']);
+        expect(setConfirm('OPS.deploy')).toMatchObject({ key: 'ops.Deploy' });
+      });
+
+      it('several stored keys differing only by case, none of them the key: the spelling typed', () => {
+        storeHolding(['ops.Deploy', 'OPS.DEPLOY']);
+        expect(setConfirm('ops.deploy')).toMatchObject({ key: 'ops.deploy' });
+        expect(listed()).toEqual(['ops.deploy']);
+      });
+    });
   });
 
   describe('removeConfirm', () => {
@@ -126,6 +174,13 @@ describe('Confirm Metadata', () => {
       const savedData = (saveConfirmMap as Mock).mock.calls[0][0];
       expect(savedData['commands.deploy']).toBeUndefined();
       expect(savedData['commands.rm-logs']).toBe(true);
+    });
+
+    it('#257: a name every object has is not a flag (constructor, toString)', () => {
+      for (const key of ['constructor', 'toString', 'hasOwnProperty']) {
+        expect(removeConfirm(key), key).toBe(false);
+      }
+      expect(saveConfirmMap).not.toHaveBeenCalled();
     });
 
     it('does nothing when key is not in confirm set', () => {
@@ -241,15 +296,35 @@ describe('Confirm Metadata', () => {
       expect(hasConfirm('__proto__')).toBe(false);
     });
 
+    /** A project list and a global list, each as given. */
+    const twoLists = (project: Record<string, true>, global: Record<string, true>) => {
+      (findProjectFile as Mock).mockReturnValue('/mock/project/.reverie');
+      (loadConfirmMap as Mock).mockImplementation((scope?: string) => ({ ...(scope === 'project' ? project : global) }));
+      (loadConfirmMapMerged as Mock).mockReturnValue({ ...global, ...project });
+    };
+    afterEach(() => {
+      (findProjectFile as Mock).mockReturnValue(null);
+      (loadConfirmMap as Mock).mockImplementation(() => ({}));
+    });
+
     it('flagsGating: names each flag that gates the key, and the list it is in', () => {
-      (loadConfirmMapMerged as Mock).mockReturnValue({ 'commands.deploy': true, 'commands.DEPLOY': true, 'other.cmd': true });
       // The global list holds only the exact spelling; the other is the project's.
-      (loadConfirmMap as Mock).mockReturnValue({ 'commands.deploy': true });
+      twoLists({ 'commands.DEPLOY': true, 'other.cmd': true }, { 'commands.deploy': true });
       expect(flagsGating('commands.deploy')).toEqual([
-        { key: 'commands.deploy', scope: 'global' },
         { key: 'commands.DEPLOY', scope: 'project' },
+        { key: 'commands.deploy', scope: 'global' },
       ]);
       expect(flagsGating('commands.greet')).toEqual([]);
+    });
+
+    it('flagsGating: a name flagged in both lists is named in both (#257)', () => {
+      // Merged into one map, the global list was the only one named: clearing
+      // it from there left the project's, and the command failed again.
+      twoLists({ 'ops.deploy': true }, { 'ops.deploy': true });
+      expect(flagsGating('OPS.DEPLOY')).toEqual([
+        { key: 'ops.deploy', scope: 'project' },
+        { key: 'ops.deploy', scope: 'global' },
+      ]);
     });
   });
 

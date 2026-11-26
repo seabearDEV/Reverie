@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadData, handleError, getValue, getValueForWrite, setValue, removeValue, Scope } from '../storage';
+import { loadData, handleError, getValue, getValueForWrite, setValue, setValueWithMeta, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
 import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
 import { renameKey, RenameRefusal } from '../rename';
@@ -24,7 +24,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
 import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, UNRESOLVED_WARNING_CODE, UnresolvedOnRead } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
-import { isJsonMode, setResult, failJson, addWarning, recordErrorCode } from '../utils/output';
+import { isJsonMode, setResult, failJson, addWarning, recordErrorCode, type ErrorCode } from '../utils/output';
 import { markValueStored } from '../utils/writeAmp';
 
 function toScope(global?: boolean  ): Scope | undefined {
@@ -351,22 +351,44 @@ async function promptAndEncrypt(value: string, passwordFile?: string): Promise<s
 
 /**
  * What still gates `key` after a command cleared a flag from it, as a
- * message, or null when nothing does. Clearing takes the flag listed under
- * the name given, in the list of the store it is given for — nothing else,
- * or it would take the flag of another entry. So the key can still be gated,
- * and reporting it cleared would be false. `removed` says whether the named
- * flag was there to remove.
+ * message and the code a refusal carries, or null when nothing does.
+ * Clearing takes the flag listed under the name given, in the list of the
+ * store it is given for — nothing else, or it would take the flag of another
+ * entry. So the key can still be gated, and reporting it cleared would be
+ * false. `removed` says whether the named flag was there to remove.
+ *
+ * Every list still holding a flag is named, so one message is enough to
+ * clear them all (#257). A list that cannot be read loads as empty and shows
+ * no flag, while `run` treats every entry as gated until it is repaired: the
+ * key may still be gated, and that is said instead of "no flag".
  */
-export function stillGatedNote(key: string, removed: boolean): string | null {
+export function stillGatedNote(key: string, removed: boolean): { message: string; code: ErrorCode } | null {
   const held = flagsGating(key);
-  if (held.length === 0) return null;
+  const unreadable = (['project', 'global'] as const).filter(s => listUnreadableFiles(s).some(f => f.kind === 'confirm'));
+  if (held.length === 0 && unreadable.length === 0) return null;
   const bin = getBinaryName();
-  const where = held.map(h => `'${h.key}' in the ${h.scope} list`).join(' and ');
-  const fix = held.map(h => `\`${bin} confirm remove ${h.scope === 'global' ? '-G ' : ''}${h.key}\``).join(', ');
-  const lead = removed
-    ? `The flag listed as '${key}' was removed, but '${key}' still requires confirmation`
-    : `'${key}' still requires confirmation`;
-  return `${lead}: it is flagged as ${where}. A flag is removed only under the name and in the list it is in: ${fix}.`;
+  const said: string[] = [];
+  if (held.length > 0) {
+    const where = held.map(h => `'${h.key}' in the ${h.scope} list`).join(' and ');
+    const fix = held.map(h => `\`${bin} confirm remove ${h.scope === 'global' ? '-G ' : ''}${h.key}\``).join(', ');
+    const lead = removed
+      ? `The flag listed as '${key}' was removed, but '${key}' still requires confirmation`
+      : `'${key}' still requires confirmation`;
+    said.push(`${lead}: it is flagged as ${where}. A flag is removed only under the name and in the list it is in: ${fix}.`);
+  }
+  if (unreadable.length > 0) {
+    const lists = unreadable.map(s => `the ${s} store's confirmation list`).join(' and ');
+    if (held.length > 0) {
+      said.push(`And ${lists} cannot be read, so it may hold a flag for '${key}' as well.`);
+    } else {
+      const lead = removed
+        ? `The flag listed as '${key}' was removed, but '${key}' may still require confirmation`
+        : `'${key}' may still require confirmation`;
+      said.push(`${lead}: ${lists} cannot be read, and until it is repaired \`${bin} run\` treats every entry as requiring confirmation. `
+        + `Repair it, then check \`${bin} confirm list\`.`);
+    }
+  }
+  return { message: said.join(' '), code: held.length > 0 ? 'INVALID_INPUT' : 'STORE_UNREADABLE' };
 }
 
 /**
@@ -402,8 +424,9 @@ function storedKeys(scope?: Scope): string[] {
  * that an older version put on one can be taken off again.
  *
  * `unreadableIsEntry`: an entry whose file cannot be read (#215) is still an
- * entry. `confirm set` flags it; the flag-only `set` keeps refusing, as it
- * does for every other write to such a key, by letting the read throw.
+ * entry, and a flag can be set on it or cleared from it: `confirm set` and
+ * the flag-only `set` write the list, not the entry (#234, #257). Without it
+ * the read throws, as it does for a write to the entry itself.
  */
 export function confirmTargetProblem(
   key: string,
@@ -434,6 +457,56 @@ export function confirmTargetProblem(
   return { code: 'NOT_FOUND', message: `Entry '${key}' not found. Cannot update confirm on a non-existent entry.` };
 }
 
+/** What `confirm set` and the flag-only `set --confirm` report, in JSON. */
+export interface ConfirmSetResult {
+  /** The name the flag is listed under: the entry's stored spelling (#255). */
+  key: string;
+  confirm: true;
+  /** The key as given, when the flag is listed under another spelling. */
+  typed?: string;
+  /** 'global' when the project's list was asked for and the flag went to the global list (#256). */
+  list?: 'global';
+}
+
+/**
+ * Flag the entry `key` names: `confirm set` and the flag-only `set <key>
+ * --confirm`, one rule for both (#257). `scope` is the list asked for: -G,
+ * or the project's by default.
+ *
+ * The key is looked up in both stores whatever list is asked for: a flag
+ * gates by name wherever the entry lives, so `-G` on a project entry is a
+ * request that can be met. An entry whose file cannot be read is still an
+ * entry (#234). Which list the flag goes in, and under which spelling, is
+ * setConfirm's to decide (#255, #256), and the success line says so when it
+ * is not the list asked for or the name typed.
+ *
+ * Returns the line to print and the envelope's result, or undefined after
+ * printing the refusal.
+ */
+export function flagEntry(key: string, scope?: Scope): { message: string; result: ConfirmSetResult } | undefined {
+  const problem = confirmTargetProblem(key, undefined, true, true);
+  if (problem) {
+    printError(problem.message, problem.code);
+    return undefined;
+  }
+  // #259: asked again under the store locks, where the flag is written. A
+  // rename or a removal since the look above leaves nothing under this name,
+  // and a flag there would gate nothing that moved.
+  const set = setConfirm(key, scope);
+  if (set === false) {
+    printError(`Entry '${key}' not found. Cannot update confirm on a non-existent entry.`, 'NOT_FOUND');
+    return undefined;
+  }
+  const named = set.key === key ? `Entry '${key}'` : `Entry '${set.key}' (as typed: '${key}')`;
+  const where = set.globalOnly
+    ? ` It is stored only in the global store, so its flag is in the global list and applies in every project.`
+    : '';
+  return {
+    message: `${named} now requires confirmation to run.${where}`,
+    result: { key: set.key, confirm: true, ...(set.key !== key ? { typed: key } : {}), ...(set.globalOnly ? { list: 'global' as const } : {}) },
+  };
+}
+
 /**
  * #259: the value was stored, and by the time the flag is written the entry
  * is gone — moved or removed by another process in between. setConfirm
@@ -444,28 +517,26 @@ function flagNotSet(key: string): void {
   process.exitCode = 1;
 }
 
-async function handlePostSetConfirm(key: string, confirm: boolean | undefined, scope?: Scope  ): Promise<void> {
-  if (confirm === true) {
-    if (setConfirm(key, scope) === false) flagNotSet(key);
-  } else if (confirm === false) {
-    const removed = removeConfirm(key, scope);
-    // The value is stored either way; say so if the key is still gated.
-    const note = stillGatedNote(key, removed);
-    if (note) printWarning(note);
-  } else if (process.stdin.isTTY) {
-    // #215: with the confirmation list unreadable the answer could not be
-    // saved — the value is already written, so do not ask.
-    let confirmUnreadable = false;
-    try {
-      confirmUnreadable = listUnreadableFiles(resolveScopeForWrite(scope)).some(f => f.kind === 'confirm');
-    } catch { /* unresolvable scope: nothing was scanned, nothing to skip for */ }
-    if (confirmUnreadable) return;
-    const answer = await askConfirmation('Require confirmation to run? [y/N] ');
-    if (answer.toLowerCase() === 'y' && setConfirm(key, scope) === false) flagNotSet(key);
-  }
+/**
+ * After a plain `set` at a terminal: ask whether the entry should require
+ * confirmation. A second write, after the value is stored — the answer comes
+ * after the value is written. `--confirm` and `--no-confirm` are written with
+ * the value instead (#268).
+ */
+async function promptForConfirm(key: string, scope?: Scope  ): Promise<void> {
+  if (!process.stdin.isTTY) return;
+  // #215: with the confirmation list unreadable the answer could not be
+  // saved — the value is already written, so do not ask.
+  let confirmUnreadable = false;
+  try {
+    confirmUnreadable = listUnreadableFiles(resolveScopeForWrite(scope)).some(f => f.kind === 'confirm');
+  } catch { /* unresolvable scope: nothing was scanned, nothing to skip for */ }
+  if (confirmUnreadable) return;
+  const answer = await askConfirmation('Require confirmation to run? [y/N] ');
+  if (answer.toLowerCase() === 'y' && setConfirm(key, scope) === false) flagNotSet(key);
 }
 
-export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string): Promise<{ key: string; alias?: string; confirm?: boolean } | undefined> {
+export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string): Promise<{ key: string; alias?: string; confirm?: boolean; typed?: string; list?: 'global'; stillGated?: true } | undefined> {
   debug('setEntry called', { key, force, encrypt, alias, confirm, global });
   const scope = toScope(global);
   try {
@@ -475,41 +546,63 @@ export async function setEntry(key: string, value: string | undefined, force = f
     if (value === undefined) {
       // Handle --confirm / --no-confirm on an existing entry (no value needed)
       if (confirm !== undefined) {
-        const problem = confirmTargetProblem(key, scope, confirm);
+        // #257: looked up as `confirm set` looks it up — in both stores,
+        // whatever -G says (-G picks the list, not where the entry is), an
+        // unreadable entry included: the list is written, not the entry.
+        const problem = confirmTargetProblem(key, undefined, confirm, true);
         if (problem) {
           printError(problem.message, problem.code);
           process.exitCode = 1;
           return;
         }
-        // #215: the confirmation list, then (with -a) the alias map. Check
-        // both before the first write, as the value path does below — and
-        // refuse a --no-confirm that cannot see the flag it is asked to drop.
-        assertSidecarsWritable(() => resolveScopeForWrite(scope), alias ? ['confirm', 'aliases'] : ['confirm']);
+        // #215: the alias map, checked before the first write. The
+        // confirmation list the flag lands in is checked by the write itself;
+        // a --no-confirm must see the list it is asked to clear.
+        const sidecars: ('aliases' | 'confirm')[] = confirm ? [] : ['confirm'];
+        if (alias) sidecars.push('aliases');
+        if (sidecars.length > 0) assertSidecarsWritable(() => resolveScopeForWrite(scope), sidecars);
+        // An alias that cannot be stored is refused before the flag changes.
+        if (alias && !isValidEntryKey(alias)) throw new Error(`Invalid alias name: ${JSON.stringify(alias)}`);
         if (confirm) {
-          // #259: asked again under the store locks — a rename or a removal
-          // since the look above leaves nothing under this name to flag.
-          if (setConfirm(key, scope) === false) {
-            printError(`Entry '${key}' not found. Cannot update confirm on a non-existent entry.`, 'NOT_FOUND');
+          const flagged = flagEntry(key, scope);
+          if (!flagged) {
             process.exitCode = 1;
             return;
           }
-          printSuccess(`Entry '${key}' now requires confirmation to run.`);
-        } else {
-          const removed = removeConfirm(key, scope);
-          const note = stillGatedNote(key, removed);
+          printSuccess(flagged.message);
+          if (alias) setAlias(alias, key, scope);
+          return { ...flagged.result, ...(alias ? { alias } : {}) };
+        }
+        // --no-confirm. Nothing to clear under this name while another flag
+        // still gates the key: refused, and nothing written — the alias
+        // neither (#257).
+        if (!flagsListedUnder(key, scope).includes(key)) {
+          const note = stillGatedNote(key, false);
           if (note) {
-            printError(note, 'INVALID_INPUT');
+            printError(note.message, note.code);
             process.exitCode = 1;
-          } else {
-            printSuccess(`Entry '${key}' no longer requires confirmation to run.`);
+            return;
           }
         }
-        if (alias) {
-          setAlias(alias, key, scope);
+        // The flag and the alias in one write, so the alias is not left set
+        // by a command that then fails.
+        const removed = alias
+          ? setValueWithMeta(key, undefined, scope, { alias, confirm: false }).flagRemoved
+          : removeConfirm(key, scope);
+        const note = stillGatedNote(key, removed);
+        if (note && !removed && !alias) {
+          // Cleared by another process since the look above, and still gated.
+          printError(note.message, note.code);
+          process.exitCode = 1;
+          return;
         }
-        // Return a result so the #120 wrapper doesn't emit a result-less ok
-        // envelope — `set <key> --confirm` succeeds without storing a value.
-        return { key, confirm, ...(alias ? { alias } : {}) };
+        if (!note) printSuccess(`Entry '${key}' no longer requires confirmation to run.`);
+        else if (removed) printSuccess(`The flag listed as '${key}' was removed.`);
+        if (alias) console.log(`Alias '${alias}' added successfully.`);
+        // It wrote — the flag cleared, or the alias set — so it succeeded,
+        // and says what still gates the key (#257).
+        if (note) printWarning(note.message);
+        return { key, confirm, ...(alias ? { alias } : {}), ...(note ? { stillGated: true as const } : {}) };
       }
       if (!alias) {
         printError('Missing value. Provide a value or use --alias (-a) to update an alias.', 'INPUT_REQUIRED');
@@ -546,22 +639,34 @@ export async function setEntry(key: string, value: string | undefined, force = f
       storedValue = encrypted;
     }
 
-    // #215: this command writes up to three files — the value, then the
-    // alias map, then the confirmation list. Check the sidecars it will touch
-    // before the value lands, so a refusal leaves nothing half-written.
+    // #215: this command writes up to three files — the value, the alias map
+    // and the confirmation list. Check the sidecars it will touch before the
+    // value lands, so a refusal leaves nothing half-written.
     const sidecars: ('aliases' | 'confirm')[] = [];
     if (alias) sidecars.push('aliases');
     if (confirm !== undefined) sidecars.push('confirm');
     if (sidecars.length > 0) assertSidecarsWritable(() => resolveScopeForWrite(scope), sidecars);
 
-    setValue(key, storedValue, scope);
+    let flagRemoved = false;
+    if (sidecars.length === 0) {
+      setValue(key, storedValue, scope);
+    } else {
+      // #268: the value, its alias and its flag in one store write — all of
+      // it, or nothing. Written separately, a lock timeout or a crash between
+      // them left the command stored and ungated.
+      flagRemoved = setValueWithMeta(key, storedValue, scope, { ...(alias ? { alias } : {}), confirm }).flagRemoved;
+    }
     console.log(`Entry '${key}' set successfully.`);
     markValueStored();
-    if (alias) {
-      setAlias(alias, key, scope);
-    }
+    if (alias) console.log(`Alias '${alias}' added successfully.`);
 
-    await handlePostSetConfirm(key, confirm, scope);
+    if (confirm === false) {
+      // The value is stored either way; say so if the key is still gated.
+      const note = stillGatedNote(key, flagRemoved);
+      if (note) printWarning(note.message);
+    } else if (confirm === undefined) {
+      await promptForConfirm(key, scope);
+    }
     return { key, ...(alias ? { alias } : {}) };
   } catch (error) {
     handleError('Failed to set entry:', error);

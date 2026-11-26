@@ -1,9 +1,9 @@
 import { debug } from './utils/debug';
-import { Scope, loadConfirmMap, saveConfirmMap, updateConfirmMap, loadConfirmMapMerged, updateUnderBothLocks, type LockedStore } from './store';
+import { Scope, loadConfirmMap, saveConfirmMap, updateConfirmMap, loadConfirmMapMerged, updateUnderBothLocks, findProjectFile, type LockedStore, type UnifiedData } from './store';
 import { resolveScopeForWrite } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
-import { entriesOpenedBy, keysOpeningSameEntry, opensEntryFile } from './utils/entryIdentity';
-import { flattenObject, removeFlatKeysUnder } from './utils/objectPath';
+import { entriesOpenedBy, keysOpeningSameEntry, opensEntryFile, storedSpellingOf } from './utils/entryIdentity';
+import { removeFlatKeysUnder } from './utils/objectPath';
 
 
 export function loadConfirmKeys(scope?: Scope  ): Record<string, true> {
@@ -53,39 +53,134 @@ function gatingAmong(key: string, flagged: string[]): string[] {
   return [...byName, ...byFile];
 }
 
+/** Where `setConfirm` listed a flag. */
+export interface FlagSet {
+  /** The name the flag is listed under: the entry's stored spelling (#255). */
+  key: string;
+  /** The list it is in. */
+  scope: 'project' | 'global';
+  /**
+   * The project's list was asked for, but the entry is stored only in the
+   * global store, so the flag is in the global list (#256).
+   */
+  globalOnly: boolean;
+}
+
 /**
- * Flag `key` in the list `scope` writes, if it still names an entry. False,
- * with nothing written, when it does not.
+ * Flag the entry `key` names, if it still names one; false, with nothing
+ * written, when it does not. Shared by `confirm set`, the flag-only `set
+ * --confirm` and the prompt after a plain `set`.
  *
  * The callers look the key up first, for the message (confirmTargetProblem),
  * but that look is outside any lock. A rename committed in between moved the
  * entry, and the flag then landed on the old name with the new one unflagged
  * — both commands reporting success (#259). So it is asked again here, under
- * the locks of both stores (the entry may be in either, whichever list is
- * written), by the rule `confirm set` applies: see namesEntry.
+ * the locks of both stores, by the rule `confirm set` applies (holderOf).
+ * Under the same locks it decides:
+ *
+ *   - The list (#256). An entry stored only in the global store takes a flag
+ *     in the global list, whatever list was asked for. A flag gates by name,
+ *     and a project's list is seen only in that project: a `rename -G` run
+ *     from another project moved the entry and carried no flag it could not
+ *     see, and the renamed command ran unasked where the flag was set. An
+ *     entry in the project store, alone or over a global one, takes the list
+ *     asked for: the project's by default, the global one with -G. Which
+ *     store holds the entry is found under the locks of the list asked for;
+ *     a global-only entry is then flagged in a second transaction, under the
+ *     locks as `-G` takes them (a store that cannot be written is read, not
+ *     locked — see inspect()). One writes nothing, the other the flag.
+ *   - The name (#255). The flag is listed under the entry's stored spelling,
+ *     not the one typed. A spelling the filesystem folds onto the entry
+ *     (`ſ` for `s`, `ﬁ` for `fi` on APFS) opens nothing on a case-sensitive
+ *     volume or on Linux: a flag listed that way, copied there in a clone,
+ *     gated nothing. See storedSpelling.
  */
-export function setConfirm(key: string, scope?: Scope  ): boolean {
-  const effectiveScope = resolveScopeForWrite(scope);
-  let named = false;
-  updateUnderBothLocks(effectiveScope, (target, other) => {
-    named = namesEntry(key, other ? [target, other] : [target]);
-    if (!named || target.data.confirm[key] === true) return null;
-    return { ...target.data, confirm: { ...target.data.confirm, [key]: true } };
+export function setConfirm(key: string, scope?: Scope  ): FlagSet | false {
+  const requested = resolveScopeForWrite(scope);
+  let result = false as FlagSet | false;
+  let storedOnlyGlobally = false;
+  updateUnderBothLocks(requested, (target, other) => {
+    result = false;
+    storedOnlyGlobally = false;
+    const holder = holderOf(key, target.scope === 'project' ? [target, other] : [other, target]);
+    if (holder === undefined) return null;
+    if (target.scope === 'project' && holder.store !== target) {
+      // Not written here: see below.
+      storedOnlyGlobally = true;
+      return null;
+    }
+    result = { key: holder.spelling, scope: target.scope, globalOnly: false };
+    return withFlag(target.data, holder.spelling);
   });
-  if (named) debug(`Confirm set for key: "${key}"`);
-  return named;
+  if (!storedOnlyGlobally) {
+    if (result) debug(`Confirm set for key: "${key}" as "${result.key}" (${result.scope})`);
+    return result;
+  }
+  // #256: the entry is stored only in the global store, so the flag goes in
+  // the global list — a transaction of its own, under both locks again, the
+  // way `-G` writes it (the store written decides which lock is taken how).
+  // Should the entry be in the project by then, the global list still gates
+  // it there: a flag gates its name in every project.
+  updateUnderBothLocks('global', (target, other) => {
+    result = false;
+    const holder = holderOf(key, [other, target]);
+    if (holder === undefined) return null;
+    result = { key: holder.spelling, scope: 'global', globalOnly: holder.store === target };
+    return withFlag(target.data, holder.spelling);
+  });
+  if (result) debug(`Confirm set for key: "${key}" as "${result.key}" (${result.scope})`);
+  return result;
+}
+
+/** `data` with `key` flagged, or null when it already is. */
+function withFlag(data: UnifiedData, key: string): UnifiedData | null {
+  if (data.confirm[key] === true) return null;
+  return { ...data, confirm: { ...data.confirm, [key]: true } };
 }
 
 /**
- * Does `key` name an entry in one of `stores`, as `confirm set` decides it
- * (confirmTargetProblem): stored under that name, case aside, or stored under
- * a name whose file `key` opens. An entry whose file does not parse is still
- * an entry — its file is there. A namespace is not.
+ * The store that holds the entry `key` names, and the entry's stored
+ * spelling there; undefined when it names no entry in either. The stores
+ * come project first.
+ *
+ * An entry is what `key` reaches, as `run` reads it: the file its path opens
+ * — stored under that name, under a spelling the filesystem folds it onto,
+ * or a file that does not parse, which is still an entry. Only when no store
+ * has such a file does a stored key that differs only by case count, on a
+ * filesystem that keeps cases apart: a flag gates its name case aside. A
+ * namespace is not an entry.
  */
-function namesEntry(key: string, stores: LockedStore[]): boolean {
+function holderOf(key: string, inOrder: (LockedStore | undefined)[]): { store: LockedStore; spelling: string } | undefined {
+  const stores = inOrder.filter((s): s is LockedStore => s !== undefined);
   const lower = key.toLowerCase();
-  return stores.some(store => opensEntryFile(store.dir, key)
-    || Object.keys(flattenObject(store.data.entries)).some(k => k.toLowerCase() === lower));
+  const holder = stores.find(store => opensEntryFile(store.dir, key))
+    ?? stores.find(store => entryNames(store).some(k => k.toLowerCase() === lower));
+  return holder && { store: holder, spelling: storedSpelling(holder, key) };
+}
+
+/** The entry keys of `store`, one per file, its unreadable entries included: their files are there. */
+function entryNames(store: LockedStore): string[] {
+  const unreadable = store.unreadable.flatMap(f => f.kind === 'entry' && f.key !== undefined ? [f.key] : []);
+  return unreadable.length === 0 ? store.keys : [...store.keys, ...unreadable];
+}
+
+/**
+ * The name the entry `key` names in `store` is stored under (#255): `key`
+ * itself when it is; otherwise the stored key whose file `key` opens —
+ * another case on a filesystem that ignores case, a letter APFS folds, the
+ * same name in another Unicode normalization; otherwise the one stored key
+ * that differs from it only by case. When several do (a case-sensitive
+ * volume can hold `ops.x` and `OPS.x`) and none is `key`, the spelling typed
+ * is kept: it gates each of them by name.
+ */
+function storedSpelling(store: LockedStore, key: string): string {
+  const names = entryNames(store);
+  if (names.includes(key)) return key;
+  const opened = storedSpellingOf(store.dir, key, names);
+  if (opened !== undefined) return opened;
+  const lower = key.toLowerCase();
+  const byCase = names.filter(k => k.toLowerCase() === lower);
+  return byCase.length === 1 ? byCase[0] : key;
 }
 
 // Remove confirmation requirement from a key
@@ -97,16 +192,25 @@ export function removeConfirm(key: string, scope?: Scope  ): boolean {
   // #215: an unreadable list loads as empty, so "the key is not in it" would
   // be reported as a removal that happened. Refuse instead.
   assertSidecarsWritable(() => effectiveScope, ['confirm']);
-  if (!(key in loadConfirmMap(effectiveScope))) return false;
+  if (!isListed(loadConfirmMap(effectiveScope), key)) return false;
   // #254: removed from the list as it stands under the lock.
   const removed = changeConfirmList(effectiveScope, keys => {
-    if (!(key in keys)) return null;
+    if (!isListed(keys, key)) return null;
     const next = { ...keys };
     delete next[key];
     return next;
   });
   if (removed) debug(`Confirm removed for key: "${key}" (${effectiveScope})`);
   return removed;
+}
+
+/**
+ * Is `key` flagged in `list` — its own entry, holding `true`? Not `key in
+ * list`: a list is a plain object, and `constructor` or `toString` are in
+ * every one of those (#257).
+ */
+function isListed(list: Record<string, unknown>, key: string): boolean {
+  return Object.hasOwn(list, key) && list[key] === true;
 }
 
 // Check if a key carries the confirm flag (checks merged), as the gate reads
@@ -148,19 +252,24 @@ export function gatedByFlags(keys: readonly string[], flagged: readonly string[]
 }
 
 /**
- * The flags that gate `key` right now, and the list each is in. For the
- * commands that clear a flag: removal is exact, so a key can still be gated
- * afterwards — by another spelling in the list, or by the other store's
- * list — and the command has to say so instead of reporting it cleared.
+ * The flags that gate `key` right now, and the list each is in — one row
+ * per list, so a name flagged in both lists is named in both (#257): clearing
+ * it from one still leaves the other. For the commands that clear a flag:
+ * removal is exact, so a key can still be gated afterwards — by another
+ * spelling in the list, or by the other store's list — and the command has
+ * to say so instead of reporting it cleared.
  */
 export function flagsGating(key: string): { key: string; scope: 'project' | 'global' }[] {
-  const merged = loadConfirmMapMerged();
-  const flagged = Object.keys(merged).filter(k => merged[k] === true);
-  const exact = merged[key] === true ? [key] : [];
-  const holders = [...exact, ...gatingAmong(key, flagged).filter(k => k !== key)];
-  if (holders.length === 0) return [];
-  const global = loadConfirmMap('global');
-  return holders.map(k => ({ key: k, scope: global[k] === true ? 'global' as const : 'project' as const }));
+  const held: { key: string; scope: 'project' | 'global' }[] = [];
+  const lists: ['project' | 'global', Record<string, unknown>][] = [];
+  if (findProjectFile()) lists.push(['project', loadConfirmMap('project')]);
+  lists.push(['global', loadConfirmMap('global')]);
+  for (const [scope, list] of lists) {
+    const flagged = Object.keys(list).filter(k => list[k] === true);
+    const exact = isListed(list, key) ? [key] : [];
+    for (const k of [...exact, ...gatingAmong(key, flagged).filter(k => k !== key)]) held.push({ key: k, scope });
+  }
+  return held;
 }
 
 /**
