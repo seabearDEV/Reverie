@@ -4,7 +4,8 @@ import { debug } from './utils/debug';
 import { getGlobalStoreDirPath } from './utils/paths';
 import { Scope, loadConfirmMap, saveConfirmMap, updateConfirmMap, loadConfirmMapMerged, updateUnderBothLocks, inspectBothStores, findProjectFile, type LockedStore, type UnifiedData } from './store';
 import { resolveScopeForWrite } from './projectResolution';
-import { assertSidecarsWritable } from './utils/unreadable';
+import { StoreUnreadableError, assertSidecarsWritable } from './utils/unreadable';
+import { LockTimeoutError } from './utils/fileLock';
 import { entriesOpenedBy, keysOpeningSameEntry, opensEntryFile, storedSpellingOf } from './utils/entryIdentity';
 import { removeFlatKeysUnder } from './utils/objectPath';
 
@@ -60,6 +61,12 @@ function gatingAmong(key: string, flagged: string[]): string[] {
 export interface FlagSet {
   /** The name the flag is listed under: the entry's stored spelling (#255). */
   key: string;
+  /**
+   * Other names it is listed under too, when the two stores spell the entry
+   * differently (`ops.start` in one, `opſ.start` in the other, which APFS
+   * folds together): each gates where the other names nothing.
+   */
+  also?: string[];
   /** The list it is in. */
   scope: 'project' | 'global';
   /**
@@ -67,11 +74,14 @@ export interface FlagSet {
    *   - `globalOnly`: the entry is stored only in the global store (#256);
    *   - `opensGlobal`: the key opens the global store's entry, and the
    *     project holds only another spelling of it (a case-sensitive volume);
-   * and why it is in the project's list though the global one was wanted:
-   *   - `globalUnwritable`: the global store cannot be written, so the flag
-   *     is in this project's list — it applies only here (owner, #256 review).
+   * and why it is in the project's list though the global one was wanted
+   * (owner, #256 review) — it applies only here:
+   *   - `globalUnwritable`: the global store cannot be written;
+   *   - `globalUnreadable`: the global confirmation list cannot be read.
    */
-  moved?: 'globalOnly' | 'opensGlobal' | 'globalUnwritable';
+  moved?: 'globalOnly' | 'opensGlobal' | 'globalUnwritable' | 'globalUnreadable';
+  /** For a fallback: the file that cannot be read, or the error that refused the write. */
+  detail?: string;
 }
 
 /**
@@ -94,14 +104,18 @@ export interface FlagSet {
  *     see, and the renamed command ran unasked where the flag was set. An
  *     entry in the project store, alone or over a global one, takes the list
  *     asked for: the project's by default, the global one with -G. Where the
- *     global store cannot be written, the flag of a global-only entry goes in
- *     the project's list instead, and the caller says what that means.
+ *     global list cannot be used — the store cannot be written, its list
+ *     cannot be read, or the write fails — the flag of a global-only entry
+ *     goes in the project's list instead, and the caller says what that
+ *     means. Not with -G, which asked for the global list, and not for a lock
+ *     another process holds (a lock timeout on a writable directory).
  *   - The name (#255). The flag is listed under the entry's stored spelling,
  *     not the one typed — the spelling in the store whose list is written,
  *     when the key names an entry there, else in the other. A spelling the
  *     filesystem folds onto the entry (`ſ` for `s`, `ﬁ` for `fi` on APFS)
  *     opens nothing on a case-sensitive volume or on Linux: a flag listed
- *     that way, copied there in a clone, gated nothing.
+ *     that way, copied there in a clone, gated nothing. When the two stores
+ *     spell it differently, every spelling is listed (see spellingsFor).
  */
 export function setConfirm(key: string, scope?: Scope  ): FlagSet | false {
   const requested = resolveScopeForWrite(scope);
@@ -114,21 +128,26 @@ export function setConfirm(key: string, scope?: Scope  ): FlagSet | false {
     // The last attempt writes the global list whatever it finds: a flag
     // there gates the entry in every project, wherever it is by then.
     const target = attempt >= 2 ? 'global' : plan.result.scope;
-    // The global store cannot be written: the flag of an entry the project
-    // asked to flag goes in its own list, said so by the caller. Asked for
-    // with -G, or an unreadable list (STORE_UNREADABLE), it fails as before.
+    // The global list cannot be used: the flag of an entry the project
+    // asked to flag goes in its own list, said so by the caller. Not with
+    // -G, which asked for the global list.
     const fallback = target === 'global' && requested === 'project' && plan.hasProject;
     let outcome: FlagSet | false | 'replan';
-    if (fallback && !globalLockDirWritable()) {
+    if (fallback && plan.globalListUnreadable !== undefined) {
+      // It loads as empty; the write would be refused (#215).
+      outcome = writeFlag(key, requested, 'project', { moved: 'globalUnreadable', detail: plan.globalListUnreadable });
+    } else if (fallback && !globalLockDirWritable()) {
       // Its lock cannot be had at all — nor a stale one cleared — so the
       // global write would only wait the full lock timeout and fail.
-      outcome = writeFlag(key, requested, 'project', true);
+      outcome = writeFlag(key, requested, 'project', { moved: 'globalUnwritable' });
     } else {
       try {
         outcome = writeFlag(key, requested, target);
       } catch (err) {
-        if (!fallback || !isUnwritable(err)) throw err;
-        outcome = writeFlag(key, requested, 'project', true);
+        if (!fallback || !globalListFailed(err)) throw err;
+        outcome = writeFlag(key, requested, 'project', err instanceof StoreUnreadableError
+          ? { moved: 'globalUnreadable', detail: err.files.map(f => f.path).join(', ') }
+          : { moved: 'globalUnwritable', ...(isUnwritable(err) ? {} : { detail: err instanceof Error ? err.message : String(err) }) });
       }
     }
     if (outcome !== 'replan') return done(key, outcome);
@@ -163,6 +182,20 @@ function globalLockDirWritable(): boolean {
   }
 }
 
+/**
+ * Did the global list's write fail in a way the project's list can stand in
+ * for? A list that cannot be read, or the filesystem refusing the write
+ * (EACCES, ENOSPC, EIO, …). Not a lock timeout: there the directory can be
+ * written (checked first), so another process holds the lock, and the
+ * command fails as any write does.
+ */
+function globalListFailed(err: unknown): boolean {
+  if (err instanceof StoreUnreadableError) return true;
+  if (err instanceof LockTimeoutError) return false;
+  const code = !!err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+  return typeof code === 'string' && /^E[A-Z0-9]+$/.test(code);
+}
+
 /** A write refused by the filesystem for want of permission: a read-only directory or file. */
 function isUnwritable(err: unknown): boolean {
   const code = !!err && typeof err === 'object' && 'code' in err ? err.code : undefined;
@@ -173,10 +206,15 @@ function isUnwritable(err: unknown): boolean {
  * Write the flag in `target`'s list, deciding again under the locks. 'replan'
  * when the project's list was chosen and the entry is no longer the project's
  * (moved or removed since the read): writing it there would be the flag
- * #256 removed. `fallback`: the project's list because the global store cannot
- * be written — written wherever the entry is.
+ * #256 removed. `fallback`: the project's list because the global list cannot
+ * be used — written wherever the entry is, and why is reported.
  */
-function writeFlag(key: string, requested: 'project' | 'global', target: 'project' | 'global', fallback = false): FlagSet | false | 'replan' {
+function writeFlag(
+  key: string,
+  requested: 'project' | 'global',
+  target: 'project' | 'global',
+  fallback?: Pick<FlagSet, 'moved' | 'detail'>,
+): FlagSet | false | 'replan' {
   let outcome: FlagSet | false | 'replan' = false;
   updateUnderBothLocks(target, (written, other) => {
     const project = written.scope === 'project' ? written : other;
@@ -190,13 +228,14 @@ function writeFlag(key: string, requested: 'project' | 'global', target: 'projec
       outcome = 'replan';
       return null;
     }
-    const listed = spellingFor(key, written, written === project ? global : project) ?? key;
+    const [listed, ...also] = spellingsFor(key, written, written === project ? global : project);
     outcome = {
       key: listed,
+      ...(also.length > 0 ? { also } : {}),
       scope: written.scope,
-      ...(fallback ? { moved: 'globalUnwritable' as const } : written.scope === plan.result.scope && plan.result.moved ? { moved: plan.result.moved } : {}),
+      ...(fallback ?? (written.scope === plan.result.scope && plan.result.moved ? { moved: plan.result.moved } : {})),
     };
-    return withFlag(written.data, listed);
+    return withFlags(written.data, [listed, ...also]);
   });
   return outcome;
 }
@@ -212,7 +251,7 @@ function planFlag(
   requested: 'project' | 'global',
   project: LockedStore | undefined,
   global: LockedStore | undefined,
-): { result: FlagSet; listed: boolean; hasProject: boolean } | undefined {
+): { result: FlagSet; listed: boolean; hasProject: boolean; globalListUnreadable?: string } | undefined {
   const inProject = project ? howNamed(project, key) : 'no';
   const inGlobal = global ? howNamed(global, key) : 'no';
   if (inProject === 'no' && inGlobal === 'no') return undefined;
@@ -228,11 +267,13 @@ function planFlag(
   } else scope = 'project';
   const target = scope === 'global' ? global : project;
   const other = scope === 'global' ? project : global;
-  const spelling = (target && spellingFor(key, target, other)) ?? key;
+  const [spelling, ...also] = target ? spellingsFor(key, target, other) : [key];
+  const unreadableList = global?.unreadable.find(f => f.kind === 'confirm');
   return {
-    result: { key: spelling, scope, ...(moved ? { moved } : {}) },
-    listed: target?.data.confirm[spelling] === true,
+    result: { key: spelling, ...(also.length > 0 ? { also } : {}), scope, ...(moved ? { moved } : {}) },
+    listed: [spelling, ...also].every(k => target?.data.confirm[k] === true),
     hasProject: project !== undefined,
+    ...(unreadableList ? { globalListUnreadable: unreadableList.path } : {}),
   };
 }
 
@@ -251,20 +292,40 @@ function howNamed(store: LockedStore, key: string): 'file' | 'name' | 'no' {
 }
 
 /**
- * The stored spelling to list a flag under (#255): from `store`, the one
- * whose list is written, when `key` names an entry there; else from `other`.
- * Undefined when it names none in either.
+ * The names to list a flag under (#255), the first one the name to report:
+ *
+ *   - the stored spelling in `store`, the one whose list is written, when
+ *     `key` names an entry there (else the other store's comes first);
+ *   - `key` itself, when it is exactly a stored key in either store;
+ *   - the stored spelling in `other`, when `key` names an entry there too.
+ *
+ * Two stores can spell one entry differently — `ops.start` in the global
+ * store and `opſ.start` in the project, one file to APFS, two on a
+ * case-sensitive volume or on Linux. A flag under one name gates nothing of
+ * the other's where nothing folds, so both are listed: an extra name only
+ * gates more, and removal stays exact. Names that differ only by case are
+ * listed once: a flag gates its name case aside.
  */
-function spellingFor(key: string, store: LockedStore, other: LockedStore | undefined): string | undefined {
-  if (howNamed(store, key) !== 'no') return storedSpelling(store, key);
-  if (other && howNamed(other, key) !== 'no') return storedSpelling(other, key);
-  return undefined;
+function spellingsFor(key: string, store: LockedStore, other: LockedStore | undefined): string[] {
+  const names: string[] = [];
+  const add = (name: string): void => {
+    if (!names.some(n => n.toLowerCase() === name.toLowerCase())) names.push(name);
+  };
+  const inStore = howNamed(store, key) !== 'no';
+  const inOther = other !== undefined && howNamed(other, key) !== 'no';
+  if (inStore) add(storedSpelling(store, key));
+  else if (inOther) add(storedSpelling(other, key));
+  if (entryNames(store).includes(key) || (other && entryNames(other).includes(key))) add(key);
+  if (inOther) add(storedSpelling(other, key));
+  return names.length > 0 ? names : [key];
 }
 
-/** `data` with `key` flagged, or null when it already is. */
-function withFlag(data: UnifiedData, key: string): UnifiedData | null {
-  if (data.confirm[key] === true) return null;
-  return { ...data, confirm: { ...data.confirm, [key]: true } };
+/** `data` with each of `keys` flagged, or null when every one already is. */
+function withFlags(data: UnifiedData, keys: string[]): UnifiedData | null {
+  if (keys.every(k => data.confirm[k] === true)) return null;
+  const confirm = { ...data.confirm };
+  for (const k of keys) confirm[k] = true;
+  return { ...data, confirm };
 }
 
 /** The entry keys of `store`, one per file, its unreadable entries included: their files are there. */

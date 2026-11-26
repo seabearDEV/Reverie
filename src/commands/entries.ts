@@ -464,6 +464,8 @@ export interface ConfirmSetResult {
   confirm: true;
   /** The key as given, when the flag is listed under another spelling. */
   typed?: string;
+  /** Every name the flag is listed under, when the two stores spell the entry differently (#255). */
+  listedAs?: string[];
   /**
    * The list, when it is not the one asked for: 'global' when the project's
    * was asked for and the entry is the global store's (#256); 'project' when
@@ -498,10 +500,11 @@ export function flagEntry(key: string, scope?: Scope): { message: string; warnin
   try {
     set = setConfirm(key, scope);
   } catch (err) {
-    // A store that cannot be written (a read-only directory or file): one
-    // line, not a stack trace. Nothing was written.
+    // A store the filesystem would not write (a read-only directory or file,
+    // a full disk): one line, not a stack trace. Nothing was written. An
+    // unreadable list and a held lock say so themselves.
     const code = !!err && typeof err === 'object' && 'code' in err ? err.code : undefined;
-    if (code !== 'EACCES' && code !== 'EPERM' && code !== 'EROFS') throw err;
+    if (typeof code !== 'string' || !/^E[A-Z0-9]+$/.test(code)) throw err;
     printError(`No flag was set on '${key}': the store cannot be written (${err instanceof Error ? err.message : String(err)}).`, 'IO');
     return undefined;
   }
@@ -520,17 +523,27 @@ export function flagEntry(key: string, scope?: Scope): { message: string; warnin
     : set.moved === 'opensGlobal'
       ? ' Here it opens the global store\'s entry (this project\'s is spelled another way), so its flag is in the global list and applies in every project.'
       : toGlobal ? ' Its flag is in the global list.' : '';
-  const warning = set.moved === 'globalUnwritable'
-    ? `The global store cannot be written, so the flag is in this project's list: it applies only in this project, and a global rename run from another project will not carry it. `
-      + `Once the global store can be written, \`${getBinaryName()} confirm set -G ${set.key}\` lists it there.`
-    : undefined;
+  const listedAs = [set.key, ...(set.also ?? [])];
+  const alsoListed = listedAs.length > 1
+    ? ` It is listed as ${listedAs.map(k => `'${k}'`).join(' and ')}: the project and the global store spell it differently, and each name gates where the other opens nothing.`
+    : '';
+  // The global list could not be used, so the flag stayed in the project's.
+  const why = set.moved === 'globalUnreadable'
+    ? `The global store's confirmation list cannot be read${set.detail ? ` (${set.detail})` : ''}`
+    : set.moved === 'globalUnwritable'
+      ? `The global store cannot be written${set.detail ? ` (${set.detail})` : ''}`
+      : undefined;
+  const warning = why === undefined ? undefined
+    : `${why}, so the flag is in this project's list: it applies only in this project, and a global rename run from another project will not carry it. `
+      + `Once ${set.moved === 'globalUnreadable' ? 'that file is repaired' : 'the global store can be written'}, \`${getBinaryName()} confirm set -G ${set.key}\` lists it there.`;
   return {
-    message: `${named} now requires confirmation to run.${where}`,
+    message: `${named} now requires confirmation to run.${where}${alsoListed}`,
     ...(warning ? { warning } : {}),
     result: {
       key: set.key, confirm: true,
       ...(set.key !== key ? { typed: key } : {}),
-      ...(toGlobal ? { list: 'global' as const } : set.moved === 'globalUnwritable' ? { list: 'project' as const } : {}),
+      ...(listedAs.length > 1 ? { listedAs } : {}),
+      ...(toGlobal ? { list: 'global' as const } : why !== undefined ? { list: 'project' as const } : {}),
     },
   };
 }

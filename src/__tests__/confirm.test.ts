@@ -50,6 +50,7 @@ vi.mock('../utils/entryIdentity', () => ({
 
 import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged, findProjectFile, updateUnderBothLocks, inspectBothStores } from '../store';
 import { StoreUnreadableError } from '../utils/unreadable';
+import { LockTimeoutError } from '../utils/fileLock';
 
 describe('Confirm Metadata', () => {
   const originalConsoleLog = console.log;
@@ -196,19 +197,49 @@ describe('Confirm Metadata', () => {
         expect(written).toEqual([{ scope: 'global', confirm: { 'ops.deploy': true } }]);
       });
 
-      it('the spelling of the store whose list is written, when the key names an entry there (review F2)', () => {
-        // The project holds `opſ.start`, which `ops.start` opens on APFS; the
-        // global store holds `ops.start` itself. The global list gets the
-        // global store's name — `opſ.start` there gates nothing on a
-        // case-sensitive volume.
-        const project = { keys: ['op\u017f.start'], folds: { 'ops.start': 'op\u017f.start' } };
-        stores(project, { keys: ['ops.start'] });
-        expect(setConfirm('ops.start', 'global')).toMatchObject({ key: 'ops.start', scope: 'global' });
-        expect(written).toEqual([{ scope: 'global', confirm: { 'ops.start': true } }]);
-        // And the project's list, the project's name.
-        stores(project, { keys: ['ops.start'] });
-        expect(setConfirm('ops.start')).toMatchObject({ key: 'op\u017f.start', scope: 'project' });
-        expect(written).toEqual([{ scope: 'project', confirm: { 'op\u017f.start': true } }]);
+      describe('the two stores spell the entry differently: every spelling is listed (review F2, N1)', () => {
+        // The project holds `opſ.start`, the global store `ops.start`: one
+        // file each, which APFS lets either name open. Where nothing folds
+        // (a case-sensitive volume, Linux) each name opens only its own, so a
+        // flag under one gates nothing of the other: both are listed, the
+        // written store's first.
+        const LONG = 'op\u017f.start';
+        const twins = () => stores(
+          { keys: [LONG], folds: { 'ops.start': LONG } },
+          { keys: ['ops.start'], folds: { [LONG]: 'ops.start' } },
+        );
+
+        it('-G with the global store\'s name (F2)', () => {
+          twins();
+          expect(setConfirm('ops.start', 'global')).toEqual({ key: 'ops.start', also: [LONG], scope: 'global' });
+          expect(written).toEqual([{ scope: 'global', confirm: { 'ops.start': true, [LONG]: true } }]);
+        });
+
+        it('-G with the project\'s name (N1)', () => {
+          twins();
+          expect(setConfirm(LONG, 'global')).toEqual({ key: 'ops.start', also: [LONG], scope: 'global' });
+          expect(written).toEqual([{ scope: 'global', confirm: { 'ops.start': true, [LONG]: true } }]);
+        });
+
+        it('without -G, the global store\'s name: the project list gets both (N1)', () => {
+          twins();
+          expect(setConfirm('ops.start')).toEqual({ key: LONG, also: ['ops.start'], scope: 'project' });
+          expect(written).toEqual([{ scope: 'project', confirm: { [LONG]: true, 'ops.start': true } }]);
+        });
+
+        it('one already listed: the other is added', () => {
+          stores(
+            { keys: [LONG], folds: { 'ops.start': LONG } },
+            { keys: ['ops.start'], folds: { [LONG]: 'ops.start' }, confirm: { 'ops.start': true } },
+          );
+          expect(setConfirm(LONG, 'global')).toEqual({ key: 'ops.start', also: [LONG], scope: 'global' });
+          expect(written).toEqual([{ scope: 'global', confirm: { 'ops.start': true, [LONG]: true } }]);
+        });
+
+        it('names that differ only by case are listed once', () => {
+          stores({ keys: ['ops.Deploy'], folds: { 'ops.deploy': 'ops.Deploy' } }, { keys: ['ops.deploy'] });
+          expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.Deploy', scope: 'project' });
+        });
       });
 
       it('another store\'s spelling only when the written one names no entry: -G on a project entry', () => {
@@ -249,10 +280,41 @@ describe('Confirm Metadata', () => {
         expect(written).toEqual([]);
       });
 
-      it('an unreadable global list is not a fallback: it stays a refusal', () => {
+      it('an unreadable global list, seen in the read: the project list, naming the file, nothing opened in the global store (N2)', () => {
+        const global: Side & { unreadableList?: boolean } = { keys: ['ops.deploy'] };
+        stores({ keys: [] }, global);
+        (inspectBothStores as Mock).mockImplementation((fn: Fn) => fn(view('project', { keys: [] }), {
+          ...view('global', global),
+          unreadable: [{ kind: 'confirm', path: '/mock/global/_confirm.json', reason: 'conflict' }],
+        }));
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'project', moved: 'globalUnreadable', detail: '/mock/global/_confirm.json' });
+        expect(writes).toEqual(['project']);
+        expect(written).toEqual([{ scope: 'project', confirm: { 'ops.deploy': true } }]);
+      });
+
+      it('an unreadable global list found by the write: the same (N2)', () => {
         const unreadable = new StoreUnreadableError([{ kind: 'confirm', path: '/mock/global/_confirm.json', reason: 'conflict' }], 'write');
         stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: unreadable });
-        expect(() => setConfirm('ops.deploy')).toThrow(StoreUnreadableError);
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'project', moved: 'globalUnreadable', detail: '/mock/global/_confirm.json' });
+        expect(written).toEqual([{ scope: 'project', confirm: { 'ops.deploy': true } }]);
+      });
+
+      it.each(['ENOSPC', 'EIO'])('any failure of the global write (%s): the project list, with the error (N2)', (code) => {
+        stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: errno(code) });
+        expect(setConfirm('ops.deploy')).toMatchObject({ key: 'ops.deploy', scope: 'project', moved: 'globalUnwritable', detail: expect.stringContaining(code) });
+        expect(written).toEqual([{ scope: 'project', confirm: { 'ops.deploy': true } }]);
+      });
+
+      it('a lock another process holds is not a fallback: it fails as any write does', () => {
+        stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: new LockTimeoutError('Unable to acquire lock') });
+        expect(() => setConfirm('ops.deploy')).toThrow(LockTimeoutError);
+        expect(written).toEqual([]);
+      });
+
+      it('with -G an unreadable global list still refuses', () => {
+        const unreadable = new StoreUnreadableError([{ kind: 'confirm', path: '/mock/global/_confirm.json', reason: 'conflict' }], 'write');
+        stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: unreadable });
+        expect(() => setConfirm('ops.deploy', 'global')).toThrow(StoreUnreadableError);
         expect(written).toEqual([]);
       });
 

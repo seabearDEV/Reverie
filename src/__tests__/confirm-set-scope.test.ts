@@ -332,11 +332,37 @@ describe('where a confirmation flag is listed (#255, #256, #257)', () => {
       expect(globalFlags()).toEqual(['g.other']);
     });
 
-    it('an unreadable global list is not a fallback: STORE_UNREADABLE, nothing written', () => {
-      expect(rvrIn('outside', 'set', '-G', 'ops.deploy', 'true').status).toBe(0);
-      fs.writeFileSync(path.join(globalStore(), '_confirm.json'), '{\n<<<<<<< ours\n=======\n>>>>>>> theirs\n}\n');
-      expect(json('confirm', 'set', 'ops.deploy').error?.code).toBe('STORE_UNREADABLE');
-      expect(projectFlags()).toEqual([]);
+    it('an unreadable global list: the project list, naming the file; still gated in the project once it is repaired (N2)', () => {
+      // Main wrote the project's list here. Refusing, as 0cbed3f did, left
+      // the entry ungated in the project once the list was repaired.
+      expect(rvrIn('outside', 'set', '-G', 'ops.deploy', touch('deploy')).status).toBe(0);
+      const list = path.join(globalStore(), '_confirm.json');
+      fs.writeFileSync(list, '{ <<<<<<< HEAD\n');
+      const r = rvr('confirm', 'set', 'ops.deploy');
+      noStack(r.stdout + r.stderr);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("The global store's confirmation list cannot be read (");
+      expect(r.stdout).toContain("so the flag is in this project's list: it applies only in this project");
+      expect(projectFlags()).toEqual(['ops.deploy']);
+      expect(fs.readFileSync(list, 'utf8')).toBe('{ <<<<<<< HEAD\n');
+      // In JSON: the list it is in, and the warning.
+      expect(rvr('confirm', 'remove', 'ops.deploy').status).toBe(0);
+      const env = json('confirm', 'set', 'ops.deploy');
+      expect(env.ok).toBe(true);
+      expect(env.result).toEqual({ key: 'ops.deploy', confirm: true, list: 'project' });
+      expect((env.warnings ?? []).map(w => w.message).join('\n')).toContain("The global store's confirmation list cannot be read");
+      // -G asked for the global list: refused, in one line.
+      const viaG = rvr('confirm', 'set', '-G', 'ops.deploy');
+      expect(viaG.status).toBe(1);
+      noStack(viaG.stdout + viaG.stderr);
+      expect(json('confirm', 'set', '-G', 'ops.deploy').error?.code).toBe('STORE_UNREADABLE');
+      // Repaired: still gated in the project.
+      fs.writeFileSync(list, '{}\n');
+      const run = rvr('run', 'ops.deploy');
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain(REFUSAL);
+      expect(json('run', 'ops.deploy').error?.code).toBe('REQUIRES_CONFIRMATION');
+      expect(ran('deploy')).toBe(false);
     });
 
     it('a project this process cannot write: a global-only entry is still flagged, in the global list', () => {
@@ -360,14 +386,38 @@ describe('where a confirmation flag is listed (#255, #256, #257)', () => {
       expect(ran('deploy')).toBe(false);
     });
 
-    it('-G lists the global store\'s spelling, though the project holds a fold of it (review F2)', () => {
-      // On APFS `ops.start` opens the project's `opſ.start`. The global list
-      // gets the name the global entry is stored as: the other gates nothing
-      // where nothing folds.
-      expect(rvrIn('outside', 'set', '-G', 'ops.start', 'echo G').status).toBe(0);
-      expect(rvr('set', `op${LONG_S}.start`, 'echo P').status).toBe(0);
-      expect(rvr('confirm', 'set', '-G', 'ops.start').status).toBe(0);
-      expect(globalFlags()).toEqual(['ops.start']);
+    describe('the two stores spell one entry differently: every spelling is listed (review F2, N1)', () => {
+      // `ops.start` in the global store, `opſ.start` in the project: on APFS
+      // either name opens either file; where nothing folds, each only its
+      // own, so a flag under one name gates nothing of the other.
+      const LONG = `op${LONG_S}.start`;
+      const twins = () => {
+        expect(rvrIn('outside', 'set', '-G', 'ops.start', 'echo G').status).toBe(0);
+        expect(rvr('set', LONG, 'echo P').status).toBe(0);
+        return opens(projectStore(), 'ops.start', LONG);
+      };
+
+      it.each([['the global store\'s name (F2)', 'ops.start'], ['the project\'s name (N1)', LONG]])('-G with %s', (_name, typed) => {
+        const folds = twins();
+        const r = rvr('confirm', 'set', '-G', typed);
+        expect(r.status).toBe(0);
+        // Where nothing folds the two are two entries, and the name typed is
+        // the one stored: listed as typed.
+        expect(globalFlags()).toEqual(folds ? ['ops.start', LONG] : [typed]);
+        if (folds) {
+          expect(r.stdout).toContain(`It is listed as 'ops.start' and '${LONG}'`);
+          expect(rvr('confirm', 'remove', '-G', 'ops.start').status).toBe(0);
+          expect(rvr('confirm', 'remove', '-G', LONG).status).toBe(0);
+          expect(json('confirm', 'set', '-G', typed).result).toMatchObject({ key: 'ops.start', listedAs: ['ops.start', LONG] });
+        }
+      });
+
+      it('without -G, the global store\'s name: the project list gets both (N1)', () => {
+        const folds = twins();
+        expect(rvr('confirm', 'set', 'ops.start').status).toBe(0);
+        expect(projectFlags()).toEqual(folds ? ['ops.start', LONG] : ['ops.start']);
+        expect(globalFlags()).toEqual(folds ? [] : ['ops.start']);
+      });
     });
   });
 
