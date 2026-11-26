@@ -184,3 +184,19 @@ export function flattenObject(obj: Record<string, unknown>, parentKey = '', maxD
   }, {} as Record<string, string>);
 }
 
+/**
+ * Remove `key` and every key under it (`key.*`) from a map keyed by flat
+ * dotted keys, in place — removing "server" also removes "server.ip". False
+ * when there was nothing to remove.
+ */
+export function removeFlatKeysUnder(flat: Record<string, unknown>, key: string): boolean {
+  const prefix = key + '.';
+  let removed = false;
+  for (const k of Object.keys(flat)) {
+    if (k === key || k.startsWith(prefix)) {
+      delete flat[k];
+      removed = true;
+    }
+  }
+  return removed;
+}

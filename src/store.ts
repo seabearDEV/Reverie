@@ -16,7 +16,7 @@ import {
 export { findProjectFile, clearProjectFileCache } from './utils/paths';
 import { saveJsonSorted } from './utils/saveJsonSorted';
 import { createDirectoryStore, migrateFileToDirectory } from './utils/directoryStore';
-import { flattenObject } from './utils/objectPath';
+import { flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 import { debug } from './utils/debug';
 import { registerUnreadableSource, type UnreadableFile } from './utils/unreadable';
 import { resolveScopeForWrite } from './projectResolution';
@@ -37,7 +37,19 @@ export type Scope = 'project' | 'global' | 'auto';
 
 export interface ScopedStore {
   load(): UnifiedData;
+  /**
+   * Replace the whole store with `data`. Only for a new state that does not
+   * depend on the current one (reset, import replace): anything another
+   * process wrote since `data` was computed is deleted. Otherwise update().
+   */
   save(data: UnifiedData): void;
+  /**
+   * Read-modify-write under the store lock (#254): `fn` gets the store as it
+   * stands under the lock and returns the state to write, or null to write
+   * nothing. Synchronous, and must not touch the store itself — the lock is
+   * not re-entrant.
+   */
+  update(fn: (current: UnifiedData) => UnifiedData | null): void;
   clear(): void;
   /**
    * Fast-path single-entry read. Reads exactly one entry file (no directory
@@ -214,10 +226,36 @@ export function loadEntries(scope?: Scope  ): CodexData {
   return resolveStore(scope).load().entries;
 }
 
+// ── Writes (#254) ───────────────────────────────────────────────────────
+// Every write is a read, a change and a write. The `update*` helpers do all
+// three under the store lock: the caller passes the change as a function of
+// the state it gets there, never a value computed from an earlier load —
+// another process may have written since, and a full save deletes whatever
+// is absent from the data it is given. The function must be synchronous and
+// must not read or write the store (the lock is not re-entrant).
+//
+// The `save*` helpers replace a section wholesale with a value that does not
+// depend on the current one: reset, import replace.
+
+/**
+ * Change one store's entries under its lock. `fn` mutates `entries` (the
+ * nested tree) and `meta` (updated-timestamps by flat key) in place; return
+ * false to write nothing.
+ */
+export function updateEntries(
+  fn: (entries: CodexData, meta: Record<string, number>) => boolean | void,
+  scope?: Scope,
+): void {
+  resolveStore(scope).update(current => {
+    const meta = { ...(current._meta ?? {}) };
+    if (fn(current.entries, meta) === false) return null;
+    return { ...current, _meta: meta };
+  });
+}
+
+/** Replace one store's entries wholesale. See "Writes" above. */
 export function saveEntries(data: CodexData, scope?: Scope  ): void {
-  const store = resolveStore(scope);
-  const current = store.load();
-  store.save({ ...current, entries: data });
+  resolveStore(scope).update(current => ({ ...current, entries: data }));
 }
 
 /** Fast-path leaf read. Returns undefined on miss; caller falls back to loadEntries. */
@@ -238,62 +276,100 @@ export function loadAliasMap(scope?: Scope  ): Record<string, string> {
   return resolveStore(scope).load().aliases;
 }
 
+/**
+ * Change one store's alias map under its lock: `fn` gets the map as it
+ * stands and returns the new one, or null to write nothing.
+ */
+export function updateAliasMap(
+  fn: (aliases: Record<string, string>) => Record<string, string> | null,
+  scope?: Scope,
+): void {
+  resolveStore(scope).update(current => {
+    const aliases = fn(current.aliases);
+    return aliases === null ? null : { ...current, aliases };
+  });
+}
+
+/** Replace one store's alias map wholesale. See "Writes" above. */
 export function saveAliasMap(data: Record<string, string>, scope?: Scope  ): void {
-  const store = resolveStore(scope);
-  const current = store.load();
-  store.save({ ...current, aliases: data });
+  updateAliasMap(() => data, scope);
 }
 
 export function loadConfirmMap(scope?: Scope  ): Record<string, true> {
   return resolveStore(scope).load().confirm;
 }
 
+/**
+ * Change one store's confirmation list under its lock: `fn` gets the list
+ * as it stands and returns the new one, or null to write nothing.
+ */
+export function updateConfirmMap(
+  fn: (confirm: Record<string, true>) => Record<string, true> | null,
+  scope?: Scope,
+): void {
+  resolveStore(scope).update(current => {
+    const confirm = fn(current.confirm);
+    return confirm === null ? null : { ...current, confirm };
+  });
+}
+
+/** Replace one store's confirmation list wholesale. See "Writes" above. */
 export function saveConfirmMap(data: Record<string, true>, scope?: Scope  ): void {
-  const store = resolveStore(scope);
-  const current = store.load();
-  store.save({ ...current, confirm: data });
+  updateConfirmMap(() => data, scope);
+}
+
+/** The sections an import writes. A section left undefined is not touched. */
+export interface StoreSections {
+  entries?: CodexData | undefined;
+  aliases?: Record<string, string> | undefined;
+  confirm?: Record<string, true> | undefined;
 }
 
 /**
- * Write one or more sections inside a single store.save cycle so multi-
- * section imports are atomic. Section keys left undefined preserve the
- * current on-disk value. Closes the torn-store window that existed when
- * callers ran saveEntries/saveAliasMap/saveConfirmMap sequentially — each
- * of those is its own load+save pair, leaving a tear between sections on
- * process death or disk error.
- *
- * See #77 for the failure modes this guards against.
+ * Write one or more sections inside a single store write so multi-section
+ * imports are atomic (#77): no tear between sections on process death or
+ * disk error. `fn` gets the store's sections as they stand under its lock —
+ * the merge base of a merge import (#254) — and returns the sections to
+ * write. Section keys left undefined preserve the current value.
  */
-export function saveAll(
-  sections: {
-    entries?: CodexData | undefined;
-    aliases?: Record<string, string> | undefined;
-    confirm?: Record<string, true> | undefined;
-  },
+export function updateAll(
+  fn: (current: { entries: CodexData; aliases: Record<string, string>; confirm: Record<string, true> }) => StoreSections,
   scope?: Scope,
 ): void {
   // Bulk transactional write (#77): import handlers + reset paths route here.
   const effectiveScope = resolveScopeForWrite(scope);
-  const store = resolveStore(effectiveScope);
-  const current = store.load();
+  resolveStore(effectiveScope).update(current => {
+    // Copies: a merge builds on what it is handed, and what is written for
+    // a section it leaves out — and the stamp below — is the store as it was.
+    const sections = fn({
+      entries: structuredClone(current.entries),
+      aliases: { ...current.aliases },
+      confirm: { ...current.confirm },
+    });
 
-  // Stamp _meta for new/changed leaves when entries are written. Without
-  // this, imported entries land bare and surface as [untracked]. Preserve
-  // the existing timestamp when the value is unchanged so --merge imports
-  // don't bump every untouched entry. See #87.
-  const nextMeta = sections.entries !== undefined
-    ? stampImportMeta(sections.entries, current.entries ?? {}, current._meta ?? {})
-    : undefined;
+    // Stamp _meta for new/changed leaves when entries are written. Without
+    // this, imported entries land bare and surface as [untracked]. Preserve
+    // the existing timestamp when the value is unchanged so --merge imports
+    // don't bump every untouched entry. See #87.
+    const nextMeta = sections.entries !== undefined
+      ? stampImportMeta(sections.entries, current.entries, current._meta ?? {})
+      : undefined;
 
-  store.save({
-    ...current,
-    ...(sections.entries !== undefined && {
-      entries: sections.entries,
-      _meta: nextMeta,
-    }),
-    ...(sections.aliases !== undefined && { aliases: sections.aliases }),
-    ...(sections.confirm !== undefined && { confirm: sections.confirm }),
+    return {
+      ...current,
+      ...(sections.entries !== undefined && {
+        entries: sections.entries,
+        _meta: nextMeta,
+      }),
+      ...(sections.aliases !== undefined && { aliases: sections.aliases }),
+      ...(sections.confirm !== undefined && { confirm: sections.confirm }),
+    };
   });
+}
+
+/** updateAll with sections that do not depend on the store (import replace). */
+export function saveAll(sections: StoreSections, scope?: Scope): void {
+  updateAll(() => sections, scope);
 }
 
 function stampImportMeta(
@@ -370,47 +446,11 @@ export function loadMeta(scope?: Scope  ): Record<string, number> {
 }
 
 export function touchMeta(key: string, scope?: Scope  ): void {
-  const store = resolveStore(scope);
-  const current = store.load();
-  const meta = { ...(current._meta ?? {}), [key]: Date.now() };
-  store.save({ ...current, _meta: meta });
+  updateEntries((_entries, meta) => { meta[key] = Date.now(); }, scope);
 }
 
 export function removeMeta(key: string, scope?: Scope  ): void {
-  const store = resolveStore(scope);
-  const current = store.load();
-  if (!current._meta) return;
-  const meta = { ...current._meta };
-  // Remove exact key and any children (e.g., removing "server" also removes "server.ip")
-  const prefix = key + '.';
-  for (const k of Object.keys(meta)) {
-    if (k === key || k.startsWith(prefix)) delete meta[k];
-  }
-  store.save({ ...current, _meta: meta });
-}
-
-/** Save entries and touch _meta[key] in a single write. */
-export function saveEntriesAndTouchMeta(data: CodexData, key: string, scope?: Scope  ): void {
-  const store = resolveStore(scope);
-  const current = store.load();
-  const meta = { ...(current._meta ?? {}), [key]: Date.now() };
-  store.save({ ...current, entries: data, _meta: meta });
-}
-
-/** Save entries and remove _meta keys (and children) in a single write. */
-export function saveEntriesAndRemoveMeta(data: CodexData, key: string, scope?: Scope  ): void {
-  const store = resolveStore(scope);
-  const current = store.load();
-  if (!current._meta) {
-    store.save({ ...current, entries: data });
-    return;
-  }
-  const meta = { ...current._meta };
-  const prefix = key + '.';
-  for (const k of Object.keys(meta)) {
-    if (k === key || k.startsWith(prefix)) delete meta[k];
-  }
-  store.save({ ...current, entries: data, _meta: meta });
+  updateEntries((_entries, meta) => removeFlatKeysUnder(meta, key), scope);
 }
 
 export function loadMetaMerged(): Record<string, number> {

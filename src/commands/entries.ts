@@ -6,13 +6,13 @@ import { loadData, handleError, getValue, getValueForWrite, setValue, removeValu
 import { flattenObject, setNestedValue } from '../utils/objectPath';
 import { assertKeysWritable, renameDestinationProblem, renamedLeaves } from '../utils/keyCollision';
 import { isValidEntryKey } from '../utils/directoryStore';
-import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
+import { findProjectFile, updateEntries, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
 import { displayTree } from '../formatting';
 import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
-import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, saveAliases, resolveKey, renameAlias } from '../alias';
+import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, updateAliases, resolveKey, renameAlias } from '../alias';
 import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey, moveConfirm, flagsGating, gatedAmong } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
@@ -1024,18 +1024,20 @@ export async function copyEntry(sourceKey: string, destKey: string, force = fals
       // Apply the project-resolution guard here too — this path bypasses
       // storage.ts setValue, so the guard would otherwise be skipped (#99).
       const effectiveScope = resolveScopeForWrite(scope);
-      const data = loadEntries(effectiveScope);
       // This path does not go through setValue, so it validates the
       // destination itself: setNestedValue drops an unsafe segment silently,
       // and the copy would report success having written nothing.
       if (!isValidEntryKey(destKey)) throw new Error(`Invalid store key: ${JSON.stringify(destKey)}`);
       const leaves = Object.entries(flattenObject({ [sourceKey]: value }))
         .map(([flatKey, flatVal]): [string, string] => [destKey + flatKey.slice(sourceKey.length), String(flatVal)]);
-      // #216 / #224: every destination leaf is checked against the store as
-      // it stands, before the first is set. A refusal saves nothing.
-      assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
-      for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
-      saveEntriesAndTouchMeta(data, destKey, effectiveScope);
+      // #254: under the store lock, against the store as it stands there.
+      updateEntries((entries, meta) => {
+        // #216 / #224: every destination leaf is checked against the store
+        // as it stands, before the first is set. A refusal saves nothing.
+        assertKeysWritable(entries, leaves.map(([leafKey]) => leafKey));
+        for (const [leafKey, leafValue] of leaves) setNestedValue(entries, leafKey, leafValue);
+        meta[destKey] = Date.now();
+      }, effectiveScope);
     }
 
     printSuccess(`Entry '${sourceKey}' copied to '${destKey}'.`);
@@ -1116,12 +1118,14 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
       // Apply the project-resolution guard here too — this path bypasses
       // storage.ts setValue, so the guard would otherwise be skipped (#99).
       const effectiveScope = resolveScopeForWrite(scope);
-      const data = loadEntries(effectiveScope);
       const leaves = Object.entries(flattenObject({ [oldKey]: value }))
         .map(([flatKey, flatVal]): [string, string] => [newKey + flatKey.slice(oldKey.length), String(flatVal)]);
-      assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
-      for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
-      saveEntriesAndTouchMeta(data, newKey, effectiveScope);
+      // #254: under the store lock, against the store as it stands there.
+      updateEntries((entries, meta) => {
+        assertKeysWritable(entries, leaves.map(([leafKey]) => leafKey));
+        for (const [leafKey, leafValue] of leaves) setNestedValue(entries, leafKey, leafValue);
+        meta[newKey] = Date.now();
+      }, effectiveScope);
     }
   } catch (error) {
     handleError('Failed to rename entry:', error);
@@ -1129,24 +1133,25 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   }
   removeValue(oldKey, scope);
 
-  // Update aliases: re-point any alias targeting oldKey (or children) to newKey
-  // Batch: mutate in-place and save once (instead of O(A*4) file I/O)
-  const aliases = loadAliases(scope);
+  // Update aliases: re-point any alias targeting oldKey (or children) to newKey.
+  // Batch: one write for all of them (instead of O(A*4) file I/O). Decided
+  // against the map as it stands under the store lock (#254).
   const oldPrefix = oldKey + '.';
-
-  // First pass: collect re-point updates (alias -> newTarget)
-  const updates: [string, string][] = [];
-  for (const [alias, target] of Object.entries(aliases)) {
-    if (target === oldKey) {
-      updates.push([alias, newKey]);
-    } else if (target.startsWith(oldPrefix)) {
-      updates.push([alias, newKey + target.slice(oldKey.length)]);
+  const repoint = (current: Record<string, string>): Record<string, string> | null => {
+    // First pass: collect re-point updates (alias -> newTarget)
+    const updates: [string, string][] = [];
+    for (const [alias, target] of Object.entries(current)) {
+      if (target === oldKey) {
+        updates.push([alias, newKey]);
+      } else if (target.startsWith(oldPrefix)) {
+        updates.push([alias, newKey + target.slice(oldKey.length)]);
+      }
     }
-  }
+    if (updates.length === 0) return null;
 
-  if (updates.length > 0) {
     // Enforce one-alias-per-entry: remove any existing alias already pointing
     // to one of the new targets before re-pointing (same rule as setAlias)
+    const aliases = { ...current };
     const newTargets = new Set(updates.map(([, t]) => t));
     for (const [alias, target] of Object.entries(aliases)) {
       if (newTargets.has(target)) {
@@ -1157,8 +1162,10 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     for (const [alias, newTarget] of updates) {
       aliases[alias] = newTarget;
     }
-    saveAliases(aliases, scope);
-  }
+    return aliases;
+  };
+  // Nothing points at the old key: nothing to write.
+  if (repoint(loadAliases(scope)) !== null) updateAliases(repoint, scope);
 
   // Confirm metadata: each gated entry that moved is flagged under its new
   // key. The old name keeps its flag — it may be what gates an entry of that

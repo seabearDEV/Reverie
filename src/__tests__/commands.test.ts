@@ -79,18 +79,36 @@ vi.mock('../store', () => {
     if (sections.aliases !== undefined) saveAliasMap(sections.aliases);
     if (sections.confirm !== undefined) saveConfirmMap(sections.confirm);
   });
+  // #254: the transactional forms, over this mock's own state and saves —
+  // what a change writes still shows up as a save* call.
+  const current = () => ({ entries: clone(storeState.entries), aliases: clone(storeState.aliases), confirm: clone(storeState.confirm) });
+  const updateEntries = vi.fn((fn: (e: CodexData, m: Record<string, number>) => boolean | void) => {
+    const entries = clone(storeState.entries);
+    if (fn(entries, {}) !== false) saveEntries(entries);
+  });
+  const updateAliasMap = vi.fn((fn: (a: Record<string, string>) => Record<string, string> | null) => {
+    const next = fn(clone(storeState.aliases));
+    if (next !== null) saveAliasMap(next);
+  });
+  const updateConfirmMap = vi.fn((fn: (c: Record<string, true>) => Record<string, true> | null) => {
+    const next = fn(clone(storeState.confirm));
+    if (next !== null) saveConfirmMap(next);
+  });
+  const updateAll = vi.fn((fn: (c: ReturnType<typeof current>) => Parameters<typeof saveAll>[0]) => { saveAll(fn(current())); });
   return {
     loadEntries:        vi.fn(()  => clone(storeState.entries)),
     saveEntries,
+    updateEntries,
     saveAll,
-    saveEntriesAndTouchMeta: vi.fn((d: CodexData) => { saveEntries(d); }),
-    saveEntriesAndRemoveMeta: vi.fn((d: CodexData) => { saveEntries(d); }),
+    updateAll,
     loadEntriesMerged:  vi.fn(()  => clone(storeState.entries)),
     loadAliasMap:       vi.fn(()  => clone(storeState.aliases)),
     saveAliasMap,
+    updateAliasMap,
     loadAliasMapMerged: vi.fn(()  => clone(storeState.aliases)),
     loadConfirmMap:       vi.fn(()  => clone(storeState.confirm)),
     saveConfirmMap,
+    updateConfirmMap,
     loadConfirmMapMerged: vi.fn(()  => clone(storeState.confirm)),
     clearStoreCaches:   vi.fn(),
     findProjectFile:    vi.fn(() => null),
@@ -111,7 +129,7 @@ vi.mock('../store', () => {
     // bun:test (#112): omitting these falls through to the REAL store
     // impls (live bindings preserve un-mocked exports), which write to
     // actual filesystem. Stubbing forces the slow path that the tests
-    // assert against (saveEntriesAndTouchMeta).
+    // assert against (updateEntries).
     setEntryFast: vi.fn(() => false),
     getEntryFast: vi.fn(() => undefined),
   };

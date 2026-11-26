@@ -26,7 +26,7 @@ import {
   loadConfirmMap, saveConfirmMap, loadEntriesMerged,
   loadAliasMapMerged, loadConfirmMapMerged,
   clearStoreCaches, loadMeta, touchMeta,
-  saveEntriesAndTouchMeta, saveEntriesAndRemoveMeta,
+  updateEntries, updateAliasMap, updateConfirmMap, updateAll,
   loadMetaMerged, getStalenessTag, STALE_DAYS, STALE_MS,
   saveAll,
 } from '../store';
@@ -356,22 +356,21 @@ describe('alias and confirm sections', () => {
 // ── Meta operations ──────────────────────────────────────────────────
 
 describe('meta operations', () => {
-  it('saveEntriesAndTouchMeta writes both in one save', () => {
+  it('updateEntries writes an entry and its timestamp in one save', () => {
     writeData({ entries: {}, aliases: {}, confirm: {} });
     clearStoreCaches();
 
-    saveEntriesAndTouchMeta({ foo: 'bar' }, 'foo', 'global');
+    updateEntries((entries, meta) => { entries.foo = 'bar'; meta.foo = Date.now(); }, 'global');
 
     const raw = readData();
     expect(raw.entries).toEqual({ foo: 'bar' });
     expect((raw._meta as Record<string, number>).foo).toBeGreaterThan(0);
   });
 
-  it('saveEntriesAndRemoveMeta removes key and children', () => {
+  it('updateEntries keeps the timestamps it does not change', () => {
     // v1.10.0: meta lives inside entry wrapper files, so there's no such
     // thing as "meta for a key that has no entry". Every meta key must have
-    // a corresponding leaf entry. Added `other` as a real leaf so its meta
-    // has a home.
+    // a corresponding leaf entry.
     writeData({
       entries: { srv: { ip: '1' }, other: 'val' },
       aliases: {},
@@ -380,8 +379,10 @@ describe('meta operations', () => {
     });
     clearStoreCaches();
 
-    // Keep `other` in the new entries state so its meta is preserved
-    saveEntriesAndRemoveMeta({ other: 'val' }, 'srv', 'global');
+    updateEntries((entries, meta) => {
+      delete entries.srv;
+      delete meta['srv.ip'];
+    }, 'global');
 
     const meta = loadMeta('global');
     expect(meta['srv']).toBeUndefined();
@@ -389,15 +390,50 @@ describe('meta operations', () => {
     expect(meta['other']).toBe(300);
   });
 
-  it('saveEntriesAndRemoveMeta is safe when no _meta exists', () => {
+  it('updateEntries writes nothing when the change returns false', () => {
     writeData({ entries: { a: 'b' }, aliases: {}, confirm: {} });
     clearStoreCaches();
 
-    saveEntriesAndRemoveMeta({ c: 'd' }, 'a', 'global');
+    updateEntries(entries => { entries.c = 'd'; return false; }, 'global');
 
-    const raw = readData();
-    expect(raw.entries).toEqual({ c: 'd' });
-    expect(raw._meta).toBeUndefined();
+    expect(readData().entries).toEqual({ a: 'b' });
+  });
+
+  it('updateEntries leaves the store as it was when the change throws', () => {
+    writeData({ entries: { a: 'b' }, aliases: {}, confirm: {} });
+    clearStoreCaches();
+
+    expect(() => updateEntries(entries => { entries.c = 'd'; throw new Error('refused'); }, 'global')).toThrow('refused');
+
+    expect(readData().entries).toEqual({ a: 'b' });
+    // The commit epoch is even again: readers are not left waiting on a writer.
+    const epoch = JSON.parse(fs.readFileSync(path.join(storeDir, '_epoch.json'), 'utf8')).epoch as number;
+    expect(epoch % 2).toBe(0);
+  });
+
+  it('updateAliasMap and updateConfirmMap change the map as it stands', () => {
+    writeData({ entries: {}, aliases: { a: 'x.a' }, confirm: { 'x.a': true } });
+    clearStoreCaches();
+
+    updateAliasMap(aliases => ({ ...aliases, b: 'x.b' }), 'global');
+    updateConfirmMap(confirm => ({ ...confirm, 'x.b': true }), 'global');
+    updateConfirmMap(() => null, 'global');
+
+    expect(loadAliasMap('global')).toEqual({ a: 'x.a', b: 'x.b' });
+    expect(loadConfirmMap('global')).toEqual({ 'x.a': true, 'x.b': true });
+  });
+
+  it('updateAll merges into the sections as they stand', () => {
+    writeData({ entries: { kept: '1' }, aliases: { k: 'kept' }, confirm: {} });
+    clearStoreCaches();
+
+    updateAll(current => ({
+      entries: { ...current.entries, added: '2' },
+      aliases: { ...current.aliases, a: 'added' },
+    }), 'global');
+
+    expect(loadEntries('global')).toEqual({ kept: '1', added: '2' });
+    expect(loadAliasMap('global')).toEqual({ k: 'kept', a: 'added' });
   });
 
   it('touchMeta updates timestamp for existing key', () => {

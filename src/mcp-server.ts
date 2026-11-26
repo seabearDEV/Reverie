@@ -19,6 +19,7 @@ import {
 import {
   loadAliases,
   saveAliases,
+  updateAliases,
   setAlias,
   removeAlias,
   resolveKey,
@@ -31,7 +32,7 @@ import {
   setProjectRootOverride,
 } from "./utils/paths";
 import { fileURLToPath } from "url";
-import { findProjectFile, loadEntries, saveEntriesAndTouchMeta, saveAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
+import { findProjectFile, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
 import { hasConfirm, gatedAmong, moveConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
@@ -718,12 +719,16 @@ server.tool(
         // #215: an unreadable map loads as empty — "not found" would be the
         // wrong answer about a file that could not be read.
         assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases']);
-        const aliases = loadAliases(scope);
-        if (!(key in aliases)) {
+        if (!(key in loadAliases(scope))) {
           return errorResponse(`Alias '${key}' not found.`, 'NOT_FOUND');
         }
-        delete aliases[key];
-        saveAliases(aliases, scope);
+        // #254: removed from the map as it stands under the store lock.
+        updateAliases(aliases => {
+          if (!(key in aliases)) return null;
+          const next = { ...aliases };
+          delete next[key];
+          return next;
+        }, scope);
         return textResponse(`Alias removed: ${key}`);
       }
 
@@ -788,18 +793,21 @@ server.tool(
         // path bypasses storage.ts setValue, so #99's refusal would
         // otherwise be missed.
         const writeScope = resolveScopeForWrite(scope);
-        const data = loadEntries(writeScope);
         // This path does not go through setValue: validate the destination
         // here, or an unsafe segment is dropped silently and the copy
         // reports success having written nothing.
         if (!isValidEntryKey(dest)) return errorResponse(`Invalid key: ${JSON.stringify(dest)}`);
         const leaves = Object.entries(flattenObject({ [resolvedSource]: value }))
           .map(([flatKey, flatVal]): [string, string] => [dest + flatKey.slice(resolvedSource.length), String(flatVal)]);
-        // #216 / #224: every destination leaf is checked against the store
-        // as it stands, before the first is set. A refusal saves nothing.
-        assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
-        for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
-        saveEntriesAndTouchMeta(data, dest, writeScope);
+        // #254: under the store lock, against the store as it stands there.
+        updateEntries((entries, meta) => {
+          // #216 / #224: every destination leaf is checked against the
+          // store as it stands, before the first is set. A refusal saves
+          // nothing.
+          assertKeysWritable(entries, leaves.map(([leafKey]) => leafKey));
+          for (const [leafKey, leafValue] of leaves) setNestedValue(entries, leafKey, leafValue);
+          meta[dest] = Date.now();
+        }, writeScope);
       }
 
       return textResponse(`Copied: ${resolvedSource} -> ${dest}`);
@@ -879,31 +887,35 @@ server.tool(
         // Batch: load once, set all leaves, save once. Pre-resolve the
         // scope so the project-resolution guard fires here too (#99).
         const writeScope = resolveScopeForWrite(scope);
-        const data = loadEntries(writeScope);
         const leaves = Object.entries(flattenObject({ [resolvedOld]: value }))
           .map(([flatKey, flatVal]): [string, string] => [newKey + flatKey.slice(resolvedOld.length), String(flatVal)]);
-        // #216 / #224: checked against the store as it stands, before the
-        // first leaf is set. A refusal saves nothing and the source stays.
-        assertKeysWritable(data, leaves.map(([leafKey]) => leafKey));
-        for (const [leafKey, leafValue] of leaves) setNestedValue(data, leafKey, leafValue);
-        saveEntriesAndTouchMeta(data, newKey, writeScope);
+        // #254: under the store lock, against the store as it stands there.
+        updateEntries((entries, meta) => {
+          // #216 / #224: checked against the store as it stands, before the
+          // first leaf is set. A refusal saves nothing and the source stays.
+          assertKeysWritable(entries, leaves.map(([leafKey]) => leafKey));
+          for (const [leafKey, leafValue] of leaves) setNestedValue(entries, leafKey, leafValue);
+          meta[newKey] = Date.now();
+        }, writeScope);
       }
       removeValue(resolvedOld, scope);
 
-      // Update aliases: re-point any alias targeting oldKey (or children) to newKey
-      const aliases = loadAliases(scope);
+      // Update aliases: re-point any alias targeting oldKey (or children) to
+      // newKey. Decided against the map as it stands under the store lock (#254).
       const oldPrefix = resolvedOld + '.';
-      const updates: [string, string][] = [];
-      for (const [a, target] of Object.entries(aliases)) {
-        if (target === resolvedOld) {
-          updates.push([a, newKey]);
-        } else if (target.startsWith(oldPrefix)) {
-          updates.push([a, newKey + target.slice(resolvedOld.length)]);
+      const repoint = (current: Record<string, string>): Record<string, string> | null => {
+        const updates: [string, string][] = [];
+        for (const [a, target] of Object.entries(current)) {
+          if (target === resolvedOld) {
+            updates.push([a, newKey]);
+          } else if (target.startsWith(oldPrefix)) {
+            updates.push([a, newKey + target.slice(resolvedOld.length)]);
+          }
         }
-      }
+        if (updates.length === 0) return null;
 
-      if (updates.length > 0) {
         // Enforce one-alias-per-entry: remove any existing alias already pointing to a new target
+        const aliases = { ...current };
         const newTargets = new Set(updates.map(([, t]) => t));
         for (const [a, target] of Object.entries(aliases)) {
           if (newTargets.has(target)) {
@@ -913,8 +925,10 @@ server.tool(
         for (const [a, newTarget] of updates) {
           aliases[a] = newTarget;
         }
-        saveAliases(aliases, scope);
-      }
+        return aliases;
+      };
+      // Nothing points at the old key: nothing to write.
+      if (repoint(loadAliases(scope)) !== null) updateAliases(repoint, scope);
 
       // Confirm metadata: each gated entry that moved is flagged under its
       // new key. The old name keeps its flag — it may be what gates an entry
@@ -1509,9 +1523,9 @@ server.tool(
       }
 
       // Compute each section's final value (shared #133 contract: omitted
-      // sections are never touched, including type:'all' replace), then
-      // commit all sections in a single saveAll cycle.
-      const next = computeImportSections(
+      // sections are never touched, including type:'all' replace), and
+      // commit all sections in a single store write.
+      updateAll(current => computeImportSections(
         {
           entries: entriesSection,
           aliases: aliasesSection as Record<string, string> | undefined,
@@ -1522,14 +1536,13 @@ server.tool(
           // The merge base is the one store the import writes to, not the
           // default view that layers the project over the global store:
           // that view copied every global entry, alias and confirm flag into
-          // the project on each merge.
-          entries: () => loadData(getEffectiveScope(scope)),
-          aliases: () => loadAliases(getEffectiveScope(scope)),
-          confirm: () => loadConfirmKeys(getEffectiveScope(scope)),
+          // the project on each merge. Read under that store's lock (#254):
+          // a base loaded earlier drops whatever was written since.
+          entries: () => current.entries,
+          aliases: () => current.aliases,
+          confirm: () => current.confirm,
         },
-      );
-
-      saveAll(next, scope);
+      ), scope);
 
       const warningPrefix = envelopeWarnings.length > 0 ? envelopeWarnings.map(w => `⚠ ${w}\n`).join('') : '';
       return textResponse(

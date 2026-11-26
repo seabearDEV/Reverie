@@ -9,9 +9,17 @@ import {
 
 vi.mock('../store', () => {
   let aliases: Record<string, string> = {};
+  const loadAliasMap = vi.fn(() => ({ ...aliases }));
+  const saveAliasMap = vi.fn((data: Record<string, string>) => { aliases = { ...data }; });
   return {
-    loadAliasMap: vi.fn(() => ({ ...aliases })),
-    saveAliasMap: vi.fn((data: Record<string, string>) => { aliases = { ...data }; }),
+    loadAliasMap,
+    saveAliasMap,
+    // #254: the transactional form, over this mock's own load and save — so
+    // what a change writes still shows up as a saveAliasMap call.
+    updateAliasMap: vi.fn((fn: (a: Record<string, string>) => Record<string, string> | null, scope?: string) => {
+      const next = fn(loadAliasMap(scope));
+      if (next !== null) saveAliasMap(next, scope);
+    }),
     loadAliasMapMerged: vi.fn(() => ({ ...aliases })),
     clearStoreCaches: vi.fn(() => { aliases = {}; }),
     findProjectFile: vi.fn(() => null),

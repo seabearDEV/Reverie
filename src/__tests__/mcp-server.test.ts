@@ -139,6 +139,13 @@ vi.mock('../alias', () => ({
     Object.keys(mockAliases).forEach(k => delete mockAliases[k]);
     Object.assign(mockAliases, a);
   }),
+  // #254: the transactional form, applied to this mock's map.
+  updateAliases: vi.fn((fn: (a: Record<string, string>) => Record<string, string> | null) => {
+    const next = fn({ ...mockAliases });
+    if (next === null) return;
+    Object.keys(mockAliases).forEach(k => delete mockAliases[k]);
+    Object.assign(mockAliases, next);
+  }),
   setAlias: vi.fn((alias: string, path: string) => {
     // Enforce one alias per entry
     for (const [existing, target] of Object.entries(mockAliases)) {
@@ -196,16 +203,8 @@ vi.mock('../utils/paths', () => ({
   clearProjectFileCache: vi.fn(),
 }));
 
-vi.mock('../store', () => ({
-  findProjectFile: vi.fn(() => null),
-  clearProjectFileCache: vi.fn(),
-  clearStoreCaches: vi.fn(),
-  loadEntries: vi.fn(() => ({ ...mockData })),
-  saveEntries: vi.fn((d: any) => {
-    Object.keys(mockData).forEach(k => delete mockData[k]);
-    Object.assign(mockData, d);
-  }),
-  saveAll: vi.fn((sections: { entries?: any; aliases?: any; confirm?: any }) => {
+vi.mock('../store', () => {
+  const saveAll = vi.fn((sections: { entries?: any; aliases?: any; confirm?: any }) => {
     if (sections.entries !== undefined) {
       Object.keys(mockData).forEach(k => delete mockData[k]);
       Object.assign(mockData, sections.entries);
@@ -218,33 +217,46 @@ vi.mock('../store', () => ({
       Object.keys(mockConfirmKeys).forEach(k => delete mockConfirmKeys[k]);
       Object.assign(mockConfirmKeys, sections.confirm);
     }
-  }),
-  saveEntriesAndTouchMeta: vi.fn((d: any, key: string) => {
-    Object.keys(mockData).forEach(k => delete mockData[k]);
-    Object.assign(mockData, d);
-    mockMetaData[key] = Date.now();
-  }),
-  saveEntriesAndRemoveMeta: vi.fn((d: any, key: string) => {
-    Object.keys(mockData).forEach(k => delete mockData[k]);
-    Object.assign(mockData, d);
-    const prefix = key + '.';
-    for (const k of Object.keys(mockMetaData)) {
-      if (k === key || k.startsWith(prefix)) delete mockMetaData[k];
-    }
-  }),
-  touchMeta: vi.fn(),
-  removeMeta: vi.fn(),
-  loadMeta: vi.fn(() => ({ ...mockMetaData })),
-  loadMetaMerged: vi.fn(() => ({ ...mockMetaData })),
-  STALE_DAYS: 30,
-  STALE_MS: 30 * 86400000,
-  getStalenessTag: vi.fn((key: string, meta: Record<string, number>) => {
-    const ts = meta[key];
-    if (ts === undefined) return ' [untracked]';
-    if (ts < Date.now() - 30 * 86400000) return ` [${Math.floor((Date.now() - ts) / 86400000)}d]`;
-    return '';
-  }),
-}));
+  });
+  return {
+    findProjectFile: vi.fn(() => null),
+    clearProjectFileCache: vi.fn(),
+    clearStoreCaches: vi.fn(),
+    loadEntries: vi.fn(() => ({ ...mockData })),
+    saveEntries: vi.fn((d: any) => {
+      Object.keys(mockData).forEach(k => delete mockData[k]);
+      Object.assign(mockData, d);
+    }),
+    touchMeta: vi.fn(),
+    removeMeta: vi.fn(),
+    loadMeta: vi.fn(() => ({ ...mockMetaData })),
+    loadMetaMerged: vi.fn(() => ({ ...mockMetaData })),
+    STALE_DAYS: 30,
+    STALE_MS: 30 * 86400000,
+    getStalenessTag: vi.fn((key: string, meta: Record<string, number>) => {
+      const ts = meta[key];
+      if (ts === undefined) return ' [untracked]';
+      if (ts < Date.now() - 30 * 86400000) return ` [${Math.floor((Date.now() - ts) / 86400000)}d]`;
+      return '';
+    }),
+    // #254: a change is a function of the store as it stands; applied here
+    // to this mock's entries and meta.
+    updateEntries: vi.fn((fn: (e: any, m: Record<string, number>) => boolean | void) => {
+      const entries = structuredClone(mockData);
+      const meta = { ...mockMetaData };
+      if (fn(entries, meta) === false) return;
+      Object.keys(mockData).forEach(k => delete mockData[k]);
+      Object.assign(mockData, entries);
+      Object.keys(mockMetaData).forEach(k => delete mockMetaData[k]);
+      Object.assign(mockMetaData, meta);
+    }),
+    saveAll,
+    // The import's change over this mock's state, written through saveAll.
+    updateAll: vi.fn((fn: (c: { entries: any; aliases: Record<string, string>; confirm: Record<string, true> }) => any) => {
+      saveAll(fn({ entries: structuredClone(mockData), aliases: { ...mockAliases }, confirm: { ...mockConfirmKeys } }));
+    }),
+  };
+});
 
 vi.mock('../formatting', () => ({
   formatTree: vi.fn(() => 'tree-output'),

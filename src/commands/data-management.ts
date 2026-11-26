@@ -11,7 +11,7 @@ import { computeImportSections } from '../utils/importSections';
 import { maskEncryptedValues } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { createAutoBackup } from '../utils/autoBackup';
-import { findProjectFile, clearProjectFileCache, saveAll, getEffectiveScope } from '../store';
+import { findProjectFile, clearProjectFileCache, updateAll, getEffectiveScope } from '../store';
 import { wrapExport, tryUnwrapImport } from '../utils/envelope';
 import { version as pkgVersion } from '../../package.json';
 import { getConfigSetting } from '../config';
@@ -347,10 +347,10 @@ export async function importData(type: string, file: string, options: ImportOpti
 
     // Compute the final per-section payloads (shared #133 contract: omitted
     // sections are never touched), then commit them together in a single
-    // saveAll call. Closes the cross-section tear window: even with process
+    // store write. Closes the cross-section tear window: even with process
     // death or disk error mid-apply, the store never ends up with new
     // entries and stale aliases / confirm (or vice versa).
-    const next = computeImportSections(
+    updateAll(current => computeImportSections(
       {
         entries: entriesSection,
         aliases: aliasesSection as Record<string, string> | undefined,
@@ -363,14 +363,13 @@ export async function importData(type: string, file: string, options: ImportOpti
         // layered over the global store, so every merge copied the global
         // entries, aliases and confirm flags into the project — and where a
         // global key differed from a project key only by case, replaced the
-        // project's value with the global one.
-        entries: () => loadData(getEffectiveScope(scope)),
-        aliases: () => loadAliases(getEffectiveScope(scope)),
-        confirm: () => loadConfirmKeys(getEffectiveScope(scope)),
+        // project's value with the global one. Read under that store's lock
+        // (#254): a base loaded earlier drops whatever was written since.
+        entries: () => current.entries,
+        aliases: () => current.aliases,
+        confirm: () => current.confirm,
       },
-    );
-
-    saveAll(next, scope);
+    ), scope);
 
     if (entriesSection) printSuccess(`Entries ${options.merge ? 'merged' : 'imported'} successfully`);
     if (aliasesSection) printSuccess(`Aliases ${options.merge ? 'merged' : 'imported'} successfully`);

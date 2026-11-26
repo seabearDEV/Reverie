@@ -131,6 +131,13 @@ vi.mock('../alias', () => ({
     Object.keys(mockAliases).forEach(k => delete mockAliases[k]);
     Object.assign(mockAliases, a);
   }),
+  // #254: the transactional form, applied to this mock's map.
+  updateAliases: vi.fn((fn: (a: Record<string, string>) => Record<string, string> | null) => {
+    const next = fn({ ...mockAliases });
+    if (next === null) return;
+    Object.keys(mockAliases).forEach(k => delete mockAliases[k]);
+    Object.assign(mockAliases, next);
+  }),
   setAlias: vi.fn((alias: string, path: string) => {
     for (const [existing, target] of Object.entries(mockAliases)) {
       if (target === path && existing !== alias) delete mockAliases[existing];
@@ -188,57 +195,62 @@ vi.mock('../utils/paths', () => ({
   getProjectRootOverride: vi.fn(() => null),
 }));
 
-vi.mock('../store', () => ({
-  findProjectFile: vi.fn(() => null),
-  // Mirrors the real resolution with this mock's findProjectFile (always
-  // null), so auto resolves to global.
-  getEffectiveScope: vi.fn((scope?: string) => (scope === 'project' ? 'project' : 'global')),
-  clearProjectFileCache: vi.fn(),
-  clearStoreCaches: vi.fn(),
-  loadEntries: vi.fn(() => ({ ...mockData })),
-  saveEntries: vi.fn((d: any) => {
-    Object.keys(mockData).forEach(k => delete mockData[k]);
-    Object.assign(mockData, d);
-  }),
-  saveEntriesAndTouchMeta: vi.fn((d: any, key: string) => {
-    Object.keys(mockData).forEach(k => delete mockData[k]);
-    Object.assign(mockData, d);
-    mockMetaData[key] = Date.now();
-  }),
-  saveEntriesAndRemoveMeta: vi.fn((d: any, key: string) => {
-    Object.keys(mockData).forEach(k => delete mockData[k]);
-    Object.assign(mockData, d);
-    const prefix = key + '.';
-    for (const k of Object.keys(mockMetaData)) {
-      if (k === key || k.startsWith(prefix)) delete mockMetaData[k];
-    }
-  }),
-  touchMeta: vi.fn(),
-  removeMeta: vi.fn(),
-  loadMeta: vi.fn(() => ({ ...mockMetaData })),
-  loadMetaMerged: vi.fn(() => ({ ...mockMetaData })),
-  STALE_DAYS: 30,
-  STALE_MS: 30 * 86400000,
-  getStalenessTag: vi.fn((key: string, meta: Record<string, number>) => {
-    const ts = meta[key];
-    if (ts === undefined) return ' [untracked]';
-    if (ts < Date.now() - 30 * 86400000) return ` [${Math.floor((Date.now() - ts) / 86400000)}d]`;
-    return '';
-  }),
-  // bun:test (#112): bun checks every named import strictly. Add no-op
-  // stubs for store exports the SUT transitively imports but this test
-  // doesn't otherwise stub.
-  loadAliasMap: vi.fn(() => ({ ...mockAliases })),
-  saveAliasMap: vi.fn((d: any) => { Object.keys(mockAliases).forEach(k => delete mockAliases[k]); Object.assign(mockAliases, d); }),
-  loadConfirmMap: vi.fn(() => ({ ...mockConfirmKeys })),
-  saveConfirmMap: vi.fn((d: any) => { Object.keys(mockConfirmKeys).forEach(k => delete mockConfirmKeys[k]); Object.assign(mockConfirmKeys, d); }),
-  loadEntriesMerged: vi.fn(() => ({ ...mockData })),
-  loadAliasMapMerged: vi.fn(() => ({ ...mockAliases })),
-  loadConfirmMapMerged: vi.fn(() => ({ ...mockConfirmKeys })),
-  saveAll: vi.fn(),
-  getEntryFast: vi.fn(),
-  setEntryFast: vi.fn(() => false),
-}));
+vi.mock('../store', () => {
+  const saveAll = vi.fn();
+  return {
+    findProjectFile: vi.fn(() => null),
+    // Mirrors the real resolution with this mock's findProjectFile (always
+    // null), so auto resolves to global.
+    getEffectiveScope: vi.fn((scope?: string) => (scope === 'project' ? 'project' : 'global')),
+    clearProjectFileCache: vi.fn(),
+    clearStoreCaches: vi.fn(),
+    loadEntries: vi.fn(() => ({ ...mockData })),
+    saveEntries: vi.fn((d: any) => {
+      Object.keys(mockData).forEach(k => delete mockData[k]);
+      Object.assign(mockData, d);
+    }),
+    touchMeta: vi.fn(),
+    removeMeta: vi.fn(),
+    loadMeta: vi.fn(() => ({ ...mockMetaData })),
+    loadMetaMerged: vi.fn(() => ({ ...mockMetaData })),
+    STALE_DAYS: 30,
+    STALE_MS: 30 * 86400000,
+    getStalenessTag: vi.fn((key: string, meta: Record<string, number>) => {
+      const ts = meta[key];
+      if (ts === undefined) return ' [untracked]';
+      if (ts < Date.now() - 30 * 86400000) return ` [${Math.floor((Date.now() - ts) / 86400000)}d]`;
+      return '';
+    }),
+    // bun:test (#112): bun checks every named import strictly. Add no-op
+    // stubs for store exports the SUT transitively imports but this test
+    // doesn't otherwise stub.
+    loadAliasMap: vi.fn(() => ({ ...mockAliases })),
+    saveAliasMap: vi.fn((d: any) => { Object.keys(mockAliases).forEach(k => delete mockAliases[k]); Object.assign(mockAliases, d); }),
+    loadConfirmMap: vi.fn(() => ({ ...mockConfirmKeys })),
+    saveConfirmMap: vi.fn((d: any) => { Object.keys(mockConfirmKeys).forEach(k => delete mockConfirmKeys[k]); Object.assign(mockConfirmKeys, d); }),
+    loadEntriesMerged: vi.fn(() => ({ ...mockData })),
+    loadAliasMapMerged: vi.fn(() => ({ ...mockAliases })),
+    loadConfirmMapMerged: vi.fn(() => ({ ...mockConfirmKeys })),
+    getEntryFast: vi.fn(),
+    setEntryFast: vi.fn(() => false),
+    // #254: a change is a function of the store as it stands; applied here
+    // to this mock's entries and meta.
+    updateEntries: vi.fn((fn: (e: any, m: Record<string, number>) => boolean | void) => {
+      const entries = structuredClone(mockData);
+      const meta = { ...mockMetaData };
+      if (fn(entries, meta) === false) return;
+      Object.keys(mockData).forEach(k => delete mockData[k]);
+      Object.assign(mockData, entries);
+      Object.keys(mockMetaData).forEach(k => delete mockMetaData[k]);
+      Object.assign(mockMetaData, meta);
+    }),
+    saveAll,
+    // The import's change over this mock's state, written through saveAll.
+    updateAll: vi.fn((fn: (c: { entries: any; aliases: Record<string, string>; confirm: Record<string, true> }) => any) => {
+      saveAll(fn({ entries: structuredClone(mockData), aliases: { ...mockAliases }, confirm: { ...mockConfirmKeys } }));
+    }),
+  };
+});
 
 vi.mock('../formatting', () => {
   // bun:test (#112): include every named export the SUT or its transitive

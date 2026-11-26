@@ -13,9 +13,17 @@ import { keysOpeningSameEntry, entriesOpenedBy } from '../utils/entryIdentity';
 
 vi.mock('../store', () => {
   let confirmKeys: Record<string, true> = {};
+  const loadConfirmMap = vi.fn(() => ({ ...confirmKeys }));
+  const saveConfirmMap = vi.fn((data: Record<string, true>) => { confirmKeys = { ...data }; });
   return {
-    loadConfirmMap: vi.fn(() => ({ ...confirmKeys })),
-    saveConfirmMap: vi.fn((data: Record<string, true>) => { confirmKeys = { ...data }; }),
+    loadConfirmMap,
+    saveConfirmMap,
+    // #254: the transactional form, over this mock's own load and save — so
+    // what a change writes still shows up as a saveConfirmMap call.
+    updateConfirmMap: vi.fn((fn: (c: Record<string, true>) => Record<string, true> | null, scope?: string) => {
+      const next = fn(loadConfirmMap(scope));
+      if (next !== null) saveConfirmMap(next, scope);
+    }),
     loadConfirmMapMerged: vi.fn(() => ({ ...confirmKeys })),
     clearStoreCaches: vi.fn(() => { confirmKeys = {}; }),
     findProjectFile: vi.fn(() => null),
