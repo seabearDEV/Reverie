@@ -175,6 +175,7 @@ vi.mock('../confirm', () => ({
     Object.assign(mockConfirmKeys, c);
   }),
   removeConfirmForKey: vi.fn(),
+  flagsListedUnder: vi.fn(() => []),
 }));
 
 vi.mock('../utils/paths', () => ({

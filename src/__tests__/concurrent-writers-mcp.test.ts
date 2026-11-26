@@ -73,7 +73,8 @@ describe('#254 over MCP: a write by another process survives', () => {
     for (const k of bKeys) expect(survived(d, k)).toBe(true);
     expect(entryKeys(d)).not.toContain('a.x');
     expect(d.aliases.ax).toBeUndefined();
-    expect(d.confirm['a.x']).toBeUndefined();
+    // #244: a removal leaves the removed key's flag listed.
+    expect(d.confirm['a.x']).toBe(true);
   });
 
   it('reverie_import with merge keeps the entries set meanwhile', async () => {

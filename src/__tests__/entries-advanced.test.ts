@@ -4,7 +4,7 @@
  * Covers: encrypted values, --confirm flow, batch set, --force,
  * rename with alias re-pointing, copy subtrees, edge cases.
  */
-import { execSync, execFileSync } from 'child_process';
+import { execSync, execFileSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -238,11 +238,16 @@ describe('entries advanced', () => {
       expect(data.aliases.rc).toBeUndefined();
     });
 
-    it('remove deletes confirm metadata', () => {
+    // #244: a flag gates its name in every project, so a removal leaves it
+    // listed (as a rename does) and says so; `confirm remove` clears it.
+    it('remove keeps the confirmation flag and says so (#244)', () => {
       run('set --force rm.conf "cmd" --confirm');
-      run('remove rm.conf --force');
-      const data = readData();
-      expect(data.confirm['rm.conf']).toBeUndefined();
+      const r = spawnSync('bun', ['dist/index.js', 'remove', 'rm.conf', '--force', '--global'], {
+        env: { ...process.env, RVR_DATA_DIR: tmpDir, RVR_NO_PROJECT: '1' }, input: '',
+      });
+      expect(r.status).toBe(0);
+      expect(r.stderr.toString() + r.stdout.toString()).toContain("listed under 'rm.conf' stays");
+      expect(readData().confirm['rm.conf']).toBe(true);
     });
   });
 

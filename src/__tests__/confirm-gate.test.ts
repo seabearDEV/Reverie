@@ -718,4 +718,28 @@ describe('the confirmation gate follows the entry', () => {
       expect(ran('global')).toBe(false);
     }, SLOW_TEST_MS);
   });
+
+  // #244: a flag gates its name in every project. Removing the global entry
+  // took the global list's flag with it, and another project's own entry of
+  // that name — gated by that flag — then ran unasked.
+  describe('a removal leaves the flags listed (#244)', () => {
+    it("rm -G of a flagged global entry leaves another project's entry of that name gated", () => {
+      expect(rvr('set', '-G', 'shared.deploy', 'true', '--confirm').status).toBe(0);
+      expect(rvr('set', 'shared.deploy', touch('shared')).status).toBe(0);
+      expect(json('run', 'shared.deploy').error?.code).toBe('REQUIRES_CONFIRMATION');
+      const r = rvr('rm', '-G', 'shared.deploy', '-f');
+      expect(r.status).toBe(0);
+      expect(r.stderr + r.stdout).toContain("listed under 'shared.deploy' stays");
+      expect(globalFlags()).toContain('shared.deploy');
+      expect(json('run', 'shared.deploy').error?.code).toBe('REQUIRES_CONFIRMATION');
+      expect(ran('shared')).toBe(false);
+    }, SLOW_TEST_MS);
+
+    it('rm of a namespace leaves its entries’ flags listed, and confirm remove clears one', () => {
+      expect(rvr('rm', 'commands', '-f').status).toBe(0);
+      expect(projectFlags()).toEqual(['commands.deploy']);
+      expect(rvr('confirm', 'remove', 'commands.deploy').status).toBe(0);
+      expect(projectFlags()).toEqual([]);
+    }, SLOW_TEST_MS);
+  });
 });
