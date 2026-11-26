@@ -409,12 +409,24 @@ export function loadAliasMapMerged(): Record<string, string> {
   return { ...global.load().aliases, ...project.load().aliases };
 }
 
+/**
+ * Every flag in either list (#241). A list rvr writes holds only `true`, but
+ * a project's `_confirm.json` arrives with the repository, and a hand-written
+ * one can hold anything: spread over the global list, a project `false` or
+ * `null` replaced the global `true`, and the user's flag stopped gating that
+ * key inside the clone. Only `true` is taken from each list, so nothing in
+ * one can turn the other's flag off (owner rule, 2026-11-25). No prototype:
+ * a key such as `constructor` must not read as present.
+ */
 export function loadConfirmMapMerged(): Record<string, true> {
+  const merged = Object.create(null) as Record<string, true>;
+  const take = (list: Record<string, unknown>) => {
+    for (const [key, flag] of Object.entries(list)) if (flag === true) merged[key] = true;
+  };
+  take(getGlobalStore().load().confirm);
   const project = getProjectStore();
-  const global = getGlobalStore();
-  if (!project) return global.load().confirm;
-
-  return { ...global.load().confirm, ...project.load().confirm };
+  if (project) take(project.load().confirm);
+  return merged;
 }
 
 // ── Unreadable files (#215) ─────────────────────────────────────────────
