@@ -4,6 +4,8 @@ vi.mock('../store', () => ({
   loadEntries: vi.fn(() => ({})),
   saveEntries: vi.fn(),
   updateEntries: vi.fn(),
+  // #268: stubbed so nothing here can reach the real store through it.
+  updateStore: vi.fn(),
   loadEntriesMerged: vi.fn(() => ({})),
   clearStoreCaches: vi.fn(),
   findProjectFile: vi.fn(() => null),

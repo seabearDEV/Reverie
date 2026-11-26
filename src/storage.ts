@@ -258,8 +258,8 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
  * store write (#268): `set <key> <value> --confirm` wrote the value, then the
  * alias, then the flag, and a lock timeout or a crash between them left the
  * command stored and ungated. Now all of it lands or none of it does: the
- * store writes the list first when it gains a flag, and takes back what it
- * wrote if a later file fails.
+ * store writes the list first when it gains a flag (last when it loses one),
+ * and takes back what it wrote if a later file fails.
  *
  * Everything goes to the store `scope` writes, the flag too, under the key as
  * written — that is the entry the value was just stored as. `confirm` true

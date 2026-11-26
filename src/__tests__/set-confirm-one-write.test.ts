@@ -101,6 +101,18 @@ describe('#268: set <key> <value> --confirm is one store write', () => {
     expect(onDisk().aliases).toEqual({ gd2: 'g.deploy' });
   });
 
+  it('with --no-confirm, a confirmation list that cannot be written (it is written last): the value is taken back', async () => {
+    seed({ entries: { g: { deploy: 'echo old' } }, confirm: { 'g.deploy': true } });
+    failRenameOnto('_confirm.json');
+    await setEntry('g.deploy', 'echo new', true, false, 'gd', false, true);
+    vi.restoreAllMocks();
+    expect(process.exitCode).toBe(1);
+    const d = onDisk();
+    expect(flattenObject(d.entries)).toEqual({ 'g.deploy': 'echo old' });
+    expect(d.confirm).toEqual({ 'g.deploy': true });
+    expect(d.aliases).toEqual({});
+  });
+
   it('an entry in the way is refused, and nothing is written (#224 inside the one write)', async () => {
     seed({ entries: { g: { deploy: { sub: 'x' } } } });
     await setFlagged('g.deploy', 'echo deploy');
@@ -169,6 +181,16 @@ describe('#257: set <key> --no-confirm -a is one write', () => {
     expect(process.exitCode).toBe(1);
     expect(onDisk().confirm).toEqual({ 'g.deploy': true });
     expect(onDisk().aliases).toEqual({});
+  });
+
+  it('a confirmation list that cannot be written (it is written last): the alias is taken back', async () => {
+    seed({ entries: { g: { deploy: 'echo deploy' } }, confirm: { 'g.deploy': true }, aliases: { old: 'other.key' } });
+    failRenameOnto('_confirm.json');
+    await clearWithAlias('g.deploy', 'gd');
+    vi.restoreAllMocks();
+    expect(process.exitCode).toBe(1);
+    expect(onDisk().confirm).toEqual({ 'g.deploy': true });
+    expect(onDisk().aliases).toEqual({ old: 'other.key' });
   });
 
   it('an alias name that cannot be stored: the flag stays', async () => {

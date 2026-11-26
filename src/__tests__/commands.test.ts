@@ -353,6 +353,20 @@ describe('Commands', () => {
       expect(takeValueStored()).toBe(false);
     });
 
+    it('flag-only --confirm: a flag listed in the global list though -G was not given says so', async () => {
+      // This mock is one store, and the transaction always hands it over as
+      // the global one: setConfirm reports the flag in the global list. The
+      // result and the line say so, whatever the reason (#256).
+      await setEntry('app.version', '1.0.0', true);
+      const result = await setEntry('app.version', undefined, false, false, undefined, true);
+      expect(result).toMatchObject({ key: 'app.version', confirm: true, list: 'global' });
+      expect((console.log as Mock).mock.calls.flat().join('\n')).toContain('Its flag is in the global list.');
+      expect(storeState.confirm['app.version']).toBe(true);
+      // With -G, the list asked for: nothing to say.
+      const viaG = await setEntry('app.version', undefined, false, false, undefined, true, true);
+      expect(viaG).toEqual({ key: 'app.version', confirm: true });
+    });
+
     it('creates an alias when alias parameter is provided', async () => {
       await setEntry('app.version', '1.0.0', true, false, 'ver');
 

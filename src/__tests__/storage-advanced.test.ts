@@ -52,6 +52,8 @@ vi.mock('../store', () => {
     // the tests assert against.
     setEntryFast: vi.fn(() => false),
     getEntryFast: vi.fn(() => undefined),
+    // #268: stubbed so nothing here can reach the real store through it.
+    updateStore: vi.fn(),
     saveAliasMap: vi.fn(),
     loadAliasMap: vi.fn(() => ({})),
     loadAliasMapMerged: vi.fn(() => ({})),
