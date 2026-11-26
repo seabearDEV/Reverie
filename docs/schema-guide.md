@@ -321,6 +321,7 @@ Output order on both surfaces is handoff banner, entries, aliases, notices, tier
 rvr config get bootstrap_max_response_bytes
 rvr config set bootstrap_max_response_bytes 102400   # hosts with larger tool-result limits
 rvr config set bootstrap_gist_chars 120              # shorter index lines (the maximum; the budget may narrow further)
+rvr config unset bootstrap_max_response_bytes        # back to the default, and to later changes of it
 ```
 
 For test/integration workflows, `RVR_BOOTSTRAP_MAX_BYTES` and `RVR_BOOTSTRAP_GIST_CHARS` override the config.

@@ -8,7 +8,13 @@ vi.mock('fs', () => {
     writeFileSync: vi.fn(),
     renameSync: vi.fn(),
     mkdirSync: vi.fn(),
-    statSync: vi.fn()
+    statSync: vi.fn(),
+    // The config lock (withFileLock): a .lock file opened O_CREAT|O_EXCL.
+    openSync: vi.fn(() => 3),
+    writeSync: vi.fn(),
+    closeSync: vi.fn(),
+    unlinkSync: vi.fn(),
+    constants: { O_CREAT: 0x40, O_EXCL: 0x80, O_WRONLY: 0x01 },
   };
   return { default: mock, ...mock };
 });
@@ -44,7 +50,7 @@ describe('Config', () => {
       expect(config.theme).toBe('dark');
     });
 
-    it('creates default config when file does not exist', () => {
+    it('returns defaults without writing a file when none exists (#213)', () => {
       (fs.statSync as Mock).mockImplementation(() => {
         const err = new Error('ENOENT') as Error & { code: string };
         err.code = 'ENOENT';
@@ -55,7 +61,7 @@ describe('Config', () => {
 
       expect(config.colors).toBe(true);
       expect(config.theme).toBe('default');
-      expect(fs.writeFileSync).toHaveBeenCalled();
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
     });
 
     it('returns defaults and logs error for malformed JSON', () => {
@@ -84,7 +90,7 @@ describe('Config', () => {
       expect(config.theme).toBe('default');
     });
 
-    it('treats the budget defaults earlier versions persisted (50KB, 38KB) as unset (#212)', () => {
+    it('a legacy file holding a former budget default (50KB, 38KB) gets the current default (#212, migrated by #213)', () => {
       (fs.existsSync as Mock).mockReturnValue(true);
       for (const legacy of [50 * 1024, 38 * 1024]) {
         clearConfigCache();
@@ -128,8 +134,8 @@ describe('Config', () => {
   });
 
   describe('saveConfig', () => {
-    it('writes formatted JSON to config path via atomic write', () => {
-      saveConfig({ colors: true, theme: 'dark', max_backups: 10 });
+    it('writes the sparse form to the config path via atomic write (#213)', () => {
+      saveConfig({ colors: true, theme: 'dark', max_backups: 10, import_max_bytes: 50 * 1024 * 1024, bootstrap_max_response_bytes: 28 * 1024, bootstrap_gist_chars: 160 });
 
       // #159 write-side: tmp path carries a random suffix and the write uses
       // the no-follow exclusive flag ('wx'). Match the shape, not the exact
@@ -137,7 +143,7 @@ describe('Config', () => {
       const tmpRe = /^\/mock\/config\.json\.[0-9a-f]+\.tmp$/;
       const writeCall = (fs.writeFileSync as Mock).mock.calls[0];
       expect(writeCall[0]).toMatch(tmpRe);
-      expect(writeCall[1]).toBe(JSON.stringify({ colors: true, theme: 'dark', max_backups: 10 }, null, 2));
+      expect(writeCall[1]).toBe(JSON.stringify({ _format: 2, theme: 'dark' }, null, 2));
       expect(writeCall[2]).toEqual({ encoding: 'utf8', mode: 0o600, flag: 'wx' });
 
       const renameCall = (fs.renameSync as Mock).mock.calls[0];
@@ -145,17 +151,12 @@ describe('Config', () => {
       expect(renameCall[1]).toBe('/mock/config.json');
     });
 
-    it('logs error when writeFileSync throws', () => {
+    it('lets a failed write propagate instead of reporting success', () => {
       (fs.writeFileSync as Mock).mockImplementationOnce(() => {
         throw new Error('write failed');
       });
 
-      saveConfig({ colors: true, theme: 'default', max_backups: 10 });
-
-      expect(console.error).toHaveBeenCalledWith(
-        'Error saving configuration:',
-        expect.any(Error)
-      );
+      expect(() => saveConfig({ colors: true, theme: 'dark', max_backups: 10 } as Parameters<typeof saveConfig>[0])).toThrow('write failed');
     });
   });
 
@@ -206,12 +207,13 @@ describe('Config', () => {
       expect(savedConfig.theme).toBe('dark');
     });
 
-    it('converts "true" string to boolean for colors', () => {
+    it('converts "true" string to boolean for colors (the default, so not stored)', () => {
       setConfigSetting('colors', 'true');
 
       const savedCall = (fs.writeFileSync as Mock).mock.calls[0];
       const savedConfig = JSON.parse(savedCall[1]);
-      expect(savedConfig.colors).toBe(true);
+      expect(savedConfig).toEqual({ _format: 2 });
+      expect(loadConfig().colors).toBe(true);
     });
 
     it('converts "false" string to false for colors', () => {
@@ -252,7 +254,8 @@ describe('Config', () => {
 
         const savedCall = (fs.writeFileSync as Mock).mock.calls[0];
         const savedConfig = JSON.parse(savedCall[1]);
-        expect(savedConfig.theme).toBe(theme);
+        // 'default' is the default: not stored (#213).
+        expect(savedConfig.theme).toBe(theme === 'default' ? undefined : theme);
       }
     });
 
@@ -283,8 +286,9 @@ describe('Config', () => {
     it('re-reads when mtime changes', () => {
       (fs.existsSync as Mock).mockReturnValue(true);
       (fs.readFileSync as Mock)
-        .mockReturnValueOnce(JSON.stringify({ colors: true, theme: 'default' }))
-        .mockReturnValueOnce(JSON.stringify({ colors: false, theme: 'dark' }));
+        // A sparse file: no migration re-read to count.
+        .mockReturnValueOnce(JSON.stringify({ _format: 2 }))
+        .mockReturnValueOnce(JSON.stringify({ _format: 2, colors: false, theme: 'dark' }));
       (fs.statSync as Mock)
         .mockReturnValueOnce({ mtimeMs: 1000 })
         .mockReturnValueOnce({ mtimeMs: 2000 });
@@ -301,7 +305,7 @@ describe('Config', () => {
       (fs.existsSync as Mock).mockReturnValue(true);
       (fs.statSync as Mock).mockReturnValue({ mtimeMs: 2000 });
 
-      saveConfig({ colors: false, theme: 'dark', max_backups: 10 });
+      saveConfig({ colors: false, theme: 'dark', max_backups: 10 } as Parameters<typeof saveConfig>[0]);
       const loaded = loadConfig();
 
       expect(loaded).toEqual({ colors: false, theme: 'dark', max_backups: 10 });

@@ -604,8 +604,10 @@ describe('what a row is counted as (#203, #204, #206)', () => {
   it('#206: logToolCall files a config tool under no namespace', async () => {
     await logToolCall('reverie_config_set', 'bootstrap_max_response_bytes', 'cli');
     await logToolCall('reverie_config_get', 'bootstrap_gist_chars', 'cli');
+    await logToolCall('reverie_config_unset', 'theme', 'cli');
     const rows = fs.readFileSync(path.join(tmpDir, 'telemetry.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as TelemetryEntry);
-    expect(rows.map(r => r.ns)).toEqual(['*', '*']);
+    expect(rows.map(r => r.ns)).toEqual(['*', '*', '*']);
+    expect(rows[2].op).toBe('remove');
   });
 
   it('#206: rows already logged with a config key as their namespace are left out of coverage', () => {

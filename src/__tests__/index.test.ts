@@ -10,6 +10,7 @@ const mockRemoveEntry = vi.fn();
 const mockRenameEntry = vi.fn();
 const mockHandleConfig = vi.fn();
 const mockConfigSet = vi.fn();
+const mockConfigUnset = vi.fn();
 const mockShowInfo = vi.fn();
 const mockExportData = vi.fn();
 const mockImportData = vi.fn().mockResolvedValue(undefined);
@@ -49,6 +50,7 @@ function setupMocks() {
     renameEntry: mockRenameEntry,
     handleConfig: mockHandleConfig,
     configSet: mockConfigSet,
+    configUnset: mockConfigUnset,
     showInfo: mockShowInfo,
     exportData: mockExportData,
     importData: mockImportData,
@@ -278,6 +280,11 @@ describe('CLI Entry Point (index.ts)', () => {
   it('config set calls configSet', async () => {
     await loadCLI('config', 'set', 'theme', 'dark');
     expect(mockConfigSet).toHaveBeenCalledWith('theme', 'dark');
+  });
+
+  it('config unset calls configUnset (#213)', async () => {
+    await loadCLI('config', 'unset', 'theme');
+    expect(mockConfigUnset).toHaveBeenCalledWith('theme');
   });
 
   it('config get calls handleConfig with key', async () => {

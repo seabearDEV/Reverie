@@ -35,7 +35,7 @@ import { fileURLToPath } from "url";
 import { findProjectFile, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
 import { hasConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
 import { renameKey, RenameRefusal } from "./rename";
-import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
+import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
 import { KeyCollisionError, assertKeysWritable, renameDestinationProblem } from "./utils/keyCollision";
 import { version as pkgVersion } from "../package.json";
@@ -82,7 +82,7 @@ function errorResponse(text: string, code?: ErrorCode) {
  * would only repeat what an earlier call saw.
  */
 const NO_UNREADABLE_WARNING_TOOLS = new Set([
-  'reverie_context', 'reverie_config_get', 'reverie_config_set', 'reverie_stats', 'reverie_audit',
+  'reverie_context', 'reverie_config_get', 'reverie_config_set', 'reverie_config_unset', 'reverie_stats', 'reverie_audit',
 ]);
 
 /**
@@ -1228,6 +1228,32 @@ server.tool(
     } catch (err) {
       if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error setting config: ${String(err)}`);
+    }
+  }
+);
+
+// --- reverie_config_unset ---
+server.tool(
+  "reverie_config_unset",
+  "Return a Reverie config setting to its default.",
+  {
+    key: z.string().describe("Config key to reset"),
+  },
+  async ({ key }) => {
+    try {
+      if (!(VALID_CONFIG_KEYS as readonly string[]).includes(key)) {
+        return errorResponse(
+          `Unknown config key: '${key}'. Valid keys: ${VALID_CONFIG_KEYS.join(", ")}`,
+          'NOT_FOUND'
+        );
+      }
+
+      unsetConfigSetting(key);
+      resetColorCache();
+      return textResponse(`Config unset: ${key} = ${String(getConfigSetting(key))} (default)`);
+    } catch (err) {
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
+      return errorResponse(`Error unsetting config: ${String(err)}`);
     }
   }
 );

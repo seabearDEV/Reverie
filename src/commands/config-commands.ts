@@ -1,5 +1,5 @@
 import { color, resetColorCache } from '../formatting';
-import { loadConfig, getConfigSetting, setConfigSetting } from '../config';
+import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from '../config';
 import { printError } from './helpers';
 import { debug } from '../utils/debug';
 import { getBinaryName } from '../utils/binaryName';
@@ -72,6 +72,29 @@ export function configSet(setting: string, value: string): { key: string; value:
   } catch (error) {
     // One code in both modes (#203): printError routes to the envelope in JSON mode.
     printError(`Error setting config ${setting}: ${String(error)}`, 'IO');
+    return undefined;
+  }
+}
+
+/**
+ * `config unset <key>` (#213): remove the setting from config.json so it
+ * follows the default again, including later changes to the default.
+ */
+export function configUnset(setting: string): { key: string; value: unknown; previous: unknown } | undefined {
+  debug('configUnset called', { setting });
+  if (!(VALID_CONFIG_KEYS as readonly string[]).includes(setting)) {
+    printError(`Setting '${setting}' does not exist`, 'NOT_FOUND');
+    return undefined;
+  }
+  try {
+    const previous = getConfigSetting(setting);
+    unsetConfigSetting(setting);
+    resetColorCache();
+    const value = getConfigSetting(setting);
+    console.log(`${setting} reset to its default: ${String(value)} (was ${String(previous)})`);
+    return { key: setting, value, previous };
+  } catch (error) {
+    printError(`Error unsetting config ${setting}: ${String(error)}`, 'IO');
     return undefined;
   }
 }

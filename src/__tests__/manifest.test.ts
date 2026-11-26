@@ -43,11 +43,12 @@ describe('buildManifest (#117 WS2)', () => {
     expect(m.envelope.errorCodes).toEqual(ERROR_CODES);
   });
 
-  it('maps all 19 MCP tools to CLI commands', () => {
+  it('maps all 20 MCP tools to CLI commands', () => {
     const m = buildManifest(makeProgram());
-    expect(Object.keys(m.mcpToolMap)).toHaveLength(19);
+    expect(Object.keys(m.mcpToolMap)).toHaveLength(20);
     expect(m.mcpToolMap).toBe(MCP_CLI_MAP);
     expect(m.mcpToolMap.reverie_alias_set).toBe('alias set');
     expect(m.mcpToolMap.reverie_context).toBe('context');
+    expect(m.mcpToolMap.reverie_config_unset).toBe('config unset');
   });
 });

@@ -107,8 +107,11 @@ describe('CLI JSON envelope (#117)', () => {
     expect(env.ok).toBe(true);
     expect(env.command).toBe('manifest');
     expect(env.result.envelope.version).toBe('1');
-    expect(Object.keys(env.result.mcpToolMap)).toHaveLength(19);
+    expect(Object.keys(env.result.mcpToolMap)).toHaveLength(20);
     expect(env.result.commands.some((c: { name: string }) => c.name === 'get')).toBe(true);
+    const config = env.result.commands.find((c: { name: string }) => c.name === 'config');
+    expect(config.subcommands.map((c: { name: string }) => c.name)).toEqual(expect.arrayContaining(['set', 'get', 'unset']));
+    expect(env.result.mcpToolMap.reverie_config_unset).toBe('config unset');
   });
 
   // ── Advertised error codes are actually produced (review #1) ──────────

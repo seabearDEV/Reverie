@@ -97,7 +97,7 @@ export function deriveAfterValue(tool: string, inputs: AfterValueInputs): string
   if (tool === 'reverie_set' || tool === 'reverie_config_set') return sanitizeValue(inputs.writeValue);
   if (tool === 'reverie_copy') return inputs.copySourceValue;
   if (tool === 'reverie_rename') return inputs.before; // Rename preserves the value
-  if (tool === 'reverie_remove' || tool === 'reverie_alias_remove') return undefined; // Deleted
+  if (tool === 'reverie_remove' || tool === 'reverie_alias_remove' || tool === 'reverie_config_unset') return undefined; // Deleted
   if (tool === 'reverie_alias_set') return inputs.aliasPath;
   // Fallback: re-read (only for unexpected tool names)
   return captureValue(tool, inputs.key, inputs.scope);

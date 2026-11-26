@@ -271,7 +271,7 @@ export const BYTES_PER_TOKEN = 3;
  * `bootstrap_max_response_bytes` has no namespace; filing it under one made
  * `stats` list the setting as a namespace with writes.
  */
-const NON_ENTRY_KEY_TOOLS: ReadonlySet<string> = new Set(['reverie_config_get', 'reverie_config_set']);
+const NON_ENTRY_KEY_TOOLS: ReadonlySet<string> = new Set(['reverie_config_get', 'reverie_config_set', 'reverie_config_unset']);
 
 /**
  * Whether a tool's `key` names a store entry. A config call's does not
@@ -353,6 +353,7 @@ export function classifyOp(tool: string): TelemetryEntry['op'] {
     case 'reverie_remove':
     case 'reverie_alias_remove':
     case 'reverie_confirm_remove':
+    case 'reverie_config_unset':
     case 'reverie_reset':
       return 'remove';
     case 'reverie_run':

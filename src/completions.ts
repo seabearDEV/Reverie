@@ -234,6 +234,7 @@ const CLI_TREE: Record<string, CommandDef> = {
     subcommands: {
       set: { flags: {}, argType: 'configKey', description: 'Set a config value' },
       get: { flags: {}, argType: 'configKey', description: 'Get config values' },
+      unset: { flags: {}, argType: 'configKey', description: 'Reset a config value to its default' },
       info: { flags: {}, argType: null, description: 'Show version and stats' },
       examples: { flags: {}, argType: null, description: 'Show usage examples' },
       'llm-instructions': { flags: { '--default': 'Show built-in defaults only' }, argType: null, description: 'Show LLM instructions' },
