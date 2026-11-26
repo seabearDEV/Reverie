@@ -59,8 +59,17 @@ function acquireLock(filePath: string, waitMs: number): void {
             // TOCTOU note: another process may unlink+recreate between our
             // unlink and the next openSync, but that's fine — the O_CREAT|O_EXCL
             // re-acquire is atomic so we'll just loop again.
-            try { fs.unlinkSync(lockPath); } catch { /* another process may have removed it */ }
-            if (remaining > 0) continue;
+            let removed = false;
+            try {
+              fs.unlinkSync(lockPath);
+              removed = true;
+            } catch (unlinkErr) {
+              // Gone already: another process removed it — retry at once.
+              removed = !!unlinkErr && typeof unlinkErr === 'object' && 'code' in unlinkErr && unlinkErr.code === 'ENOENT';
+            }
+            if (removed && remaining > 0) continue;
+            // Could not remove it (no permission on its directory): back off
+            // like any held lock instead of retrying in a tight loop.
           }
         } catch {
           // Lock file disappeared — retry

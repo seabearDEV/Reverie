@@ -296,3 +296,98 @@ describe('#259: a lock held by another process at any step (race 2)', () => {
     expect(entryKeys(onDisk())).toEqual(['g.x']);
   }, HELD_LOCK_TEST_MS);
 });
+
+// Review of #259: one store write that both writes and deletes must not
+// delete before every write has landed.
+describe('#259: a write that fails inside the rename leaves the source', () => {
+  /** Put a directory where an entry file would go: the write to that key then fails (EISDIR). */
+  const blockWrite = (key: string) => fs.mkdirSync(path.join(tmp.storeDir, `${key}.json`), { recursive: true });
+  const fileKeys = () => fs.readdirSync(tmp.storeDir).filter(f => f.endsWith('.json') && !f.startsWith('_')).sort();
+
+  it('a leaf: nothing deleted, nothing written, the flag where it was', async () => {
+    seed({ entries: { g: { x: 'precious' } }, confirm: { 'g.x': true } });
+    blockWrite('h.x');
+    await renameEntry('g.x', 'h.x', false, undefined, true);
+    expect(process.exitCode).toBe(1);
+    expect(flattenObject(onDisk().entries)).toEqual({ 'g.x': 'precious' });
+    expect(onDisk().confirm).toEqual({ 'g.x': true });
+  });
+
+  it('a namespace: the leaves already written are taken back, the source stays whole', async () => {
+    seed({ entries: { a: { one: '1', two: 'echo two' } }, aliases: { a2: 'a.two' }, confirm: { 'a.two': true } });
+    blockWrite('n.two');
+    await renameEntry('a', 'n', false, undefined, true);
+    expect(process.exitCode).toBe(1);
+    expect(flattenObject(onDisk().entries)).toEqual({ 'a.one': '1', 'a.two': 'echo two' });
+    expect(fileKeys()).toEqual(['a.one.json', 'a.two.json', 'n.two.json']);   // n.two.json is the directory
+    expect(onDisk().aliases).toEqual({ a2: 'a.two' });
+    expect(onDisk().confirm).toEqual({ 'a.two': true });
+  });
+
+  it('the confirmation list is written before the entries it gates', async () => {
+    // A renamed command must never be on disk without its flag, even for
+    // the moment between two writes.
+    seed({ entries: { g: { x: 'echo hi' } }, confirm: { 'g.x': true } });
+    const realRename = fs.renameSync.bind(fs);
+    const order: string[] = [];
+    vi.spyOn(fs, 'renameSync').mockImplementation(((from: fs.PathLike, to: fs.PathLike) => {
+      if (String(to).startsWith(tmp.storeDir)) order.push(path.basename(String(to)));
+      return realRename(from, to);
+    }) as typeof fs.renameSync);
+    await renameEntry('g.x', 'h.x', false, undefined, true);
+    vi.restoreAllMocks();
+    expect(order.indexOf('_confirm.json')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('_confirm.json')).toBeLessThan(order.indexOf('h.x.json'));
+    expect(onDisk().confirm).toEqual({ 'g.x': true, 'h.x': true });
+  });
+
+  it.skipIf(process.platform !== 'darwin')('a confirmation list that cannot be written: nothing changes (chflags uchg)', async () => {
+    seed({ entries: { g: { x: 'echo hi' } }, confirm: { 'g.x': true } });
+    const list = path.join(tmp.storeDir, '_confirm.json');
+    const { spawnSync } = await import('child_process');
+    expect(spawnSync('chflags', ['uchg', list]).status).toBe(0);
+    try {
+      await renameEntry('g.x', 'h.x', false, undefined, true);
+    } finally {
+      spawnSync('chflags', ['nouchg', list]);
+    }
+    expect(process.exitCode).toBe(1);
+    expect(flattenObject(onDisk().entries)).toEqual({ 'g.x': 'echo hi' });
+    expect(onDisk().confirm).toEqual({ 'g.x': true });
+  });
+});
+
+describe('#259: a source stored both as a leaf and as a namespace', () => {
+  // A leaf `k` and an entry `k.sub` side by side on disk (a hand edit, a
+  // merge). The tree a rename works on holds one of them; the write would
+  // delete the other. Refused, writing nothing.
+  const plant = () => {
+    fs.mkdirSync(tmp.storeDir, { recursive: true });
+    fs.writeFileSync(path.join(tmp.storeDir, 'k.json'), JSON.stringify({ value: 'echo leaf' }));
+    fs.writeFileSync(path.join(tmp.storeDir, 'k.sub.json'), JSON.stringify({ value: 'echo sub' }));
+    fs.writeFileSync(path.join(tmp.storeDir, '_confirm.json'), JSON.stringify({ k: true }));
+    clearStoreCaches();
+  };
+  const files = () => fs.readdirSync(tmp.storeDir).filter(f => f.endsWith('.json') && f !== '_epoch.json').sort();
+
+  it('is refused, naming both, and nothing is written', async () => {
+    plant();
+    const before = files();
+    await renameEntry('k', 'k2', false, undefined, true);
+    expect(process.exitCode).toBe(1);
+    const said = (console.error as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n');
+    expect(said).toContain("'k' is stored both as an entry and as a namespace ('k.sub')");
+    expect(files()).toEqual(before);
+    expect(JSON.parse(fs.readFileSync(path.join(tmp.storeDir, '_confirm.json'), 'utf8'))).toEqual({ k: true });
+  });
+
+  it('another spelling of it is refused naming the stored key, where the filesystem folds case', async () => {
+    plant();
+    const folds = fs.existsSync(path.join(tmp.storeDir, 'K.json'));
+    await renameEntry('K', 'k9', false, undefined, true);
+    expect(process.exitCode).toBe(1);
+    const said = (console.error as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n');
+    expect(said).toContain(folds ? "did you mean 'k'?" : 'not found');
+    expect(fs.existsSync(path.join(tmp.storeDir, 'k9.json'))).toBe(false);
+  });
+});

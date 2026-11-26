@@ -172,6 +172,73 @@ describe('rename refusals that write nothing (#247, #245)', () => {
     expect(fs.existsSync(path.join(globalStore(), 'h.x.json'))).toBe(true);
   });
 
+  describe('a destination that cannot be written (#259 review)', () => {
+    // The rename used to delete the source before writing the new keys, in
+    // one store write: a write that then failed left the source gone.
+    it('a leaf key too long for a file name: refused, the source and its flag stay', () => {
+      expect(rvr('set', '-G', 'notes.k', 'precious', '--confirm').status).toBe(0);
+      const before = snapshot(globalStore());
+      const long = `notes.${'q'.repeat(235)}`;
+      const text = rvr('rename', '-G', 'notes.k', long);
+      expect(text.status).toBe(1);
+      expect(text.stderr).toContain('is too long for a file name');
+      expect(json('rename', '-G', 'notes.k', long).error?.code).toBe('INVALID_INPUT');
+      expect(snapshot(globalStore())).toBe(before);
+    });
+
+    it('a namespace whose new leaf would be too long: refused, nothing moved, the flagged leaf still gated', () => {
+      expect(rvr('set', '-G', `a.${'x'.repeat(200)}`, 'long').status).toBe(0);
+      expect(rvr('set', '-G', 'a.short', `touch ${path.join(dataDir, 'ran')}`, '--confirm').status).toBe(0);
+      const before = snapshot(globalStore());
+      const n = 'n'.repeat(60);
+      expect(rvr('rename', '-G', 'a', n).status).toBe(1);
+      expect(snapshot(globalStore())).toBe(before);
+      expect(json('run', '-G', 'a.short').error?.code).toBe('REQUIRES_CONFIRMATION');
+      expect(json('run', '-G', `${n}.short`).error?.code).toBe('NOT_FOUND');
+      expect(fs.existsSync(path.join(dataDir, 'ran'))).toBe(false);
+    });
+  });
+
+  // A rename, `confirm set` and `set --confirm` take the other store's lock
+  // too. Where that store's directory cannot be written and a lock file is
+  // already there, it can never be taken: the store is read as it is, as
+  // main did, instead of failing the command.
+  it('a read-only global data dir holding a stale lock: project writes still work', () => {
+    expect(rvr('set', 'p.x', '1').status).toBe(0);
+    expect(rvr('set', 'p.y', '1').status).toBe(0);
+    const lock = path.join(dataDir, 'store.lock');
+    fs.writeFileSync(lock, '99999');
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, old, old);
+    fs.chmodSync(dataDir, 0o555);
+    try {
+      expect(rvr('rename', 'p.x', 'q.x').status).toBe(0);
+      expect(rvr('confirm', 'set', 'p.y').status).toBe(0);
+      expect(rvr('set', 'p.z', 'v', '--confirm').status).toBe(0);
+    } finally {
+      fs.chmodSync(dataDir, 0o755);
+    }
+    expect(JSON.parse(fs.readFileSync(path.join(projectStore(), '_confirm.json'), 'utf8'))).toEqual({ 'p.y': true, 'p.z': true });
+  });
+
+  it('a read-only project root holding a stale lock: -G writes still work', () => {
+    expect(rvr('set', '-G', 'g.x', 'v').status).toBe(0);
+    expect(rvr('set', '-G', 'g.y', 'v').status).toBe(0);
+    const lock = path.join(projectDir, '.reverie.lock');
+    fs.writeFileSync(lock, '99999');
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, old, old);
+    fs.chmodSync(projectDir, 0o555);
+    try {
+      expect(rvr('rename', '-G', 'g.x', 'h.x').status).toBe(0);
+      expect(rvr('confirm', 'set', '-G', 'g.y').status).toBe(0);
+      expect(rvr('set', '-G', 'g.z', 'v', '--confirm').status).toBe(0);
+    } finally {
+      fs.chmodSync(projectDir, 0o755);
+    }
+    expect(JSON.parse(fs.readFileSync(path.join(globalStore(), '_confirm.json'), 'utf8'))).toEqual({ 'g.y': true, 'g.z': true });
+  });
+
   describe('#245: a confirmation list that cannot be read', () => {
     const BROKEN = '{\n<<<<<<< ours\n  "a": true\n=======\n  "b": true\n>>>>>>> theirs\n}\n';
 

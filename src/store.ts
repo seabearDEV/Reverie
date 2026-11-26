@@ -56,6 +56,12 @@ export interface ScopedStore {
    * and may update another one — see updateUnderBothLocks.
    */
   inspect<T>(fn: (current: UnifiedData) => T): T;
+  /**
+   * The entry keys as the last scan listed them, one per file (#259). No
+   * I/O. Unlike the nested `entries`, this keeps a leaf and an entry under
+   * it that a store written by hand or by a merge can hold side by side.
+   */
+  storedKeys(): string[];
   clear(): void;
   /**
    * Fast-path single-entry read. Reads exactly one entry file (no directory
@@ -385,6 +391,8 @@ export interface LockedStore {
   dir: string;
   /** The store as it stands under its lock, in fresh objects. */
   data: UnifiedData;
+  /** Its entry keys, one per file, as the scan under the lock listed them (see ScopedStore.storedKeys). */
+  keys: string[];
   /** Its files that do not parse, as of the scan under the lock (#215). */
   unreadable: UnreadableFile[];
 }
@@ -419,7 +427,7 @@ export function updateUnderBothLocks(
   const project = getProjectStore();
   const projectDir = projectStoreDirPath;
   const view = (store: ScopedStore, which: 'project' | 'global', dir: string, data: UnifiedData): LockedStore =>
-    ({ scope: which, dir, data, unreadable: store.unreadable() });
+    ({ scope: which, dir, data, keys: store.storedKeys(), unreadable: store.unreadable() });
 
   // One store, or one directory reached under both names: one lock.
   if (!project || projectDir === null || path.resolve(projectDir) === path.resolve(globalDir)) {

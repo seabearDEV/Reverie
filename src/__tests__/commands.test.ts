@@ -100,7 +100,8 @@ vi.mock('../store', () => {
   type Sections = ReturnType<typeof current>;
   const updateUnderBothLocks = vi.fn((_scope: string, fn: (target: unknown, other: unknown) => Sections | null) => {
     const before = current();
-    const next = fn({ scope: 'global', dir: '/mock/store', data: { ...current(), _meta: {} }, unreadable: [] }, undefined);
+    const keysOf = (o: Record<string, unknown>, pre = ''): string[] => Object.entries(o).flatMap(([k, v]) => (v !== null && typeof v === 'object' ? keysOf(v as Record<string, unknown>, `${pre}${k}.`) : [`${pre}${k}`]));
+    const next = fn({ scope: 'global', dir: '/mock/store', data: { ...current(), _meta: {} }, keys: keysOf(before.entries), unreadable: [] }, undefined);
     if (next === null) return;
     if (JSON.stringify(next.entries) !== JSON.stringify(before.entries)) saveEntries(next.entries);
     if (JSON.stringify(next.aliases) !== JSON.stringify(before.aliases)) saveAliasMap(next.aliases);

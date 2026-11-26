@@ -257,7 +257,8 @@ vi.mock('../store', () => {
     // #259: the two-store transaction, over this mock's one store.
     updateUnderBothLocks: vi.fn((_scope: string, fn: (target: any, other: any) => any) => {
       const data = { entries: structuredClone(mockData), aliases: { ...mockAliases }, confirm: { ...mockConfirmKeys }, _meta: { ...mockMetaData } };
-      const next = fn({ scope: 'global', dir: '/mock/store', data, unreadable: [] }, undefined);
+      const keysOf = (o: any, pre = ''): string[] => Object.entries(o).flatMap(([k, v]) => (v !== null && typeof v === 'object' ? keysOf(v, `${pre}${k}.`) : [`${pre}${k}`]));
+      const next = fn({ scope: 'global', dir: '/mock/store', data, keys: keysOf(data.entries), unreadable: [] }, undefined);
       if (next === null) return;
       const replace = (into: Record<string, any>, from: Record<string, any>) => {
         Object.keys(into).forEach(k => delete into[k]);

@@ -27,7 +27,7 @@ vi.mock('../store', () => {
     // #259: setConfirm decides under both stores' locks; here one store with
     // no entries, so whether the key names one is opensEntryFile's answer.
     updateUnderBothLocks: vi.fn((scope: string, fn: (target: unknown, other: unknown) => { confirm: Record<string, true> } | null) => {
-      const next = fn({ scope, dir: '/mock/store', data: { entries: {}, aliases: {}, confirm: loadConfirmMap(scope) }, unreadable: [] }, undefined);
+      const next = fn({ scope, dir: '/mock/store', data: { entries: {}, aliases: {}, confirm: loadConfirmMap(scope) }, keys: [], unreadable: [] }, undefined);
       if (next !== null) saveConfirmMap(next.confirm, scope);
     }),
     clearStoreCaches: vi.fn(() => { confirmKeys = {}; }),

@@ -382,6 +382,15 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.existsSync(marker('deploy'))).toBe(false);
     });
 
+    it('reverie_rename to a key with a NUL in it is refused, and the source stays (#259 review)', () => {
+      callMcpTool('reverie_set', { key: 'keep.k', value: 'precious' });
+      const r = callMcpTool('reverie_rename', { oldKey: 'keep.k', newKey: 'keep.a\u0000b' });
+      expect(r.isError).toBe(true);
+      expect(text(r)).toContain('not a valid key');
+      expect(fs.existsSync(storeFile('keep.k.json'))).toBe(true);
+      expect(text(callMcpTool('reverie_get', { key: 'keep.k' }))).toContain('precious');
+    });
+
     it('reverie_rename of the same name in another Unicode normalization renames the stored key (#253)', () => {
       const nfc = `caf${String.fromCodePoint(0xe9)}.go`;
       const nfd = `cafe${String.fromCodePoint(0x301)}.go`;

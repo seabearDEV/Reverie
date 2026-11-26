@@ -160,6 +160,7 @@ function keyFromFilename(name: string): string {
  *   - Does not start with `_` (reserved for sidecars like `_aliases`, `_confirm`)
  *   - Does not start or end with `.` (would create empty segments and a hidden file)
  *   - Contains no path separators (`/`, `\`) — keys are flat filenames, not paths
+ *   - Contains no NUL, which no filename can hold
  *   - Has no empty segment, `..` segment, or prototype-polluting name (`__proto__`,
  *     `constructor`, `prototype`) when split on `.`
  *
@@ -173,6 +174,8 @@ export function isValidEntryKey(key: string): boolean {
   if (!key || key.startsWith('_')) return false;
   if (key.startsWith('.') || key.endsWith('.')) return false;
   if (key.includes('/') || key.includes('\\')) return false;
+  // NUL ends a path at the system call: no file can be named with one.
+  if (key.includes('\0')) return false;
   const parts = key.split('.');
   for (const part of parts) {
     if (!part || part === '..' ||
@@ -335,6 +338,16 @@ function probeEntryFile(filePath: string, key: string): UnreadableFile | undefin
     : { kind: 'entry', path: filePath, key, reason: classifyUnparseable(raw) };
 }
 
+/** Device and inode of the file at `filePath` itself (a symlink is not followed), or undefined. */
+function fileIdentity(filePath: string): string | undefined {
+  try {
+    const st = fs.lstatSync(filePath, { bigint: true });
+    return `${st.dev}:${st.ino}`;
+  } catch {
+    return undefined;
+  }
+}
+
 function isENOENT(err: unknown): boolean {
   return (
     !!err &&
@@ -342,6 +355,16 @@ function isENOENT(err: unknown): boolean {
     'code' in err &&
     (err as { code: string }).code === 'ENOENT'
   );
+}
+
+/** May this process create and remove files in `dir`? */
+function isWritableDir(dir: string): boolean {
+  try {
+    fs.accessSync(dir, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** A filesystem refusal to create a file here: no permission, or a read-only volume. */
@@ -922,7 +945,8 @@ export function createDirectoryStore(
 
       // 3d. Nor a new key whose path opens another entry's file (#246) —
       //     copy, rename and import write through here. An entry this same
-      //     save deletes is not in the way: its file goes first (step 4).
+      //     save deletes is not in the way: the write lands in its file, and
+      //     step 4 then leaves that file alone.
       const deleting = new Set(toDelete);
       for (const [key] of toWrite) {
         if (entryCache.has(key)) continue;
@@ -933,42 +957,97 @@ export function createDirectoryStore(
         }
       }
 
-      // 4. Apply deltas. Each atomicWriteFileSync is individually atomic;
+      // 4. Apply deltas, every write before any delete (#259). A write can
+      //    fail (a name too long for the filesystem, a directory in the
+      //    way, a file made immutable); a delete done before it is not
+      //    undone, so a rename lost its source and kept only the keys it had
+      //    written so far. Each atomicWriteFileSync is individually atomic;
       //    concurrent readers detect mid-commit state via the odd epoch we
       //    wrote in step 0 and retry their scan in load().
+      //
+      //    The confirmation list goes first when it gains flags, and last
+      //    when it loses them: whichever write fails, nothing that was
+      //    gated before or after this commit is ungated in between. A
+      //    rename adds the new keys' flags — a renamed command must never
+      //    exist on disk without its flag. A list that both gains and loses
+      //    is written twice: the union first, the final list last.
+      const oldConfirm = confirmCache?.data ?? {};
+      const unionConfirm = { ...oldConfirm, ...data.confirm };
+      const confirmGains = rewriteConfirm && !shallowEquals(oldConfirm, unionConfirm);
+      const confirmLoses = rewriteConfirm && !shallowEquals(unionConfirm, data.confirm);
+      const written: [string, EntryWrapper][] = [];
+      let confirmTouched = false;
+      try {
+        if (confirmGains) {
+          atomicWriteFileSync(confirmPath, serializeSidecar(unionConfirm));
+          confirmTouched = true;
+        }
+        for (const [key, value, updated] of toWrite) {
+          // Preserve `meta.created` from the existing wrapper if present; set it
+          // to `updated` only on first write. Untracked entries (migrated without
+          // a timestamp) stay bare — no `meta` block at all.
+          const existingCreated = entryCache.get(key)?.wrapper.meta?.created;
+          const wrapper: EntryWrapper = updated !== undefined
+            ? { value, meta: { created: existingCreated ?? updated, updated } }
+            : { value };
+          atomicWriteFileSync(entryFilePath(dir, key), serializeEntryWrapper(wrapper));
+          written.push([key, wrapper]);
+        }
+        if (rewriteAliases) atomicWriteFileSync(aliasPath, serializeSidecar(data.aliases));
+      } catch (err) {
+        // Put back what this commit wrote; delete nothing. Best effort: a
+        // file that cannot be restored is left as written.
+        for (const [key] of written) {
+          const before = entryCache.get(key);
+          try {
+            if (before) atomicWriteFileSync(entryFilePath(dir, key), serializeEntryWrapper(before.wrapper));
+            else fs.unlinkSync(entryFilePath(dir, key));
+          } catch (undo) {
+            debug(`Could not undo the write of ${key}: ${String(undo)}`);
+          }
+        }
+        if (confirmTouched) {
+          try {
+            atomicWriteFileSync(confirmPath, serializeSidecar(oldConfirm));
+          } catch (undo) {
+            debug(`Could not undo the confirmation list: ${String(undo)}`);
+          }
+        }
+        writeEpoch(dir, inProgressEpoch + 1);
+        dirMtimeMs = -1;   // the caches no longer match the directory: rescan
+        throw err;
+      }
+      for (const [key, wrapper] of written) {
+        entryCache.set(key, { wrapper, mtimeMs: fs.statSync(entryFilePath(dir, key)).mtimeMs });
+        unreadableEntries.delete(key);
+      }
+      // A deleted key whose path is the file a written key now holds — the
+      // same name in another normalization, or another fold of it (3d) —
+      // is not deleted: that would delete what was just written.
+      const writtenFiles = toDelete.length > 0 ? new Set(written.map(([k]) => fileIdentity(entryFilePath(dir, k)))) : new Set<string | undefined>();
+      writtenFiles.delete(undefined);
       for (const key of toDelete) {
-        try {
-          fs.unlinkSync(entryFilePath(dir, key));
-        } catch (err) {
-          if (!isENOENT(err)) {
-            debug(`Failed to delete entry file for ${key}: ${String(err)}`);
+        const filePath = entryFilePath(dir, key);
+        if (!writtenFiles.has(fileIdentity(filePath))) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (err) {
+            if (!isENOENT(err)) {
+              debug(`Failed to delete entry file for ${key}: ${String(err)}`);
+            }
           }
         }
         entryCache.delete(key);
       }
-      for (const [key, value, updated] of toWrite) {
-        // Preserve `meta.created` from the existing wrapper if present; set it
-        // to `updated` only on first write. Untracked entries (migrated without
-        // a timestamp) stay bare — no `meta` block at all.
-        const existingCreated = entryCache.get(key)?.wrapper.meta?.created;
-        const wrapper: EntryWrapper = updated !== undefined
-          ? { value, meta: { created: existingCreated ?? updated, updated } }
-          : { value };
-        const filePath = entryFilePath(dir, key);
-        atomicWriteFileSync(filePath, serializeEntryWrapper(wrapper));
-        const mtimeMs = fs.statSync(filePath).mtimeMs;
-        entryCache.set(key, { wrapper, mtimeMs });
-        unreadableEntries.delete(key);
-      }
 
-      // 5. Sidecars — rewrite only if changed. After a write, pick up the
-      //    new mtime from statSync so future scans can skip the re-read.
+      // 5. Sidecar caches; the final confirmation list when it lost flags.
+      //    After a write, pick up the new mtime from statSync so future
+      //    scans can skip the re-read.
       if (rewriteAliases) {
-        atomicWriteFileSync(aliasPath, serializeSidecar(data.aliases));
         aliasesCache = { data: { ...data.aliases }, mtimeMs: fs.statSync(aliasPath).mtimeMs };
       }
       if (rewriteConfirm) {
-        atomicWriteFileSync(confirmPath, serializeSidecar(data.confirm));
+        if (confirmLoses || !confirmGains) atomicWriteFileSync(confirmPath, serializeSidecar(data.confirm));
         confirmCache = { data: { ...data.confirm }, mtimeMs: fs.statSync(confirmPath).mtimeMs };
       }
 
@@ -1011,16 +1090,19 @@ export function createDirectoryStore(
     };
     // The lock file sits beside the store directory. Where even its parent
     // is missing, no store has ever been written here and there is nothing
-    // to hold still: read the empty store without the lock.
-    if (!fs.existsSync(path.dirname(path.resolve(getStoreLockKey(dir))))) return read();
+    // to hold still: read the empty store without the lock. Where this
+    // process may not write that directory (a project checked out
+    // read-only, a data dir owned by another user) it can neither take the
+    // lock nor clear a stale one, nor write this store: read it as it is,
+    // as a reader does, without waiting on a lock it can never have.
+    const lockDir = path.dirname(path.resolve(getStoreLockKey(dir)));
+    if (!fs.existsSync(lockDir) || !isWritableDir(lockDir)) return read();
     try {
       return withStoreLock(dir, read);
     } catch (err) {
-      // Where this process may not create the lock file (a project checked
-      // out read-only, or owned by another user) it cannot write this store
-      // either, and holding it still is not ours to do: read it as it is,
-      // as a reader does. Only a failure to take the lock is retried this
-      // way, never one from `fn`.
+      // The same, found out only on trying: the lock file could not be
+      // created. Only a failure to take the lock is retried this way,
+      // never one from `fn`.
       if (entered || !isUnwritableError(err)) throw err;
       debug(`inspect(${dir}): no lock (${String(err)}), reading without it`);
       return read();
@@ -1218,7 +1300,11 @@ export function createDirectoryStore(
     });
   }
 
-  return { load, save, update, inspect, clear, getOne, setOne, unreadable };
+  function storedKeys(): string[] {
+    return [...entryCache.keys()];
+  }
+
+  return { load, save, update, inspect, storedKeys, clear, getOne, setOne, unreadable };
 }
 
 // ── Migration ──────────────────────────────────────────────────────────
