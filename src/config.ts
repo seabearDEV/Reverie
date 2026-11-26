@@ -66,9 +66,9 @@ const SPARSE_FORMAT = 2;
 // Every default a version before #213 wrote to config.json. Until #213 first
 // run wrote the whole default config and every `config set` wrote the whole
 // object back, so a file without the marker cannot tell a value the user
-// chose from a default that was current when it was written. Until this
-// install's first write with #213, a read drops a stored value listed here in
-// memory and that write persists it. The list is closed: from #213
+// chose from a default that was current when it was written. A read drops a
+// stored value listed here in memory, unless the migration record (below)
+// lists its key, and the next write persists that. The list is closed: from #213
 // on every write carries the marker and stores no default, so a later
 // default change needs no entry. Literals, so that change cannot alter it.
 export const SHIPPED_DEFAULTS: Readonly<Record<string, readonly unknown[]>> = {
@@ -145,11 +145,15 @@ function isLegacyFile(raw: RawConfig): boolean {
   return typeof format !== 'number' || format < SPARSE_FORMAT;
 }
 
-/** Drop every stored value a shipped version wrote as its default. Returns how many it dropped. */
-function dropShippedDefaults(raw: RawConfig): number {
+/**
+ * Drop every stored value a shipped version wrote as its default, except for
+ * the keys in `keep`: those this install's last write stored. Returns how
+ * many it dropped.
+ */
+function dropShippedDefaults(raw: RawConfig, keep: ReadonlySet<string>): number {
   let dropped = 0;
   for (const [key, values] of Object.entries(SHIPPED_DEFAULTS)) {
-    if (Object.hasOwn(raw, key) && values.includes(raw[key])) {
+    if (Object.hasOwn(raw, key) && values.includes(raw[key]) && !keep.has(key)) {
       delete raw[key];
       dropped++;
     }
@@ -158,50 +162,73 @@ function dropShippedDefaults(raw: RawConfig): number {
 }
 
 // The migration record (#213): a file beside config.json that versions before
-// #213 never touch. They rewrite config.json whole and drop keys they do not
-// know, the marker included, so the marker alone cannot say whether this
-// install has migrated. The first write by a version with #213 creates it.
-// From then on no value is dropped again: a file without the marker was
-// rewritten by an older Reverie still running (an MCP server started before
-// the upgrade, say), and its values — the user's choices among them — are kept
-// as set. A stale default kept is the price; a deliberate choice is never lost.
+// #213 never touch. They rewrite config.json whole, every default included,
+// and drop keys they do not know, the marker with them. The record lists the
+// keys this install's last write stored, which are the settings the user set.
+// A config.json without the marker is then read against it: a value equal to
+// an old default is kept for a key in the list — the user's choice, rewritten
+// by an older Reverie still running (an MCP server started before the
+// upgrade, say) — and counts as unset for any other key, as in a file that
+// was never migrated. Values that match no old default are always kept.
+// Every write updates the record before config.json, so a crash between the
+// two errs toward keeping a value.
 export const MIGRATION_RECORD_FILE = 'config.format';
 
-interface MigrationRecord { format: number; olderRewriteSeen?: string }
+interface MigrationRecord { stored: ReadonlySet<string>; olderRewriteSeen?: string }
+
+const NOTHING: ReadonlySet<string> = new Set();
 
 function migrationRecordPath(configPath: string): string {
   return path.join(path.dirname(configPath), MIGRATION_RECORD_FILE);
 }
 
-function hasMigrationRecord(configPath: string): boolean {
-  return fs.existsSync(migrationRecordPath(configPath));
-}
-
-function readMigrationRecord(configPath: string): MigrationRecord {
-  const record: MigrationRecord = { format: SPARSE_FORMAT };
+/** The record, or null when this install has not migrated. A record that does not parse lists no keys. */
+function readMigrationRecord(configPath: string): MigrationRecord | null {
+  let text: string;
   try {
-    const parsed = JSON.parse(fs.readFileSync(migrationRecordPath(configPath), 'utf8')) as unknown;
-    const seen = parsed && typeof parsed === 'object' ? (parsed as { olderRewriteSeen?: unknown }).olderRewriteSeen : undefined;
-    if (typeof seen === 'string') record.olderRewriteSeen = seen;
-  } catch { /* present but unreadable: still a record */ }
-  return record;
+    text = fs.readFileSync(migrationRecordPath(configPath), 'utf8');
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    return { stored: NOTHING };
+  }
+  try {
+    const parsed = JSON.parse(text) as { stored?: unknown; olderRewriteSeen?: unknown } | null;
+    const stored = Array.isArray(parsed?.stored) ? parsed.stored.filter((k): k is string => typeof k === 'string') : [];
+    const record: MigrationRecord = { stored: new Set(stored) };
+    if (typeof parsed?.olderRewriteSeen === 'string') record.olderRewriteSeen = parsed.olderRewriteSeen;
+    return record;
+  } catch {
+    return { stored: NOTHING };
+  }
 }
 
 function writeMigrationRecord(configPath: string, record: MigrationRecord): void {
-  atomicWriteFileSync(migrationRecordPath(configPath), JSON.stringify(record, null, 2));
+  const out: Record<string, unknown> = { format: SPARSE_FORMAT, stored: [...record.stored].sort() };
+  if (record.olderRewriteSeen !== undefined) out.olderRewriteSeen = record.olderRewriteSeen;
+  atomicWriteFileSync(migrationRecordPath(configPath), JSON.stringify(out, null, 2));
 }
 
+// Rewrites this process has noted, so a note is printed once per process even
+// where the record cannot be written (a read-only data directory).
+const notedRewrites = new Set<string>();
+
 /**
- * An older Reverie rewrote config.json after this install migrated. Its
- * values are kept as set; say so once per rewrite, remembered in the record.
+ * An older Reverie rewrote config.json after this install migrated: say so
+ * once per rewrite. The rewrite is remembered in the record, under the config
+ * lock so the stored-key list a write puts there is never overwritten with a
+ * stale one. Best effort: a busy lock or a read-only directory costs only a
+ * repeat of the note in a later process.
  */
-function noteOlderRewrite(configPath: string, text: string): void {
+function noteOlderRewrite(configPath: string, text: string, record: MigrationRecord): void {
   const seen = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
-  const record = readMigrationRecord(configPath);
-  if (record.olderRewriteSeen === seen) return;
-  console.error(`Note: ${configPath} was rewritten by an older Reverie; values equal to an old default are kept as set. \`${getBinaryName()} config unset <key>\` returns one to its default.`);
+  if (record.olderRewriteSeen === seen || notedRewrites.has(`${configPath}:${seen}`)) return;
+  notedRewrites.add(`${configPath}:${seen}`);
+  console.error(`Note: ${configPath} was rewritten by an older Reverie. Settings you changed keep their values; any other setting at an old default follows the current one. \`${getBinaryName()} config unset <key>\` returns a setting to its default.`);
   try {
-    writeMigrationRecord(configPath, { ...record, olderRewriteSeen: seen });
+    withFileLock(configPath, () => {
+      const current = readMigrationRecord(configPath);
+      if (current !== null) writeMigrationRecord(configPath, { ...current, olderRewriteSeen: seen });
+    });
   } catch (err) {
     debug(`migration record not updated: ${String(err)}`);
   }
@@ -301,8 +328,9 @@ export function loadConfig(): Config {
 
     const raw = stored.raw;
     if (isLegacyFile(raw)) {
-      if (hasMigrationRecord(configPath)) noteOlderRewrite(configPath, stored.text);
-      else dropShippedDefaults(raw);
+      const record = readMigrationRecord(configPath);
+      if (record !== null) noteOlderRewrite(configPath, stored.text, record);
+      dropShippedDefaults(raw, record?.stored ?? NOTHING);
     }
 
     const result = resolveConfig(raw);
@@ -328,11 +356,11 @@ export function loadConfig(): Config {
  * Change settings as one transaction under the config lock: read the file
  * as it stands, apply `change` to the effective settings, write the sparse
  * result. A concurrent `config set` of another key is never lost, and an
- * earlier loadConfig() snapshot is never written back. Before this install's
- * first write the file's shipped defaults are dropped in the same write, and
- * the migration record is created after it. Nothing is written when the
- * stored form does not change, and no file is created to hold nothing. A
- * file that does not parse is refused, not replaced.
+ * earlier loadConfig() snapshot is never written back. A file without the
+ * marker is cleaned in the same write, as a read cleans it, and the record's
+ * key list is updated before config.json. Nothing is written when nothing
+ * changes, and no file is created to hold nothing. A file that does not
+ * parse is refused, not replaced.
  */
 function updateConfig(change: (config: Config) => void): void {
   ensureDataDirectoryExists();
@@ -345,19 +373,31 @@ function updateConfig(change: (config: Config) => void): void {
       if (isUnparseable(err)) throw new ConfigUnreadableError(configPath, err);
       throw err;
     }
-    const recorded = hasMigrationRecord(configPath);
+    const record = readMigrationRecord(configPath);
     const raw = stored?.raw ?? {};
     const before = JSON.stringify(raw);
-    if (isLegacyFile(raw) && !recorded) dropShippedDefaults(raw);
+    if (isLegacyFile(raw)) dropShippedDefaults(raw, record?.stored ?? NOTHING);
     const config = resolveConfig(raw);
     change(config);
     const sparse = toSparse(config);
-    const unchanged = stored === null ? Object.keys(sparse).length === 1 : JSON.stringify(sparse) === before;
-    if (!unchanged) writeConfigFile(configPath, config);
-    // After config.json: a crash between the two leaves a marked file, which
-    // no read or write drops values from.
-    if (!recorded && (stored !== null || !unchanged)) writeMigrationRecord(configPath, { format: SPARSE_FORMAT });
+    const keys = storedKeys(sparse);
+    const configChanged = stored === null ? keys.size > 0 : JSON.stringify(sparse) !== before;
+    // Record first (N2): a crash before config.json leaves the old file read
+    // against the new key list, which keeps its values for those keys.
+    if ((stored !== null || configChanged) && (record === null || !sameKeys(record.stored, keys))) {
+      writeMigrationRecord(configPath, { stored: keys });
+    }
+    if (configChanged) writeConfigFile(configPath, config);
   }, STORE_LOCK_WAIT_MS);
+}
+
+/** The settings a sparse config.json stores. */
+function storedKeys(sparse: RawConfig): ReadonlySet<string> {
+  return new Set(Object.keys(sparse).filter(k => k !== CONFIG_FORMAT_KEY));
+}
+
+function sameKeys(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...a].every(k => b.has(k));
 }
 
 // Save configuration: the sparse form of `config`, under the config lock.
@@ -366,8 +406,8 @@ export function saveConfig(config: Config): void {
   ensureDataDirectoryExists();
   const configPath = getConfigFilePath();
   withFileLock(configPath, () => {
+    writeMigrationRecord(configPath, { stored: storedKeys(toSparse(config)) });
     writeConfigFile(configPath, config);
-    if (!hasMigrationRecord(configPath)) writeMigrationRecord(configPath, { format: SPARSE_FORMAT });
   }, STORE_LOCK_WAIT_MS);
 }
 

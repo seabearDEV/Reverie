@@ -284,44 +284,116 @@ describe('#213: the migration', () => {
 });
 
 describe('#213: an older Reverie rewrites config.json after the migration', () => {
-  /** v1.3.0's saveConfig: the whole object, no marker, unknown keys dropped. */
-  const oldWriter = (values: Record<string, unknown>) => writeFile({ ...V130_FILE, ...values });
+  /**
+   * What v1.3.0's `config set` leaves: it reads the settings it knows (its own
+   * defaults for the rest: 38912 for the budget) and writes the whole object
+   * back, with no marker and no key it does not know.
+   */
+  const oldWriter = (change: Record<string, unknown> = {}) => {
+    const current: Record<string, unknown> = fs.existsSync(configPath) ? onDisk() : {};
+    const known = Object.fromEntries(Object.entries(current).filter(([k]) => Object.hasOwn(V130_FILE, k)));
+    writeFile({ ...V130_FILE, ...known, ...change });
+  };
+  const record = (): { stored: string[] } => JSON.parse(fs.readFileSync(recordPath, 'utf8')) as { stored: string[] };
 
-  it("keeps the user's 51200 when an old writer drops the marker (the F1b repro)", () => {
+  it("keeps the user's 51200 when an old writer drops the marker (F1b)", () => {
     setConfigSetting('bootstrap_max_response_bytes', '51200');
-    oldWriter({ theme: 'dark', bootstrap_max_response_bytes: 51200 });
+    oldWriter({ theme: 'dark' });
+    expect(onDisk().bootstrap_max_response_bytes).toBe(51200);
     expect(fresh()).toEqual({ ...DEFAULTS, theme: 'dark', bootstrap_max_response_bytes: 51200 });
-    expect(getConfigSetting('bootstrap_max_response_bytes')).toBe(51200);
   });
 
-  it('says so once per rewrite, and keeps an old default it wrote as set', () => {
+  it("does not lock in the old writer's default for a key the user unset (N1)", () => {
+    setConfigSetting('bootstrap_max_response_bytes', '40000');
+    unsetConfigSetting('bootstrap_max_response_bytes');
+    oldWriter({ theme: 'dark' });
+    expect(onDisk().bootstrap_max_response_bytes).toBe(38912);
+    expect(fresh().bootstrap_max_response_bytes).toBe(28672);
+    expect(getConfigSetting('theme')).toBe('dark');
+  });
+
+  it("does not lock in the old writer's defaults for keys never set here", () => {
     setConfigSetting('theme', 'dark');
-    oldWriter({ theme: 'dark' }); // its own default for the budget: 38912
-    expect(fresh().bootstrap_max_response_bytes).toBe(38912);
+    oldWriter({ max_backups: 3 });
+    expect(fresh()).toEqual({ ...DEFAULTS, theme: 'dark', max_backups: 3 });
+  });
+
+  it('the record lists the keys the last write stored; unset takes one out', () => {
+    setConfigSetting('theme', 'dark');
+    setConfigSetting('bootstrap_max_response_bytes', '51200');
+    expect(record().stored).toEqual(['bootstrap_max_response_bytes', 'theme']);
+    unsetConfigSetting('theme');
+    expect(record().stored).toEqual(['bootstrap_max_response_bytes']);
+    unsetConfigSetting('bootstrap_max_response_bytes');
+    expect(record().stored).toEqual([]);
+  });
+
+  it('says so once per rewrite', () => {
+    setConfigSetting('theme', 'dark');
+    oldWriter();
+    fresh();
     expect(notes()).toHaveLength(1);
     expect(notes()[0]).toContain('config unset <key>');
     fresh();
     fresh();
     expect(notes()).toHaveLength(1);
-
     oldWriter({ theme: 'light' }); // another rewrite
     expect(fresh().theme).toBe('light');
     expect(notes()).toHaveLength(2);
   });
 
-  it('config unset returns a kept value to the default, and the next write restores the marker', () => {
-    setConfigSetting('theme', 'dark');
+  it('remembering the note keeps the key list a write recorded', () => {
+    setConfigSetting('bootstrap_max_response_bytes', '51200');
     oldWriter({ theme: 'dark' });
-    unsetConfigSetting('bootstrap_max_response_bytes');
-    expect(fresh().bootstrap_max_response_bytes).toBe(28672);
-    expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, theme: 'dark' });
+    fresh();
+    expect(record().stored).toEqual(['bootstrap_max_response_bytes']);
+    expect(fresh().bootstrap_max_response_bytes).toBe(51200);
   });
 
-  it('a later write keeps every value the old writer left that differs from the default', () => {
+  it('a read-only data directory: the read still works and the note prints once per process', () => {
+    if (process.getuid?.() === 0) return; // root writes anyway
     setConfigSetting('bootstrap_max_response_bytes', '51200');
-    oldWriter({ max_backups: 3, bootstrap_max_response_bytes: 51200 });
+    oldWriter({ theme: 'dark' });
+    fs.chmodSync(dir, 0o555);
+    try {
+      expect(fresh().bootstrap_max_response_bytes).toBe(51200);
+      expect(fresh().bootstrap_max_response_bytes).toBe(51200);
+      expect(notes()).toHaveLength(1);
+      expect(errorLines().filter(l => !l.includes('rewritten by an older Reverie'))).toEqual([]);
+    } finally {
+      fs.chmodSync(dir, 0o700);
+    }
+  });
+
+  it('a later write keeps the values the old writer left for keys set here and values off every old default', () => {
+    setConfigSetting('bootstrap_max_response_bytes', '51200');
+    oldWriter({ max_backups: 3 });
     setConfigSetting('colors', 'false');
     expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, colors: false, max_backups: 3, bootstrap_max_response_bytes: 51200 });
+  });
+
+  it('a crash after the record, before config.json: the old file keeps its values for the listed keys (N2)', () => {
+    // The state a crash leaves: the record of a write that listed the budget,
+    // and the file as an older writer left it.
+    fs.writeFileSync(recordPath, JSON.stringify({ format: 2, stored: ['bootstrap_max_response_bytes'] }));
+    writeFile({ ...V130_FILE, bootstrap_max_response_bytes: 51200, theme: 'dark' });
+    expect(loadConfig()).toEqual({ ...DEFAULTS, theme: 'dark', bootstrap_max_response_bytes: 51200 });
+  });
+
+  it('the record is written before config.json: a crash between them never drops a value the file holds (N2)', () => {
+    setConfigSetting('theme', 'dark');
+    // The second of the two renames fails, as a crash between them would.
+    const real = fs.renameSync.bind(fs);
+    let renames = 0;
+    vi.spyOn(fs, 'renameSync').mockImplementation(((from: fs.PathLike, to: fs.PathLike) => {
+      if ((String(to) === configPath || String(to) === recordPath) && ++renames === 2) throw new Error('crash');
+      real(from, to);
+    }) as typeof fs.renameSync);
+    expect(() => setConfigSetting('bootstrap_max_response_bytes', '51200')).toThrow('crash');
+    vi.restoreAllMocks();
+    // An older Reverie then writes the whole object from whatever it finds.
+    oldWriter({ max_backups: 3 });
+    expect(fresh().bootstrap_max_response_bytes).toBe(onDisk().bootstrap_max_response_bytes);
   });
 });
 

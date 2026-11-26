@@ -111,6 +111,16 @@ describe('#213: rvr config', () => {
     expect(second.stderr).not.toContain('rewritten by an older Reverie');
   });
 
+  it("an older writer's default is not locked in after config unset (N1)", () => {
+    expect(run('config', 'set', 'bootstrap_max_response_bytes', '40000').status).toBe(0);
+    expect(run('config', 'unset', 'bootstrap_max_response_bytes').status).toBe(0);
+    expect(onDisk()).toEqual({ _format: 2 });
+    // v1.3.0 `config set theme dark`: the whole object, its own 38912 in it.
+    fs.writeFileSync(configPath, JSON.stringify({ ...V130_FILE, theme: 'dark' }, null, 2));
+    expect(json(run('--json', 'config', 'get', 'bootstrap_max_response_bytes')).result).toEqual({ bootstrap_max_response_bytes: 28672 });
+    expect(json(run('--json', 'config', 'get', 'theme')).result).toEqual({ theme: 'dark' });
+  });
+
   it('parallel config set of different keys loses none of them', async () => {
     const settings: Record<string, string> = {
       colors: 'false', theme: 'dark', max_backups: '3', import_max_bytes: '1000',
