@@ -460,6 +460,30 @@ export function updateUnderBothLocks(
   }
 }
 
+/**
+ * Read both stores as they stand under their locks and decide from them,
+ * writing nothing (#256): which list a confirmation flag goes in. Same lock
+ * order as updateUnderBothLocks, the project's first. A store this process
+ * cannot write is read without its lock, as inspect() does, so a read-only
+ * project or data directory does not fail a command that will not write it.
+ * `project` is undefined when there is no project store, or when it is the
+ * global store's directory. `fn` is synchronous and reads or writes no
+ * store itself.
+ */
+export function inspectBothStores<T>(fn: (project: LockedStore | undefined, global: LockedStore) => T): T {
+  const global = getGlobalStore();
+  const globalDir = getGlobalStoreDirPath();
+  const project = getProjectStore();
+  const projectDir = projectStoreDirPath;
+  const view = (store: ScopedStore, which: 'project' | 'global', dir: string, data: UnifiedData): LockedStore =>
+    ({ scope: which, dir, data, keys: store.storedKeys(), unreadable: store.unreadable() });
+  if (!project || projectDir === null || path.resolve(projectDir) === path.resolve(globalDir)) {
+    return global.inspect(current => fn(undefined, view(global, 'global', globalDir, current)));
+  }
+  return project.inspect(projectCurrent => global.inspect(globalCurrent =>
+    fn(view(project, 'project', projectDir, projectCurrent), view(global, 'global', globalDir, globalCurrent))));
+}
+
 function stampImportMeta(
   next: CodexData,
   current: CodexData,

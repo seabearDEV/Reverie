@@ -464,8 +464,12 @@ export interface ConfirmSetResult {
   confirm: true;
   /** The key as given, when the flag is listed under another spelling. */
   typed?: string;
-  /** 'global' when the project's list was asked for and the flag went to the global list (#256). */
-  list?: 'global';
+  /**
+   * The list, when it is not the one asked for: 'global' when the project's
+   * was asked for and the entry is the global store's (#256); 'project' when
+   * the global store cannot be written and the flag stayed in the project's.
+   */
+  list?: 'global' | 'project';
 }
 
 /**
@@ -480,33 +484,54 @@ export interface ConfirmSetResult {
  * setConfirm's to decide (#255, #256), and the success line says so when it
  * is not the list asked for or the name typed.
  *
- * Returns the line to print and the envelope's result, or undefined after
- * printing the refusal.
+ * Returns the line to print, a warning when the flag applies more narrowly
+ * than it should (the global store could not be written), and the
+ * envelope's result; or undefined after printing the refusal.
  */
-export function flagEntry(key: string, scope?: Scope): { message: string; result: ConfirmSetResult } | undefined {
+export function flagEntry(key: string, scope?: Scope): { message: string; warning?: string; result: ConfirmSetResult } | undefined {
   const problem = confirmTargetProblem(key, undefined, true, true);
   if (problem) {
     printError(problem.message, problem.code);
     return undefined;
   }
-  // #259: asked again under the store locks, where the flag is written. A
-  // rename or a removal since the look above leaves nothing under this name,
-  // and a flag there would gate nothing that moved.
-  const set = setConfirm(key, scope);
+  let set: ReturnType<typeof setConfirm>;
+  try {
+    set = setConfirm(key, scope);
+  } catch (err) {
+    // A store that cannot be written (a read-only directory or file): one
+    // line, not a stack trace. Nothing was written.
+    const code = !!err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+    if (code !== 'EACCES' && code !== 'EPERM' && code !== 'EROFS') throw err;
+    printError(`No flag was set on '${key}': the store cannot be written (${err instanceof Error ? err.message : String(err)}).`, 'IO');
+    return undefined;
+  }
   if (set === false) {
     printError(`Entry '${key}' not found. Cannot update confirm on a non-existent entry.`, 'NOT_FOUND');
     return undefined;
   }
   const named = set.key === key ? `Entry '${key}'` : `Entry '${set.key}' (as typed: '${key}')`;
-  // The global list though -G was not given: the entry is stored only there
-  // (or was, when the flag was written — see setConfirm).
+  // Not the list asked for: the global one though -G was not given (the
+  // entry is stored only there, or this project holds only another spelling
+  // of it, or it was when the flag was written — see setConfirm), or the
+  // project's because the global store cannot be written.
   const toGlobal = set.scope === 'global' && scope !== 'global';
-  const where = set.globalOnly
-    ? ` It is stored only in the global store, so its flag is in the global list and applies in every project.`
-    : toGlobal ? ' Its flag is in the global list.' : '';
+  const where = set.moved === 'globalOnly'
+    ? ' It is stored only in the global store, so its flag is in the global list and applies in every project.'
+    : set.moved === 'opensGlobal'
+      ? ' Here it opens the global store\'s entry (this project\'s is spelled another way), so its flag is in the global list and applies in every project.'
+      : toGlobal ? ' Its flag is in the global list.' : '';
+  const warning = set.moved === 'globalUnwritable'
+    ? `The global store cannot be written, so the flag is in this project's list: it applies only in this project, and a global rename run from another project will not carry it. `
+      + `Once the global store can be written, \`${getBinaryName()} confirm set -G ${set.key}\` lists it there.`
+    : undefined;
   return {
     message: `${named} now requires confirmation to run.${where}`,
-    result: { key: set.key, confirm: true, ...(set.key !== key ? { typed: key } : {}), ...(toGlobal ? { list: 'global' as const } : {}) },
+    ...(warning ? { warning } : {}),
+    result: {
+      key: set.key, confirm: true,
+      ...(set.key !== key ? { typed: key } : {}),
+      ...(toGlobal ? { list: 'global' as const } : set.moved === 'globalUnwritable' ? { list: 'project' as const } : {}),
+    },
   };
 }
 
@@ -539,7 +564,7 @@ async function promptForConfirm(key: string, scope?: Scope  ): Promise<void> {
   if (answer.toLowerCase() === 'y' && setConfirm(key, scope) === false) flagNotSet(key);
 }
 
-export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string): Promise<{ key: string; alias?: string; confirm?: boolean; typed?: string; list?: 'global'; stillGated?: true } | undefined> {
+export async function setEntry(key: string, value: string | undefined, force = false, encrypt = false, alias?: string, confirm?: boolean, global?: boolean, passwordFile?: string): Promise<{ key: string; alias?: string; confirm?: boolean; typed?: string; list?: 'global' | 'project'; stillGated?: true } | undefined> {
   debug('setEntry called', { key, force, encrypt, alias, confirm, global });
   const scope = toScope(global);
   try {
@@ -573,6 +598,7 @@ export async function setEntry(key: string, value: string | undefined, force = f
             return;
           }
           printSuccess(flagged.message);
+          if (flagged.warning) printWarning(flagged.warning);
           if (alias) setAlias(alias, key, scope);
           return { ...flagged.result, ...(alias ? { alias } : {}) };
         }
@@ -664,12 +690,13 @@ export async function setEntry(key: string, value: string | undefined, force = f
     if (alias) console.log(`Alias '${alias}' added successfully.`);
 
     if (confirm === false) {
-      // The value is stored either way; say so if the key is still gated.
+      // The value is stored either way; say so if the key is still gated,
+      // in the result too, as the flag-only form does (#257).
       const note = stillGatedNote(key, flagRemoved);
       if (note) printWarning(note.message);
-    } else if (confirm === undefined) {
-      await promptForConfirm(key, scope);
+      return { key, ...(alias ? { alias } : {}), confirm: false, ...(note ? { stillGated: true as const } : {}) };
     }
+    if (confirm === undefined) await promptForConfirm(key, scope);
     return { key, ...(alias ? { alias } : {}) };
   } catch (error) {
     handleError('Failed to set entry:', error);

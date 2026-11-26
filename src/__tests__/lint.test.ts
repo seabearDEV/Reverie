@@ -10,6 +10,9 @@ vi.mock('../storage', () => ({
 }));
 
 vi.mock('../store', () => ({
+  // #256: setConfirm's read of both stores; not used here. A throw, so a
+  // call can never fall through to the real store.
+  inspectBothStores: vi.fn(() => { throw new Error('inspectBothStores is not mocked in this suite'); }),
   findProjectFile: vi.fn(() => null),
   clearProjectFileCache: vi.fn(),
 }));

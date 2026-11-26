@@ -107,6 +107,11 @@ vi.mock('../store', () => {
     if (JSON.stringify(next.aliases) !== JSON.stringify(before.aliases)) saveAliasMap(next.aliases);
     if (JSON.stringify(next.confirm) !== JSON.stringify(before.confirm)) saveConfirmMap(next.confirm);
   });
+  // #256: setConfirm's read of both stores — this mock's one store, as the global one.
+  const inspectBothStores = vi.fn((fn: (project: unknown, global: unknown) => unknown) => {
+    const keysOf = (o: Record<string, unknown>, pre = ''): string[] => Object.entries(o).flatMap(([k, v]) => (v !== null && typeof v === 'object' ? keysOf(v as Record<string, unknown>, `${pre}${k}.`) : [`${pre}${k}`]));
+    return fn(undefined, { scope: 'global', dir: '/mock/store', data: { ...current(), _meta: {} }, keys: keysOf(current().entries), unreadable: [] });
+  });
   // #268: one store write of several sections, over this mock's one store.
   const updateStore = vi.fn((fn: (c: Sections & { _meta: Record<string, number> }) => Sections | null) => {
     const before = current();
@@ -119,6 +124,7 @@ vi.mock('../store', () => {
   return {
     updateUnderBothLocks,
     updateStore,
+    inspectBothStores,
     loadEntries:        vi.fn(()  => clone(storeState.entries)),
     saveEntries,
     updateEntries,

@@ -227,6 +227,118 @@ describe('where a confirmation flag is listed (#255, #256, #257)', () => {
     });
   });
 
+  // ── review of #256: a store this process cannot write ────────────────
+
+  describe('a store this process cannot write (review of #256)', () => {
+    /** Run `fn` with `paths` read-only, and put them back. */
+    const readOnly = (paths: string[], fn: () => void) => {
+      for (const p of paths) fs.chmodSync(p, 0o555);
+      try {
+        fn();
+      } finally {
+        for (const p of [...paths].reverse()) fs.chmodSync(p, 0o755);
+      }
+    };
+    const noStack = (out: string) => expect(out).not.toMatch(/^\s+at |^\d+ \| /m);
+
+    it('the global store cannot be written: a global-only entry is flagged in the project list, with a warning', () => {
+      expect(rvrIn('outside', 'set', '-G', 'ops.deploy', touch('deploy')).status).toBe(0);
+      readOnly([globalStore()], () => {
+        const r = rvr('confirm', 'set', 'ops.deploy');
+        noStack(r.stdout + r.stderr);
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain("Entry 'ops.deploy' now requires confirmation to run.");
+        expect(r.stdout).toContain("The global store cannot be written, so the flag is in this project's list: it applies only in this project");
+        expect(projectFlags()).toEqual(['ops.deploy']);
+        expect(rvr('run', 'ops.deploy').stderr).toContain(REFUSAL);
+        expect(ran('deploy')).toBe(false);
+        // In JSON: the list it is in, and the warning.
+        expect(rvr('confirm', 'remove', 'ops.deploy').status).toBe(0);
+        const env = json('confirm', 'set', 'ops.deploy');
+        expect(env.ok).toBe(true);
+        expect(env.result).toEqual({ key: 'ops.deploy', confirm: true, list: 'project' });
+        expect((env.warnings ?? []).map(w => w.message).join('\n')).toContain('The global store cannot be written');
+        // The flag-only set the same way.
+        expect(rvr('confirm', 'remove', 'ops.deploy').status).toBe(0);
+        const viaSet = rvr('set', 'ops.deploy', '--confirm');
+        expect(viaSet.status).toBe(0);
+        expect(viaSet.stdout).toContain('The global store cannot be written');
+        expect(projectFlags()).toEqual(['ops.deploy']);
+      });
+      expect(globalFlags()).toEqual([]);
+    });
+
+    it('... and with -G: refused in one line, nothing written', () => {
+      expect(rvrIn('outside', 'set', '-G', 'ops.deploy', 'true').status).toBe(0);
+      readOnly([globalStore()], () => {
+        const r = rvr('confirm', 'set', '-G', 'ops.deploy');
+        expect(r.status).toBe(1);
+        noStack(r.stdout + r.stderr);
+        expect(r.stderr).toContain("No flag was set on 'ops.deploy': the store cannot be written");
+        expect(json('confirm', 'set', '-G', 'ops.deploy').error?.code).toBe('IO');
+        expect(rvr('set', '-G', 'ops.deploy', '--confirm').status).toBe(1);
+      });
+      expect(globalFlags()).toEqual([]);
+      expect(projectFlags()).toEqual([]);
+    });
+
+    it.skipIf(process.platform !== 'darwin')('a global confirmation list that cannot be replaced (chflags uchg): the project list, with the warning', () => {
+      expect(rvrIn('outside', 'set', '-G', 'ops.deploy', 'true').status).toBe(0);
+      expect(rvrIn('outside', 'set', '-G', 'g.other', 'true').status).toBe(0);
+      expect(rvrIn('outside', 'confirm', 'set', '-G', 'g.other').status).toBe(0);
+      const list = path.join(globalStore(), '_confirm.json');
+      expect(spawnSync('chflags', ['uchg', list]).status).toBe(0);
+      try {
+        const r = rvr('confirm', 'set', 'ops.deploy');
+        noStack(r.stdout + r.stderr);
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain('The global store cannot be written');
+        expect(projectFlags()).toEqual(['ops.deploy']);
+      } finally {
+        spawnSync('chflags', ['nouchg', list]);
+      }
+      expect(globalFlags()).toEqual(['g.other']);
+    });
+
+    it('an unreadable global list is not a fallback: STORE_UNREADABLE, nothing written', () => {
+      expect(rvrIn('outside', 'set', '-G', 'ops.deploy', 'true').status).toBe(0);
+      fs.writeFileSync(path.join(globalStore(), '_confirm.json'), '{\n<<<<<<< ours\n=======\n>>>>>>> theirs\n}\n');
+      expect(json('confirm', 'set', 'ops.deploy').error?.code).toBe('STORE_UNREADABLE');
+      expect(projectFlags()).toEqual([]);
+    });
+
+    it('a project this process cannot write: a global-only entry is still flagged, in the global list', () => {
+      expect(rvrIn('outside', 'set', '-G', 'ops.deploy', touch('deploy')).status).toBe(0);
+      expect(rvrIn('outside', 'set', '-G', 'ops.build', 'true').status).toBe(0);
+      readOnly([dir('p1'), projectStore()], () => {
+        const r = rvr('confirm', 'set', 'ops.deploy');
+        noStack(r.stdout + r.stderr);
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain('stored only in the global store');
+        // -G, and the flag-only set.
+        expect(rvr('confirm', 'set', '-G', 'ops.build').status).toBe(0);
+        expect(rvr('confirm', 'remove', '-G', 'ops.deploy').status).toBe(0);
+        expect(rvr('set', 'ops.deploy', '--confirm').status).toBe(0);
+        // Already listed: answered from the read, nothing opened for writing.
+        expect(rvr('confirm', 'set', 'ops.deploy').status).toBe(0);
+        expect(rvr('run', 'ops.deploy').stderr).toContain(REFUSAL);
+      });
+      expect(globalFlags()).toEqual(['ops.build', 'ops.deploy']);
+      expect(projectFlags()).toEqual([]);
+      expect(ran('deploy')).toBe(false);
+    });
+
+    it('-G lists the global store\'s spelling, though the project holds a fold of it (review F2)', () => {
+      // On APFS `ops.start` opens the project's `opſ.start`. The global list
+      // gets the name the global entry is stored as: the other gates nothing
+      // where nothing folds.
+      expect(rvrIn('outside', 'set', '-G', 'ops.start', 'echo G').status).toBe(0);
+      expect(rvr('set', `op${LONG_S}.start`, 'echo P').status).toBe(0);
+      expect(rvr('confirm', 'set', '-G', 'ops.start').status).toBe(0);
+      expect(globalFlags()).toEqual(['ops.start']);
+    });
+  });
+
   // ── #257: the flag-only set looks the key up as confirm set does ─────
 
   describe('the flag-only set looks the key up as confirm set does (#257)', () => {
@@ -326,6 +438,15 @@ describe('where a confirmation flag is listed (#255, #256, #257)', () => {
       expect(json('run', 'ops.deploy').error?.code).toBe('REQUIRES_CONFIRMATION');
       expect(ran('deploy')).toBe(false);
     });
+  });
+
+  it('set <key> <value> --no-confirm on a key that stays gated: the result says so (review F4)', () => {
+    expect(rvr('set', 'ops.deploy', 'true').status).toBe(0);
+    expect(rvr('confirm', 'set', '-G', 'ops.deploy').status).toBe(0);
+    const env = json('set', 'ops.deploy', 'echo new', '--no-confirm');
+    expect(env.ok).toBe(true);
+    expect(env.result).toEqual({ key: 'ops.deploy', confirm: false, stillGated: true });
+    expect(json('set', 'ops.other', 'v', '--no-confirm').result).toEqual({ key: 'ops.other', confirm: false });
   });
 
   describe('set --no-confirm -a says what it did (#257)', () => {

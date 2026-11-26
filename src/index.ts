@@ -481,6 +481,7 @@ confirmCommand
         const flagged = commands.flagEntry(resolvedKey, scope);
         if (!flagged) return undefined;
         console.log(flagged.message);
+        if (flagged.warning) printWarning(flagged.warning);
         return flagged.result;
       }
     );
