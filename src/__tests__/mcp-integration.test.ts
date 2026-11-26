@@ -382,6 +382,24 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.existsSync(marker('deploy'))).toBe(false);
     });
 
+    it('reverie_rename of the same name in another Unicode normalization renames the stored key (#253)', () => {
+      const nfc = `caf${String.fromCodePoint(0xe9)}.go`;
+      const nfd = `cafe${String.fromCodePoint(0x301)}.go`;
+      callMcpTool('reverie_set', { key: nfc, value: `touch ${marker('cafe')}` });
+      flag(nfc);
+      const opens = fs.existsSync(storeFile(`${nfd}.json`));
+      const r = callMcpTool('reverie_rename', { oldKey: nfd, newKey: 'ops.go' });
+      if (opens) {
+        expect(r.isError).toBeFalsy();
+        expect(fs.readdirSync(path.join(tmpDir, 'store')).some(f => f.normalize('NFC') === `${nfc}.json`)).toBe(false);
+        expect(flagged()).toEqual([nfc, 'ops.go']);
+        expect(text(callMcpTool('reverie_run', { key: 'ops.go' }))).toContain('requires confirmation before execution');
+      } else {
+        expect(text(r)).toContain('not found');
+      }
+      expect(fs.existsSync(marker('cafe'))).toBe(false);
+    });
+
     it('reverie_rename with scope "project": the same key in the global store stays gated', async () => {
       // One flag, in the project list, gates whichever both.deploy is read.
       // The rename moves the project's entries; the global one did not move

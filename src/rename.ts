@@ -66,7 +66,9 @@ export interface RenameResult {
  * spelling of it — another case on default macOS, `ſ` for `s` on APFS. The
  * removal is by name, so a rename through such a spelling used to copy the
  * entry and report it renamed. Whether a spelling reaches an entry is asked
- * of the filesystem (entryIdentity), not worked out from the names. A
+ * of the filesystem (entryIdentity), not worked out from the names. The
+ * same name in another Unicode normalization is the one exception: as for
+ * every write (#253), it is that key, and the stored one is renamed. A
  * namespace has no file of its own, so another spelling of one opens
  * nothing and is not found, as before.
  */
@@ -86,36 +88,57 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
     assertNothingUnreadableUnder(oldKey, target);
     const lookIn = fallsThrough && other ? [target, other] : [target];
 
-    // The source, as it stands now.
-    let found: { store: LockedStore; value: CodexValue } | undefined;
+    // The source, as it stands now, under the name it is stored as.
+    let found: { store: LockedStore; key: string; value: CodexValue } | undefined;
     for (const store of lookIn) {
       const value = getNestedValue(store.data.entries, oldKey);
       if (value !== undefined) {
-        found = { store, value };
+        found = { store, key: oldKey, value };
         break;
       }
       const stored = storedSpellingOf(store.dir, oldKey, storedKeys(store));
-      if (stored !== undefined) throw new RenameRefusal(anotherSpelling(oldKey, stored), 'INVALID_INPUT');
+      if (stored !== undefined) {
+        // #253: the same name in another Unicode normalization is that key —
+        // HFS+ and exFAT list names in NFD, so the key typed and the key
+        // listed can differ only so. Any other spelling is refused (#247).
+        if (!sameUnderNFC(stored, oldKey)) throw new RenameRefusal(anotherSpelling(oldKey, stored), 'INVALID_INPUT');
+        const storedValue = getNestedValue(store.data.entries, stored);
+        if (storedValue !== undefined) {
+          found = { store, key: stored, value: storedValue };
+          break;
+        }
+      }
       const broken = store.unreadable.find(f => f.kind === 'entry' && f.key === oldKey);
       if (broken) throw new StoreUnreadableError([broken], 'read');
     }
     if (!found) throw new RenameRefusal(`Entry '${oldKey}' not found.`, 'NOT_FOUND');
+    const source = found.key;
+    if (source !== oldKey) {
+      const problem = renameDestinationProblem(source, newKey, isValidEntryKey);
+      if (problem) throw new RenameRefusal(problem, 'INVALID_INPUT');
+      assertNothingUnreadableUnder(source, target);
+    }
 
-    // The destination: free, under its own name and under any it opens.
+    // The destination: free, under its own name and under any it opens —
+    // a namespace too, where it is the same name in another normalization.
     for (const store of lookIn) {
-      if (getNestedValue(store.data.entries, newKey) !== undefined || storedSpellingOf(store.dir, newKey, storedKeys(store)) !== undefined) {
+      if (getNestedValue(store.data.entries, newKey) !== undefined
+        || storedSpellingOf(store.dir, newKey, storedKeys(store)) !== undefined
+        || storedNamespaceUnderNFC(store, newKey) !== undefined) {
         throw new RenameRefusal(`Entry '${newKey}' already exists. Remove it first or choose a different key.`, 'INVALID_INPUT');
       }
     }
-    const values = flattenObject({ [oldKey]: found.value });
-    const moved = Object.keys(values).map((from): [string, string] => [from, newKey + from.slice(oldKey.length)]);
+    const values = flattenObject({ [source]: found.value });
+    const moved = Object.keys(values).map((from): [string, string] => [from, newKey + from.slice(source.length)]);
     // #216 / #224 / #246: no new key may land on an entry it does not name.
     // Checked with the source still in place, as the separate writes were.
     assertKeysWritable(target.data.entries, moved.map(([, to]) => to));
     const targetKeys = storedKeys(target);
     for (const [, to] of moved) {
+      // #253: a twin under the same name in another normalization is that
+      // key, not a collision — as for every other write (foldTwin).
       const twin = storedSpellingOf(target.dir, to, targetKeys);
-      if (twin !== undefined) throw new KeyCollisionError({ kind: 'fold', key: to, existing: [twin] });
+      if (twin !== undefined && !sameUnderNFC(twin, to)) throw new KeyCollisionError({ kind: 'fold', key: to, existing: [twin] });
     }
 
     // Which of them is gated: by a flag in either list, under its name, case
@@ -128,8 +151,8 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
     const entries = target.data.entries;
     const meta = { ...(target.data._meta ?? {}) };
     if (found.store === target) {
-      removeNestedValue(entries, oldKey);
-      removeFlatKeysUnder(meta, oldKey);
+      removeNestedValue(entries, source);
+      removeFlatKeysUnder(meta, source);
     }
     const now = Date.now();
     for (const [from, to] of moved) {
@@ -137,7 +160,7 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
       meta[to] = now;
     }
     const aliasView = fallsThrough && other ? { ...other.data.aliases, ...target.data.aliases } : target.data.aliases;
-    let aliases = repointAliases(aliasView, oldKey, newKey) ?? target.data.aliases;
+    let aliases = repointAliases(aliasView, source, newKey) ?? target.data.aliases;
     if (newAlias) aliases = withAlias(aliases, newAlias, newKey);
     // A rename removes no flag (#234): the old name's may gate an entry of
     // that name somewhere this rename cannot see. It adds the new key's.
@@ -152,6 +175,29 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
 
 function storedKeys(store: LockedStore): string[] {
   return Object.keys(flattenObject(store.data.entries));
+}
+
+function sameUnderNFC(a: string, b: string): boolean {
+  return a.normalize('NFC') === b.normalize('NFC');
+}
+
+/**
+ * The stored spelling of the namespace `key` names in another Unicode
+ * normalization (#253), or undefined. A namespace has no file of its own, so
+ * the filesystem is asked about an entry under it: whether `key`'s spelling
+ * of that entry's path opens the entry's file.
+ */
+function storedNamespaceUnderNFC(store: LockedStore, key: string): string | undefined {
+  const depth = key.split('.').length;
+  const keys = storedKeys(store);
+  for (const stored of keys) {
+    const parts = stored.split('.');
+    if (parts.length <= depth) continue;
+    const prefix = parts.slice(0, depth).join('.');
+    if (prefix === key || !sameUnderNFC(prefix, key)) continue;
+    if (storedSpellingOf(store.dir, key + stored.slice(prefix.length), [stored]) === stored) return prefix;
+  }
+  return undefined;
 }
 
 function anotherSpelling(oldKey: string, stored: string): string {

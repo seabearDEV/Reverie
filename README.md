@@ -401,7 +401,7 @@ rvr alias rename oldalias newalias
 rvr rename server.old server.new --set-alias sn
 ```
 
-A rename is one step: the value, the aliases that point at it and the new keys' confirmation flags move together, or nothing changes. Name the entry as it is stored. On a filesystem that ignores case, `rvr rename Commands.Deploy …` opens the file of `commands.deploy`, and the rename is refused with the stored name rather than copying the entry. A rename is also refused while either store's confirmation list cannot be read.
+A rename is one step: the value, the aliases that point at it and the new keys' confirmation flags move together, or nothing changes. Name the entry as it is stored. On a filesystem that ignores case, `rvr rename Commands.Deploy …` opens the file of `commands.deploy`, and the rename is refused with the stored name rather than copying the entry. The same name in another Unicode normalization counts as the stored one. A rename is also refused while either store's confirmation list cannot be read.
 
 ### Editing Data
 

@@ -109,6 +109,44 @@ describe('rename refusals that write nothing (#247, #245)', () => {
       expect([snapshot(projectStore()), snapshot(globalStore())].join('\n--\n')).toBe(before);
     });
 
+    it('the same name in another Unicode normalization is that key (#253): it renames, flag and all', () => {
+      // HFS+ and exFAT list names in NFD, so the key typed and the key
+      // listed can differ only so; every write treats them as one key.
+      const nfc = `caf${String.fromCodePoint(0xe9)}.go`;           // precomposed e-acute
+      const nfd = `cafe${String.fromCodePoint(0x301)}.go`;         // e + combining acute
+      for (const [stored, asked] of [[nfc, nfd], [nfd, nfc]]) {
+        expect(rvr('set', '-G', stored, 'true', '--confirm').status).toBe(0);
+        const storedName = fs.readdirSync(globalStore()).find(f => f.normalize('NFC') === `${nfc}.json`);
+        const opens = storedName !== undefined && folds(globalStore(), asked, storedName.slice(0, -'.json'.length));
+        const env = json('rename', '-G', asked, 'ops.go');
+        if (opens) {
+          expect(env.ok, asked).toBe(true);
+          expect(fs.readdirSync(globalStore()).some(f => f.normalize('NFC') === `${nfc}.json`), asked).toBe(false);
+          expect(json('run', '-G', 'ops.go').error?.code, asked).toBe('REQUIRES_CONFIRMATION');
+        } else {
+          expect(env.error?.code, asked).toBe('NOT_FOUND');
+        }
+        rvr('rm', '-G', 'ops.go', '-f');
+        rvr('rm', '-G', stored, '-f');
+      }
+    });
+
+    it('a destination that is a stored namespace in another normalization already exists (#253)', () => {
+      const nfcNs = `caf${String.fromCodePoint(0xe9)}`;
+      const nfdNs = `cafe${String.fromCodePoint(0x301)}`;
+      expect(rvr('set', '-G', `${nfcNs}.go`, 'kept').status).toBe(0);
+      expect(rvr('set', '-G', 'src.go', 'moved').status).toBe(0);
+      const opens = folds(globalStore(), `${nfdNs}.go`, `${nfcNs}.go`);
+      const env = json('rename', '-G', 'src', nfdNs);
+      if (opens) {
+        expect(env.error?.code).toBe('INVALID_INPUT');
+        expect(env.error?.message).toContain('already exists');
+        expect(json('get', '-G', `${nfcNs}.go`).result).toEqual({ [`${nfcNs}.go`]: 'kept' });
+      } else {
+        expect(env.ok).toBe(true);
+      }
+    });
+
     it('a namespace spelled another way opens no file of its own: not found, on any filesystem', () => {
       expect(rvr('set', '-G', 'commands.deploy', 'true').status).toBe(0);
       const before = snapshot(globalStore());
