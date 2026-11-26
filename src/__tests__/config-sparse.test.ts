@@ -2,8 +2,10 @@
  * #213: config.json holds only what the user set.
  *
  * First run writes nothing, a save writes only settings that differ from the
- * current default, and a one-time migration drops the defaults that shipped
- * versions persisted as explicit values. Real files in a temp RVR_DATA_DIR.
+ * current default, and the defaults that versions before #213 persisted count
+ * as unset until the install's first write, which persists the cleaned file
+ * and records the migration beside it. A read never writes config.json.
+ * Real files in a temp RVR_DATA_DIR.
  */
 import fs from 'fs';
 import os from 'os';
@@ -11,11 +13,12 @@ import path from 'path';
 import { clearDataDirectoryCache } from '../utils/paths';
 import {
   loadConfig, saveConfig, getConfigSetting, setConfigSetting, unsetConfigSetting,
-  clearConfigCache, SHIPPED_DEFAULTS, VALID_CONFIG_KEYS, CONFIG_FORMAT_KEY,
+  clearConfigCache, SHIPPED_DEFAULTS, VALID_CONFIG_KEYS, CONFIG_FORMAT_KEY, MIGRATION_RECORD_FILE,
 } from '../config';
 
 let dir = '';
 let configPath = '';
+let recordPath = '';
 const saved = process.env.RVR_DATA_DIR;
 const originalError = console.error;
 
@@ -27,11 +30,15 @@ const DEFAULTS = {
   bootstrap_max_response_bytes: 28672,
   bootstrap_gist_chars: 160,
 };
+/** What v1.2.0–v1.3.0 wrote on first run: every default of the day. */
+const V130_FILE = { colors: true, theme: 'default', max_backups: 10, import_max_bytes: 52428800, bootstrap_max_response_bytes: 38912 };
 
 const writeFile = (obj: unknown) => fs.writeFileSync(configPath, JSON.stringify(obj, null, 2));
 const onDisk = (): Record<string, unknown> => JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
 /** What a fresh process reads. */
 const fresh = () => { clearConfigCache(); return loadConfig(); };
+const errorLines = (): string[] => (console.error as Mock).mock.calls.map(c => c.map(String).join(' '));
+const notes = (): string[] => errorLines().filter(l => l.includes('rewritten by an older Reverie'));
 
 /** Count atomic writes that land on config.json. */
 function countConfigWrites(): { readonly count: number } {
@@ -64,6 +71,7 @@ function otherProcessWritesBeforeLock(write: () => void): void {
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rvr-213-'));
   configPath = path.join(dir, 'config.json');
+  recordPath = path.join(dir, MIGRATION_RECORD_FILE);
   process.env.RVR_DATA_DIR = dir;
   clearDataDirectoryCache();
   clearConfigCache();
@@ -97,9 +105,9 @@ describe('#213: first run writes nothing', () => {
   });
 
   it('setting a value equal to the default on a fresh install creates no file', () => {
-    setConfigSetting('colors', 'true');
-    setConfigSetting('bootstrap_max_response_bytes', '28672');
-    expect(fs.existsSync(configPath)).toBe(false);
+    expect(setConfigSetting('colors', 'true')).toEqual({ ok: true });
+    expect(setConfigSetting('bootstrap_max_response_bytes', '28672')).toEqual({ ok: true });
+    expect(fs.readdirSync(dir)).toEqual([]);
     expect(loadConfig()).toEqual(DEFAULTS);
   });
 });
@@ -120,6 +128,7 @@ describe('#213: a save stores only what differs from the default', () => {
   it('saveConfig given the whole config writes only the non-defaults', () => {
     saveConfig({ ...DEFAULTS, bootstrap_gist_chars: 120 });
     expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, bootstrap_gist_chars: 120 });
+    expect(fs.existsSync(recordPath)).toBe(true);
   });
 });
 
@@ -138,7 +147,42 @@ describe('#213: config get returns effective values', () => {
   });
 });
 
-describe('#213: the one-time migration', () => {
+describe('#213: a read never writes config.json', () => {
+  it('a symlinked, read-only legacy file with an unknown key stays exactly as it is', () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rvr-213-dotfiles-'));
+    try {
+      const target = path.join(elsewhere, 'config.json');
+      fs.writeFileSync(target, JSON.stringify({ ...V130_FILE, theme: 'dark', future_key: 1 }, null, 2));
+      fs.chmodSync(target, 0o444);
+      fs.symlinkSync(target, configPath);
+      const before = fs.readFileSync(target, 'utf8');
+
+      expect(loadConfig()).toEqual({ ...DEFAULTS, theme: 'dark' });
+      expect(fresh()).toEqual({ ...DEFAULTS, theme: 'dark' });
+
+      expect(fs.lstatSync(configPath).isSymbolicLink()).toBe(true);
+      expect(fs.statSync(target).mode & 0o777).toBe(0o444);
+      expect(fs.readFileSync(target, 'utf8')).toBe(before);
+      expect(fs.existsSync(recordPath)).toBe(false);
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it('a 644 legacy file keeps its mode and bytes across reads', () => {
+    writeFile(V130_FILE);
+    fs.chmodSync(configPath, 0o644);
+    const before = fs.readFileSync(configPath, 'utf8');
+    const writes = countConfigWrites();
+    expect(loadConfig()).toEqual(DEFAULTS);
+    expect(fresh()).toEqual(DEFAULTS);
+    expect(writes.count).toBe(0);
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o644);
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(before);
+  });
+});
+
+describe('#213: the migration', () => {
   it('knows every default a version before #213 wrote', () => {
     // git log -G over src/config.ts and src/utils/contextBudget.ts. 28672 and
     // 160 are today's defaults, written by unreleased builds before #213;
@@ -154,33 +198,39 @@ describe('#213: the one-time migration', () => {
     });
   });
 
-  it('a full file written by 1.2.0–1.3.0 reduces to the marker and reports current defaults', () => {
-    writeFile({ colors: true, theme: 'default', max_backups: 10, import_max_bytes: 52428800, bootstrap_max_response_bytes: 38912 });
+  it('a 1.2.0–1.3.0 file reads as the current defaults; the first write stores the cleaned form and the record', () => {
+    writeFile(V130_FILE);
     expect(loadConfig()).toEqual(DEFAULTS);
-    expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2 });
+    expect(onDisk()).toEqual(V130_FILE);
+    setConfigSetting('theme', 'dark');
+    expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, theme: 'dark' });
+    expect(fs.existsSync(recordPath)).toBe(true);
   });
 
   it('a 1.0/1.1 file keeps what the user chose and drops the 50KB default', () => {
     writeFile({ colors: true, theme: 'dark', max_backups: 3, import_max_bytes: 52428800, bootstrap_max_response_bytes: 51200 });
     expect(loadConfig()).toEqual({ ...DEFAULTS, theme: 'dark', max_backups: 3 });
+    unsetConfigSetting('bootstrap_gist_chars');
     expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, theme: 'dark', max_backups: 3 });
   });
 
   it('drops the 28KB and 160-character defaults unreleased builds persisted', () => {
     writeFile({ ...DEFAULTS, colors: false });
     expect(loadConfig()).toEqual({ ...DEFAULTS, colors: false });
+    unsetConfigSetting('theme');
     expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, colors: false });
   });
 
   it('drops the backend key the first codexCLI release wrote', () => {
     writeFile({ colors: true, theme: 'default', backend: 'json' });
     expect(loadConfig()).toEqual(DEFAULTS);
+    unsetConfigSetting('theme');
     expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2 });
   });
 
-  it('runs once: a migrated file is not rewritten on later loads', () => {
-    writeFile({ colors: true, theme: 'default', max_backups: 10, import_max_bytes: 52428800, bootstrap_max_response_bytes: 38912 });
-    loadConfig();
+  it('runs once: after the migrating write, later loads write nothing', () => {
+    writeFile(V130_FILE);
+    unsetConfigSetting('theme');
     const writes = countConfigWrites();
     fresh();
     fresh();
@@ -189,8 +239,8 @@ describe('#213: the one-time migration', () => {
   });
 
   it('a value set after the migration that equals an old default survives', () => {
-    writeFile({ colors: true, theme: 'default', max_backups: 10, import_max_bytes: 52428800, bootstrap_max_response_bytes: 38912 });
-    loadConfig();
+    writeFile(V130_FILE);
+    unsetConfigSetting('theme');
     setConfigSetting('bootstrap_max_response_bytes', '38912');
     expect(fresh().bootstrap_max_response_bytes).toBe(38912);
     expect(fresh().bootstrap_max_response_bytes).toBe(38912);
@@ -204,45 +254,110 @@ describe('#213: the one-time migration', () => {
   });
 
   it('config set on a legacy file migrates it in the same write, keeping the new value', () => {
-    writeFile({ colors: true, theme: 'default', max_backups: 10, import_max_bytes: 52428800, bootstrap_max_response_bytes: 38912 });
+    writeFile(V130_FILE);
     setConfigSetting('bootstrap_max_response_bytes', '38912');
     expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, bootstrap_max_response_bytes: 38912 });
     expect(fresh().bootstrap_max_response_bytes).toBe(38912);
   });
 
-  it('leaves a legacy file alone when it holds no shipped default', () => {
-    const custom = { colors: false, theme: 'dark', max_backups: 3, import_max_bytes: 1000, bootstrap_max_response_bytes: 40000, bootstrap_gist_chars: 100 };
-    writeFile(custom);
-    const before = fs.readFileSync(configPath, 'utf8');
-    const writes = countConfigWrites();
-    expect(loadConfig()).toEqual(custom);
-    expect(writes.count).toBe(0);
-    expect(fs.readFileSync(configPath, 'utf8')).toBe(before);
-  });
-
-  it('re-checks under the lock: a value another process set meanwhile is not dropped', () => {
-    writeFile({ colors: true, theme: 'default', max_backups: 10, import_max_bytes: 52428800, bootstrap_max_response_bytes: 51200 });
-    // Between this load's read and its lock, another process migrates the
-    // file and the user pins 38912, a former default.
-    otherProcessWritesBeforeLock(() => writeFile({ [CONFIG_FORMAT_KEY]: 2, bootstrap_max_response_bytes: 38912 }));
-    loadConfig();
+  it('decides under the lock: a value another process set after this one read is not dropped', () => {
+    writeFile({ ...V130_FILE, bootstrap_max_response_bytes: 51200 });
+    expect(loadConfig().bootstrap_max_response_bytes).toBe(28672);
+    // Before this write takes the lock, another process migrates the file
+    // and the user pins 38912, a former default.
+    otherProcessWritesBeforeLock(() => {
+      writeFile({ [CONFIG_FORMAT_KEY]: 2, bootstrap_max_response_bytes: 38912 });
+      fs.writeFileSync(recordPath, '{"format":2}');
+    });
+    setConfigSetting('theme', 'dark');
     vi.restoreAllMocks();
-    expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, bootstrap_max_response_bytes: 38912 });
-    expect(fresh().bootstrap_max_response_bytes).toBe(38912);
+    expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, bootstrap_max_response_bytes: 38912, theme: 'dark' });
   });
 
-  it('a migration that cannot get the lock still reports the migrated values', () => {
-    writeFile({ colors: true, theme: 'default', max_backups: 10, import_max_bytes: 52428800, bootstrap_max_response_bytes: 38912 });
-    fs.writeFileSync(configPath + '.lock', String(process.pid));
-    try {
-      expect(loadConfig()).toEqual(DEFAULTS);
-      expect(onDisk().bootstrap_max_response_bytes).toBe(38912);
-    } finally {
-      fs.unlinkSync(configPath + '.lock');
-    }
-    // The next process migrates it.
-    expect(fresh()).toEqual(DEFAULTS);
-    expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2 });
+  it('a marked file with no record (written before the record existed) is not cleaned, and the next write records it', () => {
+    writeFile({ [CONFIG_FORMAT_KEY]: 2, bootstrap_max_response_bytes: 51200 });
+    expect(loadConfig().bootstrap_max_response_bytes).toBe(51200);
+    setConfigSetting('bootstrap_max_response_bytes', '51200');
+    expect(fs.existsSync(recordPath)).toBe(true);
+    expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, bootstrap_max_response_bytes: 51200 });
+  });
+});
+
+describe('#213: an older Reverie rewrites config.json after the migration', () => {
+  /** v1.3.0's saveConfig: the whole object, no marker, unknown keys dropped. */
+  const oldWriter = (values: Record<string, unknown>) => writeFile({ ...V130_FILE, ...values });
+
+  it("keeps the user's 51200 when an old writer drops the marker (the F1b repro)", () => {
+    setConfigSetting('bootstrap_max_response_bytes', '51200');
+    oldWriter({ theme: 'dark', bootstrap_max_response_bytes: 51200 });
+    expect(fresh()).toEqual({ ...DEFAULTS, theme: 'dark', bootstrap_max_response_bytes: 51200 });
+    expect(getConfigSetting('bootstrap_max_response_bytes')).toBe(51200);
+  });
+
+  it('says so once per rewrite, and keeps an old default it wrote as set', () => {
+    setConfigSetting('theme', 'dark');
+    oldWriter({ theme: 'dark' }); // its own default for the budget: 38912
+    expect(fresh().bootstrap_max_response_bytes).toBe(38912);
+    expect(notes()).toHaveLength(1);
+    expect(notes()[0]).toContain('config unset <key>');
+    fresh();
+    fresh();
+    expect(notes()).toHaveLength(1);
+
+    oldWriter({ theme: 'light' }); // another rewrite
+    expect(fresh().theme).toBe('light');
+    expect(notes()).toHaveLength(2);
+  });
+
+  it('config unset returns a kept value to the default, and the next write restores the marker', () => {
+    setConfigSetting('theme', 'dark');
+    oldWriter({ theme: 'dark' });
+    unsetConfigSetting('bootstrap_max_response_bytes');
+    expect(fresh().bootstrap_max_response_bytes).toBe(28672);
+    expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, theme: 'dark' });
+  });
+
+  it('a later write keeps every value the old writer left that differs from the default', () => {
+    setConfigSetting('bootstrap_max_response_bytes', '51200');
+    oldWriter({ max_backups: 3, bootstrap_max_response_bytes: 51200 });
+    setConfigSetting('colors', 'false');
+    expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, colors: false, max_backups: 3, bootstrap_max_response_bytes: 51200 });
+  });
+});
+
+describe('#213: a write refuses a config.json that does not parse', () => {
+  const unparseable = ['{"colors":false,"theme":"dark","max_backups":3,}', '[]', '5', '"x"', 'null'];
+
+  for (const text of unparseable) {
+    it(`set and unset leave ${text} as it is`, () => {
+      fs.writeFileSync(configPath, text);
+      expect(() => setConfigSetting('theme', 'light')).toThrow(/nothing was written/);
+      expect(() => unsetConfigSetting('theme')).toThrow(/nothing was written/);
+      expect(fs.readFileSync(configPath, 'utf8')).toBe(text);
+      expect(fs.existsSync(recordPath)).toBe(false);
+    });
+  }
+
+  it('a read falls back to the defaults with one plain line, once', () => {
+    fs.writeFileSync(configPath, '[]');
+    expect(loadConfig()).toEqual(DEFAULTS);
+    expect(loadConfig()).toEqual(DEFAULTS);
+    expect(getConfigSetting('theme')).toBe('default');
+    const calls = (console.error as Mock).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toHaveLength(1);
+    expect(typeof calls[0][0]).toBe('string');
+    expect(calls[0][0]).toBe(`Warning: ${configPath} does not hold a JSON object; using the default settings.`);
+  });
+});
+
+describe('#273: a rejected setting writes nothing and says why', () => {
+  it('an invalid value is INVALID_INPUT, an unknown key NOT_FOUND', () => {
+    expect(setConfigSetting('theme', 'neon')).toMatchObject({ ok: false, code: 'INVALID_INPUT', message: expect.stringContaining("Invalid theme: 'neon'") });
+    expect(setConfigSetting('max_backups', '-1')).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+    expect(setConfigSetting('bootstrap_gist_chars', '1.5')).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+    expect(setConfigSetting('nosuch', '1')).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 });
 
@@ -250,23 +365,23 @@ describe('#213: config unset', () => {
   it('removes the key from the file; the setting reads as its default', () => {
     setConfigSetting('theme', 'dark');
     setConfigSetting('max_backups', '3');
-    expect(unsetConfigSetting('theme')).toBe(true);
+    expect(unsetConfigSetting('theme')).toEqual({ ok: true });
     expect(onDisk()).toEqual({ [CONFIG_FORMAT_KEY]: 2, max_backups: 3 });
     expect(getConfigSetting('theme')).toBe('default');
     expect(fresh().theme).toBe('default');
   });
 
   it('refuses an unknown key and writes nothing', () => {
-    expect(unsetConfigSetting('no_such_key')).toBe(false);
+    expect(unsetConfigSetting('no_such_key')).toMatchObject({ ok: false, code: 'NOT_FOUND' });
     expect(fs.existsSync(configPath)).toBe(false);
   });
 
   it('unsetting a key that is not stored creates no file and rewrites none', () => {
-    expect(unsetConfigSetting('theme')).toBe(true);
+    expect(unsetConfigSetting('theme')).toEqual({ ok: true });
     expect(fs.existsSync(configPath)).toBe(false);
     setConfigSetting('max_backups', '3');
     const writes = countConfigWrites();
-    expect(unsetConfigSetting('theme')).toBe(true);
+    expect(unsetConfigSetting('theme')).toEqual({ ok: true });
     expect(writes.count).toBe(0);
   });
 });

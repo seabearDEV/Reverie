@@ -303,8 +303,8 @@ vi.mock('../config', () => ({
   DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES: 28 * 1024,
   loadConfig: vi.fn(() => ({ ...mockConfig })),
   getConfigSetting: vi.fn((key: string) => mockConfig[key] ?? null),
-  setConfigSetting: vi.fn((key: string, value: any) => { mockConfig[key] = value; }),
-  unsetConfigSetting: vi.fn((key: string) => { delete mockConfig[key]; return true; }),
+  setConfigSetting: vi.fn((key: string, value: any) => { mockConfig[key] = value; return { ok: true }; }),
+  unsetConfigSetting: vi.fn((key: string) => { delete mockConfig[key]; return { ok: true }; }),
   VALID_CONFIG_KEYS: ['colors', 'theme'],
   VALID_THEMES: ['default', 'dark', 'light'],
 }));

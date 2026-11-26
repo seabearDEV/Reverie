@@ -1258,4 +1258,62 @@ describe('MCP Integration (real I/O)', () => {
     await new Promise(resolve => setTimeout(resolve, 100));
     expect(namespaces()).not.toContain('no_such_setting_206');
   });
+
+  // ── #273: config tools over MCP ──────────────────────────────────────
+  describe('config tools (#273)', () => {
+    interface ConfigRow { tool: string; scope?: string; before?: string; after?: string; errorCode?: string }
+    const rows = (file: string): ConfigRow[] => fs.readFileSync(path.join(tmpDir, file), 'utf8').trim().split('\n')
+      .map(l => JSON.parse(l) as ConfigRow).filter(r => r.tool.startsWith('reverie_config_'));
+
+    it('a rejected value fails with INVALID_INPUT and writes nothing; an unknown key is NOT_FOUND', () => {
+      const bad = callMcpTool('reverie_config_set', { key: 'theme', value: 'neon' });
+      expect(bad.isError).toBe(true);
+      expect(bad.content[0].text).toContain("Invalid theme: 'neon'");
+      const unknown = callMcpTool('reverie_config_set', { key: 'nosuch', value: '1' });
+      expect(unknown.isError).toBe(true);
+      for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+        expect(rows(file).map(r => r.errorCode), file).toEqual(['INVALID_INPUT', 'NOT_FOUND']);
+      }
+      expect(fs.existsSync(path.join(tmpDir, 'config.json'))).toBe(false);
+    });
+
+    it('a write refused because config.json does not parse fails with IO and leaves the file', () => {
+      const configPath = path.join(tmpDir, 'config.json');
+      const broken = '{"colors":false,"theme":"dark",}';
+      fs.writeFileSync(configPath, broken);
+      const set = callMcpTool('reverie_config_set', { key: 'theme', value: 'light' });
+      const unset = callMcpTool('reverie_config_unset', { key: 'theme' });
+      for (const r of [set, unset]) {
+        expect(r.isError).toBe(true);
+        expect(r.content[0].text).toContain('nothing was written');
+      }
+      for (const file of ['telemetry.jsonl', 'audit.jsonl']) {
+        expect(rows(file).map(r => r.errorCode), file).toEqual(['IO', 'IO']);
+      }
+      expect(fs.readFileSync(configPath, 'utf8')).toBe(broken);
+    });
+
+    it('inside a project the config tools are recorded as global, with the setting as before', async () => {
+      const projectDir = path.join(tmpDir, 'proj');
+      const projectStore = path.join(projectDir, '.reverie');
+      fs.mkdirSync(projectStore, { recursive: true });
+      fs.writeFileSync(path.join(projectStore, '_aliases.json'), '{}');
+      fs.writeFileSync(path.join(projectStore, '_confirm.json'), '{}');
+      await withMcpSession(async (call) => {
+        await call('reverie_set', { key: 'theme', value: 'an entry named theme', scope: 'project' });
+        expect((await call('reverie_config_set', { key: 'theme', value: 'dark' })).isError).toBeFalsy();
+        expect((await call('reverie_config_set', { key: 'theme', value: 'light' })).isError).toBeFalsy();
+        expect((await call('reverie_config_unset', { key: 'theme' })).isError).toBeFalsy();
+        await call('reverie_config_get', {}); // the last write's rows land before the session ends
+      }, { cwd: projectDir, project: true });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const writes = (file: string) => rows(file).filter(r => r.tool !== 'reverie_config_get');
+      expect(writes('audit.jsonl').map(r => [r.tool, r.scope, r.before, r.after])).toEqual([
+        ['reverie_config_set', 'global', 'default', 'dark'],
+        ['reverie_config_set', 'global', 'dark', 'light'],
+        ['reverie_config_unset', 'global', 'light', undefined],
+      ]);
+      expect(writes('telemetry.jsonl').map(r => r.scope)).toEqual(['global', 'global', 'global']);
+    });
+  });
 });

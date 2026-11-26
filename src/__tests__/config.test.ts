@@ -24,6 +24,9 @@ vi.mock('../utils/paths', () => ({
   ensureDataDirectoryExists: vi.fn()
 }));
 
+// config.ts asks existsSync only whether the #213 migration record exists.
+const noMigrationRecord = (p: unknown) => !String(p).endsWith('config.format');
+
 describe('Config', () => {
   const originalConsoleError = console.error;
 
@@ -40,7 +43,7 @@ describe('Config', () => {
 
   describe('loadConfig', () => {
     it('returns config from valid JSON file', () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       (fs.readFileSync as Mock).mockReturnValue(
         JSON.stringify({ colors: false, theme: 'dark' })
       );
@@ -64,8 +67,8 @@ describe('Config', () => {
       expect(fs.writeFileSync).not.toHaveBeenCalled();
     });
 
-    it('returns defaults and logs error for malformed JSON', () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+    it('returns defaults and warns in one line for malformed JSON', () => {
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       (fs.readFileSync as Mock).mockReturnValue('not valid json');
 
       const config = loadConfig();
@@ -73,13 +76,12 @@ describe('Config', () => {
       expect(config.colors).toBe(true);
       expect(config.theme).toBe('default');
       expect(console.error).toHaveBeenCalledWith(
-        'Error loading configuration:',
-        expect.any(SyntaxError)
+        'Warning: /mock/config.json is not valid JSON; using the default settings.'
       );
     });
 
     it('fills missing fields with defaults', () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       (fs.readFileSync as Mock).mockReturnValue(
         JSON.stringify({ colors: false })
       );
@@ -91,7 +93,7 @@ describe('Config', () => {
     });
 
     it('a legacy file holding a former budget default (50KB, 38KB) gets the current default (#212, migrated by #213)', () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       for (const legacy of [50 * 1024, 38 * 1024]) {
         clearConfigCache();
         (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({ bootstrap_max_response_bytes: legacy }));
@@ -100,7 +102,7 @@ describe('Config', () => {
     });
 
     it('honors any other explicit budget', () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       (fs.readFileSync as Mock).mockReturnValue(JSON.stringify({ bootstrap_max_response_bytes: 40000 }));
       expect(loadConfig().bootstrap_max_response_bytes).toBe(40000);
     });
@@ -162,7 +164,7 @@ describe('Config', () => {
 
   describe('getConfigSetting', () => {
     beforeEach(() => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       (fs.readFileSync as Mock).mockReturnValue(
         JSON.stringify({ colors: false, theme: 'dark' })
       );
@@ -193,7 +195,7 @@ describe('Config', () => {
 
   describe('setConfigSetting', () => {
     beforeEach(() => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       (fs.readFileSync as Mock).mockReturnValue(
         JSON.stringify({ colors: true, theme: 'default' })
       );
@@ -225,18 +227,14 @@ describe('Config', () => {
     });
 
     it('rejects backend as unknown key', () => {
-      setConfigSetting('backend', 'sqlite');
-
-      expect(console.error).toHaveBeenCalledWith('Unknown configuration key: backend');
+      expect(setConfigSetting('backend', 'sqlite')).toEqual({ ok: false, code: 'NOT_FOUND', message: 'Unknown configuration key: backend' });
       expect(fs.writeFileSync).not.toHaveBeenCalled();
     });
 
-    it('rejects invalid theme value', () => {
-      setConfigSetting('theme', 'neon');
-
-      expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining("Invalid theme: 'neon'")
-      );
+    it('rejects invalid theme value (#273)', () => {
+      expect(setConfigSetting('theme', 'neon')).toMatchObject({
+        ok: false, code: 'INVALID_INPUT', message: expect.stringContaining("Invalid theme: 'neon'"),
+      });
       expect(fs.writeFileSync).not.toHaveBeenCalled();
     });
 
@@ -244,7 +242,7 @@ describe('Config', () => {
       for (const theme of ['default', 'dark', 'light']) {
         clearConfigCache();
         vi.clearAllMocks();
-        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
         (fs.readFileSync as Mock).mockReturnValue(
           JSON.stringify({ colors: true, theme: 'default' })
         );
@@ -259,17 +257,15 @@ describe('Config', () => {
       }
     });
 
-    it('logs error for unknown key and does not save', () => {
-      setConfigSetting('unknown', 'value');
-
-      expect(console.error).toHaveBeenCalledWith('Unknown configuration key: unknown');
+    it('refuses an unknown key and does not save', () => {
+      expect(setConfigSetting('unknown', 'value')).toMatchObject({ ok: false, code: 'NOT_FOUND' });
       expect(fs.writeFileSync).not.toHaveBeenCalled();
     });
   });
 
   describe('caching', () => {
     it('returns cached config on second call with same mtime', () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       (fs.readFileSync as Mock).mockReturnValue(
         JSON.stringify({ colors: false, theme: 'dark' })
       );
@@ -284,7 +280,7 @@ describe('Config', () => {
     });
 
     it('re-reads when mtime changes', () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       (fs.readFileSync as Mock)
         // A sparse file: no migration re-read to count.
         .mockReturnValueOnce(JSON.stringify({ _format: 2 }))
@@ -302,7 +298,7 @@ describe('Config', () => {
     });
 
     it('updates cache on saveConfig (write-through)', () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.existsSync as Mock).mockImplementation(noMigrationRecord);
       (fs.statSync as Mock).mockReturnValue({ mtimeMs: 2000 });
 
       saveConfig({ colors: false, theme: 'dark', max_backups: 10 } as Parameters<typeof saveConfig>[0]);

@@ -12,6 +12,7 @@ import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './re
 import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
 import { LockTimeoutError } from './fileLock';
+import { loadConfig } from '../config';
 import { color } from '../formatting';
 import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, takeWriteRefused, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
 import { isJsonMode, failJson, emitEnvelope, addWarning, hasWarning, setResult, hasResult, hasError, takeSignals, takeErrorCode, serializeEnvelope, alreadyEmitted } from './output';
@@ -41,6 +42,12 @@ export const BULK_OPS = new Set(['reverie_import', 'reverie_reset']);
 export function captureValue(tool: string, key: string | undefined, scope: Scope): string | undefined {
   if (!key || BULK_OPS.has(tool)) return undefined;
   try {
+    // A config tool's key is a setting: its value before is the setting's
+    // effective value, not a store entry that happens to share the name (#273).
+    if (tool === 'reverie_config_set' || tool === 'reverie_config_unset') {
+      const config = loadConfig() as unknown as Record<string, string | number | boolean>;
+      return Object.hasOwn(config, key) ? String(config[key]) : undefined;
+    }
     // Alias operations: capture the alias target by alias name
     if (tool === 'reverie_alias_set' || tool === 'reverie_alias_remove') {
       const aliases = loadAliases(scope);

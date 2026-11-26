@@ -295,7 +295,11 @@ server.tool = ((...args: any[]) => {
     const startTime = Date.now();
     const key = extractKey(name, params);
 
-    const scope = toScope(params.scope as string | undefined);
+    // The config tools' key is a setting, not an entry (#206): the settings
+    // are global, whatever project the server runs in (#273), and a store
+    // alias of the same name does not apply to them.
+    const configTool = !keyIsEntryKey(name);
+    const scope = configTool ? 'global' : toScope(params.scope as string | undefined);
     const resolvedScope: 'project' | 'global' = getEffectiveScope(scope);
 
     // Resolve alias for audit trail. reverie_copy is special-cased: extractKey
@@ -310,7 +314,7 @@ server.tool = ((...args: any[]) => {
           if (resolved !== source) aliasResolved = resolved;
         } catch { /* ignore — alias resolution is best-effort */ }
       }
-    } else if (key) {
+    } else if (key && !configTool) {
       try {
         const resolved = resolveKey(key, scope);
         if (resolved !== key) aliasResolved = resolved;
@@ -434,7 +438,7 @@ server.tool = ((...args: any[]) => {
         tool: name,
         op,
         key,
-        scope: (params.scope as string) ?? 'auto',
+        scope: configTool ? 'global' : (params.scope as string) ?? 'auto',
         success,
         before: isWrite ? before : undefined,
         after: isWrite ? after : undefined,
@@ -1218,16 +1222,20 @@ server.tool(
     try {
       if (!(VALID_CONFIG_KEYS as readonly string[]).includes(key)) {
         return errorResponse(
-          `Unknown config key: '${key}'. Valid keys: ${VALID_CONFIG_KEYS.join(", ")}`
+          `Unknown config key: '${key}'. Valid keys: ${VALID_CONFIG_KEYS.join(", ")}`,
+          'NOT_FOUND'
         );
       }
 
-      setConfigSetting(key, value);
+      // A rejected value writes nothing and fails the call (#273).
+      const result = setConfigSetting(key, value);
+      if (!result.ok) return errorResponse(result.message, result.code);
       resetColorCache();
       return textResponse(`Config set: ${key} = ${value}`);
     } catch (err) {
       if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
-      return errorResponse(`Error setting config: ${String(err)}`);
+      // config.json does not parse (#213), or the write failed: nothing was written.
+      return errorResponse(err instanceof Error ? err.message : String(err), 'IO');
     }
   }
 );
@@ -1248,12 +1256,13 @@ server.tool(
         );
       }
 
-      unsetConfigSetting(key);
+      const result = unsetConfigSetting(key);
+      if (!result.ok) return errorResponse(result.message, result.code);
       resetColorCache();
       return textResponse(`Config unset: ${key} = ${String(getConfigSetting(key))} (default)`);
     } catch (err) {
       if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
-      return errorResponse(`Error unsetting config: ${String(err)}`);
+      return errorResponse(err instanceof Error ? err.message : String(err), 'IO');
     }
   }
 );

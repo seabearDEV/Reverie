@@ -298,11 +298,15 @@ vi.mock('../config', () => ({
     return null;
   }),
   setConfigSetting: vi.fn((key: string, value: any) => {
+    if (key === 'theme' && !['default', 'dark', 'light'].includes(value)) {
+      return { ok: false, code: 'INVALID_INPUT', message: `Invalid theme: '${value}'. Must be one of: default, dark, light` };
+    }
     mockConfig[key] = value;
+    return { ok: true };
   }),
   unsetConfigSetting: vi.fn((key: string) => {
     mockConfig[key] = key === 'colors' ? true : 'default';
-    return true;
+    return { ok: true };
   }),
   VALID_CONFIG_KEYS: ['colors', 'theme'],
   VALID_THEMES: ['default', 'dark', 'light'],
@@ -804,6 +808,13 @@ describe('MCP Server Tools', () => {
       const result = await toolHandlers['reverie_config_set']({ key: 'bad', value: 'x' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Unknown config key: 'bad'");
+    });
+
+    it('fails a value the setting rejects instead of reporting it set (#273)', async () => {
+      const result = await toolHandlers['reverie_config_set']({ key: 'theme', value: 'neon' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid theme: 'neon'");
+      expect(result.content[0].text).not.toContain('Config set');
     });
   });
 
