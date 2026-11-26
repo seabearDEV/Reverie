@@ -421,6 +421,29 @@ describe('#259: undoing a write that failed part-way', () => {
     expect(onDisk().confirm).toEqual({ [stored]: true });
   });
 
+  it.each([
+    ['another case', 'secret', `${String.fromCodePoint(0x17f)}ecret`],
+    ['another Unicode normalization', `caf${String.fromCodePoint(0xe9)}`, `cafe${String.fromCodePoint(0x301)}`],
+  ])('two new keys that land in one file (%s) are both taken back', async (_kind, first, second) => {
+    // The second write's prior state is the first write's bytes. Undone in
+    // write order, the first write was removed and the file then rewritten
+    // from the second's copy, leaving an entry nobody had stored.
+    seed({ entries: { other: 'o' } });
+    const probe = path.join(tmp.storeDir, `${first}.json`);
+    fs.writeFileSync(probe, JSON.stringify({ value: 'probe' }));
+    const folds = opens(second, first);
+    fs.unlinkSync(probe);
+    if (!folds) return;   // this filesystem keeps them apart: two files, nothing shared
+    clearStoreCaches();
+    const file = path.join(tmp.root, 'import.json');
+    fs.writeFileSync(file, JSON.stringify({ [first]: 'echo one', [second]: 'echo two', ['z'.repeat(240)]: 'v' }));
+    await importData('entries', file, { merge: true, force: true, global: true });
+    expect(process.exitCode).toBe(1);
+    const files = fs.readdirSync(tmp.storeDir).filter(f => f.endsWith('.json') && !f.startsWith('_'));
+    expect(files).toEqual(['other.json']);
+    expect(flattenObject(onDisk().entries)).toEqual({ other: 'o' });
+  });
+
   it('an undo that fails keeps the flags the list gained, so the leftover is gated', async () => {
     // a.one is written as n.one, n.two cannot be, and n.one cannot be taken
     // back. The list keeps n.one's flag: restoring the old list left a copy

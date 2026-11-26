@@ -981,16 +981,27 @@ export function createDirectoryStore(
       // folds names the write of `Deploy` lands in the file of a stored
       // `deploy`, and undoing it by unlinking that path deleted `deploy`.
       const replaced: ({ path: string; content: string } | undefined)[] = [];
+      // The cached keys by the file each opens, built the first time a write
+      // lands in a file not cached under its own key: once per commit, not
+      // once per such write (an import re-casing many keys).
+      let cachedByFile: Map<string, string> | undefined;
       const priorOf = (key: string): { path: string; content: string } | undefined => {
         const filePath = entryFilePath(dir, key);
         const exact = entryCache.get(key);
         if (exact) return { path: filePath, content: serializeEntryWrapper(exact.wrapper) };
         const id = fileIdentity(filePath);
         if (id === undefined) return undefined;   // a new file: undone by removing it
-        for (const [other, cached] of entryCache) {
-          if (fileIdentity(entryFilePath(dir, other)) === id) {
-            return { path: entryFilePath(dir, other), content: serializeEntryWrapper(cached.wrapper) };
+        if (!cachedByFile) {
+          cachedByFile = new Map();
+          for (const other of entryCache.keys()) {
+            const otherId = fileIdentity(entryFilePath(dir, other));
+            if (otherId !== undefined && !cachedByFile.has(otherId)) cachedByFile.set(otherId, other);
           }
+        }
+        const other = cachedByFile.get(id);
+        const cached = other !== undefined ? entryCache.get(other) : undefined;
+        if (other !== undefined && cached) {
+          return { path: entryFilePath(dir, other), content: serializeEntryWrapper(cached.wrapper) };
         }
         try {
           return { path: filePath, content: fs.readFileSync(filePath, 'utf8') };
@@ -1023,8 +1034,13 @@ export function createDirectoryStore(
         // file that cannot be restored is left as written — and then the
         // confirmation list keeps the flags it gained, so that leftover is
         // gated too (a flag too many gates nothing that exists).
+        // Last write first: two writes can land in one file (two spellings of
+        // a key, folded), and the later one's prior state is the earlier
+        // one's bytes. Undone in write order, the earlier write was taken
+        // back first and then rewritten from the later one's copy.
         let undoFailed = false;
-        written.forEach(([key], i) => {
+        for (let i = written.length - 1; i >= 0; i--) {
+          const [key] = written[i];
           const prior = replaced[i];
           try {
             if (prior) atomicWriteFileSync(prior.path, prior.content);
@@ -1033,7 +1049,7 @@ export function createDirectoryStore(
             undoFailed = true;
             debug(`Could not undo the write of ${key}: ${String(undo)}`);
           }
-        });
+        }
         if (confirmTouched && !undoFailed) {
           try {
             atomicWriteFileSync(confirmPath, serializeSidecar(oldConfirm));

@@ -119,8 +119,19 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
       // the source itself, or any key in the namespace it moves: the tree a
       // rename works on holds only one of them, and the write would delete
       // the other. Refused, naming both, until it is resolved.
+      // Each key's dot prefixes looked up in a set: linear, where comparing
+      // every key with every other took seconds inside both locks on a
+      // namespace of thousands.
       const moving = storedKeys(found.store).filter(k => k === source || k.startsWith(`${source}.`)).sort();
-      const pair = moving.find(k => moving.some(o => o.startsWith(`${k}.`)));
+      const movingSet = new Set(moving);
+      const namespaces = new Set<string>();
+      for (const k of moving) {
+        for (let i = k.indexOf('.'); i !== -1; i = k.indexOf('.', i + 1)) {
+          const prefix = k.slice(0, i);
+          if (movingSet.has(prefix)) namespaces.add(prefix);
+        }
+      }
+      const pair = moving.find(k => namespaces.has(k));
       if (pair !== undefined) {
         const under = moving.filter(o => o.startsWith(`${pair}.`));
         const named = under.slice(0, 3).map(k => `'${k}'`).join(', ') + (under.length > 3 ? `, and ${under.length - 3} more` : '');
