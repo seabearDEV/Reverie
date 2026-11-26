@@ -175,6 +175,11 @@ describe('#280: a reference resolves in the store of the entry that holds it', (
       }
       const subtree = await mcp.call('reverie_get', { key: 'cmd', values: true, scope: 'global' });
       expect(subtree.content[0].text).toContain('cmd.deploy: echo deploying to prod.example');
+      // A global chain: the keys it lists are the global entries.
+      setGlobal('cmd.both', 'cfg.ver cmd.tag');
+      const chain = await mcp.call('reverie_run', { key: 'cmd.both', chain: true });
+      expect(chain.isError).toBeUndefined();
+      expect(chain.content[0].text).toContain('tag=1.0');
       expect(ran('exec')).toBe(false);
       expect(ran('value')).toBe(false);
     }, SLOW_TEST_MS);
