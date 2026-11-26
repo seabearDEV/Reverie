@@ -1,6 +1,6 @@
 import type { Mock } from 'bun:test';
 import { execSync } from 'child_process';
-import { interpolate, interpolateExec, interpolateForRead, interpolateObject, StrictInterpolationError, unresolvedWarning, unresolvedOverflowNote } from '../utils/interpolate';
+import { interpolate, interpolateExec, interpolateForRead, interpolateObject, collectReferencedKeys, StrictInterpolationError, unresolvedWarning, unresolvedOverflowNote } from '../utils/interpolate';
 import type { UnresolvedOnRead } from '../utils/interpolate';
 import { StoreUnreadableError } from '../utils/unreadable';
 import { getValue } from '../storage';
@@ -578,5 +578,73 @@ describe('safe interpolate() never executes $(key)', () => {
     // ${wrapper} resolves to the literal text "$(pwn)" but must not then exec it
     expect(interpolate('${wrapper}')).toBe('$(pwn)');
     expect(mockExecSync).not.toHaveBeenCalled();
+  });
+});
+
+// #242: what a command prints is data. Pasted into a command the shell then
+// evaluates, output holding shell syntax ran as code; scanned again by the
+// outer pass, it ran as an exec reference; and it could supply the key of a
+// `$(…)` the gate's collect pass never saw.
+describe('exec output is data, not code (#242)', () => {
+  it.each(['`', '$', ';', '&', '|', '<', '>', '(', ')', "'", '"', '\\', '#', '\n'])(
+    'refuses output holding %p',
+    (ch) => {
+      mockGetValue.mockImplementation((key: string) => (key === 'cmd' ? 'printf x' : undefined));
+      mockExecSync.mockReturnValue(`a${ch}b\n`);
+      expect(() => interpolateExec('echo $(cmd)')).toThrow(/Exec interpolation refused: "cmd" printed shell syntax/);
+    },
+  );
+
+  it('names a newline in words', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'cmd' ? 'printf x' : undefined));
+    mockExecSync.mockReturnValue('one\ntwo\n');
+    expect(() => interpolateExec('$(cmd)')).toThrow('(a newline)');
+  });
+
+  it('drops every trailing newline, as the shell does', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'cmd' ? 'git describe' : undefined));
+    mockExecSync.mockReturnValue('v1.4.0\n\n\n');
+    expect(interpolateExec('echo $(cmd)')).toBe('echo v1.4.0');
+  });
+
+  it('passes plain output — words, paths, versions — unchanged', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'cmd' ? 'printf x' : undefined));
+    mockExecSync.mockReturnValue('a b-c /d/e.f:g=h@i%j+k,l ~m*n?[o]{p}\n');
+    expect(interpolateExec('echo $(cmd)')).toBe('echo a b-c /d/e.f:g=h@i%j+k,l ~m*n?[o]{p}');
+  });
+
+  it('does not scan a referenced value again: its escaped \\$(key) stays literal', () => {
+    mockGetValue.mockImplementation((key: string) => {
+      if (key === 'note') return 'echo \\$(plain) here';
+      if (key === 'plain') return 'touch /tmp/should-not-run';
+      return undefined;
+    });
+    expect(interpolateExec('${note}')).toBe('echo $(plain) here');
+    expect(mockExecSync).not.toHaveBeenCalled();
+    expect(collectReferencedKeys('${note}')).toEqual(new Set(['note']));
+  });
+
+  it('refuses a $(…) whose key a ${…} supplies, and runs nothing for it', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'which' ? 'deploy' : key === 'deploy' ? 'touch x' : undefined));
+    expect(() => interpolateExec('$(${which})')).toThrow(/takes its key from a \$\{…\} reference/);
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+
+  it('refuses it also when the ${…} is empty or only part of the key', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'empty' ? '' : key === 'part' ? 'ploy' : undefined));
+    expect(() => interpolateExec('$(de${part})')).toThrow(/takes its key from/);
+    expect(() => interpolateExec('$(deploy${empty})')).toThrow(/takes its key from/);
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+
+  it('a read leaves $(${…}) as text and does not throw', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'which' ? 'deploy' : undefined));
+    expect(interpolate('$(${which})')).toBe('$(deploy)');
+  });
+
+  it('a ${…} next to a $(…), not inside it, is fine', () => {
+    mockGetValue.mockImplementation((key: string) => (key === 'dir' ? '/srv' : key === 'cmd' ? 'printf ok' : undefined));
+    mockExecSync.mockReturnValue('ok\n');
+    expect(interpolateExec('${dir}/$(cmd)/${dir}')).toBe('/srv/ok//srv');
   });
 });

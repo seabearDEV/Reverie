@@ -486,25 +486,23 @@ rvr set optional '${maybe.key:-}'
 
 #### Exec Interpolation
 
-Use `$(key)` to execute a stored command and substitute its stdout. The key must reference a stored string value containing a shell command.
+Use `$(key)` inside a stored command to run another stored command and paste its output in. The key must reference a stored string value containing a shell command. Only `rvr run` (and `reverie_run`) executes it; reads, `--dry` and previews show `$(key)` as written.
 
 ```bash
 # Store a command
 rvr set system.user "whoami"
 
-# Reference it with $(key) — executes the command and substitutes the output
-rvr set paths.home '/Users/$(system.user)'
+# Reference it with $(key) — at run time it executes and its output is pasted in
+rvr set cmd.home 'ls /Users/$(system.user)'
 
-rvr get paths.home
-# → /Users/kh
+rvr run cmd.home --dry
+# → $ ls /Users/$(system.user)
 
-# See the raw value without executing
-rvr get paths.home --source
-# → /Users/$(system.user)
+rvr run cmd.home          # runs: ls /Users/kh
 
 # Aliases work too
 rvr set system.user -a user
-rvr set paths.home '/Users/$(user)'
+rvr set cmd.home 'ls /Users/$(user)'
 ```
 
 Exec interpolation supports:
@@ -514,6 +512,11 @@ Exec interpolation supports:
 - **Circular detection**: `$(a)` → `$(b)` → `$(a)` throws an error
 - **Timeout**: commands are killed after 10 seconds
 - **Cross-type references**: `${key}` values can contain `$(key)` and vice versa
+
+The output is data, not code:
+
+- **Plain output only.** Trailing newlines are dropped, as the shell does. If what remains holds shell syntax (`` ` `` `$` `;` `&` `|` `<` `>` `(` `)` `'` `"` `\` `#` or a newline), the run stops with an error naming the key, and nothing further executes. Plain output (words, paths, versions) is pasted as is and splits into arguments like any unquoted text.
+- **Not scanned again.** Text that output or a `${key}` value put into a command is never read for `$(key)` references, and a `$(…)` cannot take its key from a `${…}`. Write the key itself.
 
 ### Encryption
 

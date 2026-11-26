@@ -125,10 +125,12 @@ describe('interpolation — advanced edge cases', () => {
       expect(interpolateExec('$(cmd)')).toBe('hello world');
     });
 
-    it('strips only trailing newline from output', () => {
+    // #242: a newline inside the output is shell syntax — pasted into the
+    // command it would start a second command — so the run is refused.
+    it('refuses multi-line output instead of pasting it (#242)', () => {
       mockGetValue.mockReturnValueOnce('cat file');
       mockExecSync.mockReturnValueOnce('line1\nline2\n');
-      expect(interpolateExec('$(cmd)')).toBe('line1\nline2');
+      expect(() => interpolateExec('$(cmd)')).toThrow('printed shell syntax (a newline)');
     });
 
     it('handles empty command output', () => {
