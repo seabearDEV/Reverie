@@ -1,5 +1,6 @@
 import { debug } from './utils/debug';
-import { Scope, loadAliasMap, saveAliasMap, updateAliasMap, loadAliasMapMerged } from './store';
+import { Scope, loadAliasMap, saveAliasMap, updateAliasMap, updateStore, loadAliasMapMerged } from './store';
+import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/aliasNames';
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
@@ -47,6 +48,10 @@ export function updateAliases(
 // string as alias names, with downstream behavior ranging from "silently
 // dropped on JSON serialization" to "creates a phantom alias visible in the
 // list as `  -> target`."
+//
+// #279: and not under a name that is an entry's key, in either store (see
+// utils/aliasNames.ts) — the alias would stand in for that entry. Refused
+// with INVALID_INPUT (a KeyCollisionError).
 export function setAlias(alias: string, path: string, scope?: Scope  ): void {
   if (!isValidEntryKey(alias)) {
     throw new Error(`Invalid alias name: ${JSON.stringify(alias)}`);
@@ -55,9 +60,12 @@ export function setAlias(alias: string, path: string, scope?: Scope  ): void {
     throw new Error(`Invalid alias target: ${JSON.stringify(path)}`);
   }
   const effectiveScope = resolveScopeForWrite(scope);
-  // #254: decided against the map as it stands under the lock.
-  updateAliasMap(current => {
-    const aliases = { ...current };
+  const otherKeys = otherStoreEntryKeys(effectiveScope);
+  // #254: decided against the map as it stands under the lock — and #279,
+  // against the entries of that store as they stand there.
+  updateStore(current => {
+    assertAliasNamesFree([alias], [...entryKeysIn(current), ...otherKeys]);
+    const aliases = { ...current.aliases };
     // Enforce one alias per entry: O(1) lookup via inverted map
     const keyToAlias = buildKeyToAliasMap(aliases);
     const existing = keyToAlias[path];
@@ -65,7 +73,7 @@ export function setAlias(alias: string, path: string, scope?: Scope  ): void {
       delete aliases[existing];
     }
     aliases[alias] = path;
-    return aliases;
+    return { ...current, aliases };
   }, effectiveScope);
   console.log(`Alias '${alias}' added successfully.`);
 }
@@ -89,7 +97,7 @@ export function removeAlias(alias: string, scope?: Scope  ): boolean {
   });
 }
 
-// Rename an alias
+// Rename an alias. #279: not to a name that is an entry's key (setAlias's rule).
 export function renameAlias(oldName: string, newName: string, scope?: Scope  ): boolean {
   const effectiveScope = resolveScopeForWrite(scope);
   assertSidecarsWritable(() => effectiveScope, ['aliases']); // #215, as removeAlias
@@ -101,8 +109,17 @@ export function renameAlias(oldName: string, newName: string, scope?: Scope  ): 
     return next;
   };
   if (rename(loadAliasMap(effectiveScope)) === null) return false;
+  const otherKeys = otherStoreEntryKeys(effectiveScope);
   // #254: checked again, and renamed, in the map as it stands under the lock.
-  return changeAliasMap(effectiveScope, rename);
+  let renamed = false;
+  updateStore(current => {
+    const next = rename(current.aliases);
+    renamed = next !== null;
+    if (next === null) return null;
+    assertAliasNamesFree([newName], [...entryKeysIn(current), ...otherKeys]);
+    return { ...current, aliases: next };
+  }, effectiveScope);
+  return renamed;
 }
 
 // Resolve a key that might be an alias

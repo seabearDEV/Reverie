@@ -1,4 +1,4 @@
-import { getEntriesFlat } from '../storage';
+import { getEntriesFlat, entryStoreOf } from '../storage';
 import { setNestedValue } from '../utils/objectPath';
 import { formatKeyValue, displayTree, highlightMatch } from '../formatting';
 import { color } from '../formatting';
@@ -6,7 +6,7 @@ import { loadAliases, buildKeyToAliasMap } from '../alias';
 import { SearchOptions } from '../types';
 import { isEncrypted } from '../utils/crypto';
 import { debug } from '../utils/debug';
-import { interpolate } from '../utils/interpolate';
+import { interpolateFrom, type EntryStore } from '../utils/interpolate';
 import { isJsonMode, setResult, failJson, recordErrorCode } from '../utils/output';
 
 type MatchFn = (text: string) => boolean;
@@ -32,7 +32,7 @@ function buildMatcher(searchTerm: string, useRegex: boolean): MatchFn {
   return (text: string) => text.toLowerCase().includes(lc);
 }
 
-function searchDataEntries(flattenedData: Record<string, string>, match: MatchFn, keysOnly?: boolean, valuesOnly?: boolean): Record<string, string> {
+function searchDataEntries(flattenedData: Record<string, string>, match: MatchFn, storeOf: (key: string) => EntryStore, keysOnly?: boolean, valuesOnly?: boolean): Record<string, string> {
   const matches: Record<string, string> = {};
   for (const [key, value] of Object.entries(flattenedData)) {
     const encrypted = isEncrypted(value);
@@ -43,7 +43,8 @@ function searchDataEntries(flattenedData: Record<string, string>, match: MatchFn
     // pay for resolution; values that will be matched still resolve up front.
     let resolved = value;
     if (!encrypted && (!keysOnly || keyMatches)) {
-      try { resolved = interpolate(value); } catch { /* use raw */ }
+      // #280: in the store the entry is in.
+      try { resolved = interpolateFrom(value, storeOf(key)); } catch { /* use raw */ }
     }
     const valueMatches = !keysOnly && !encrypted && match(resolved);
 
@@ -85,7 +86,9 @@ function displaySearchResults(
         // --keys is a projection too (#127): don't render the values.
         setNestedValue(matchesObj, key, options.keys ? '' : dataMatches[key]);
       });
-      displayTree(matchesObj, buildKeyToAliasMap(aliases), '', '', false, searchTerm);
+      // The values are interpolated already, each in its own store (#280):
+      // shown as they are, not resolved a second time.
+      displayTree(matchesObj, buildKeyToAliasMap(aliases), '', '', false, searchTerm, true);
     } else {
       Object.entries(dataMatches).forEach(([key, value]) => {
         if (options.keys) console.log(highlightMatch(key, searchTerm));
@@ -135,7 +138,7 @@ export function searchEntries(searchTerm: string, options: SearchOptions = {}): 
   }
 
   const aliases = loadAliases(scope);
-  const dataMatches = options.aliases ? {} : searchDataEntries(flattenedData, match, options.keys, options.values);
+  const dataMatches = options.aliases ? {} : searchDataEntries(flattenedData, match, entryStoreOf(scope), options.keys, options.values);
   const aliasMatches = options.entries ? {} : searchAliasEntries(aliases, match);
 
   const dataCount = Object.keys(dataMatches).length;

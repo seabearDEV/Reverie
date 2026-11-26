@@ -7,6 +7,9 @@ import fs from 'fs';
 
 vi.mock('../storage', () => ({
   getEntriesFlat: vi.fn(() => ({})),
+  // #280: every entry here is in one store, and no value holds a reference.
+  entryStoreOf: vi.fn(() => () => 'project'),
+  getValueWithStore: vi.fn(() => { throw new Error('getValueWithStore is not mocked in this suite'); }),
 }));
 
 vi.mock('../store', () => ({

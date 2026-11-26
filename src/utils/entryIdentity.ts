@@ -123,3 +123,23 @@ export function storedSpellingOf(dir: string, key: string, storedKeys: ReadonlyS
   for (const other of storedKeys) if (entryFileId(dir, other) === id) return other;
   return undefined;
 }
+
+/**
+ * The entry an alias named `name` would stand in front of (#279), or
+ * undefined: one of `entryKeys` under exactly that name, or one that differs
+ * from it only by case (a flag gates a name case aside, and a case-sensitive
+ * volume keeps both files), or — asked of the filesystem — one whose entry
+ * file `name` opens in either store, a spelling the volume folds onto it.
+ * Only `entryKeys` count: a write that is about to remove an entry (a
+ * rename) leaves it out, though its file is still there.
+ */
+export function entryNamedBy(name: string, entryKeys: ReadonlySet<string>): string | undefined {
+  if (entryKeys.has(name)) return name;
+  const lower = name.toLowerCase();
+  for (const key of entryKeys) if (key.toLowerCase() === lower) return key;
+  for (const dir of storeDirs()) {
+    const stored = storedSpellingOf(dir, name, entryKeys);
+    if (stored !== undefined) return stored;
+  }
+  return undefined;
+}

@@ -106,7 +106,7 @@ reverie
         const pair = pairs[i];
         const eqIdx = pair.indexOf('=');
         if (eqIdx === -1) {
-          commands.warnUnresolvedReferences(stored);
+          commands.warnUnresolvedReferences(stored, scope ?? 'project');
           printError(`Invalid batch pair '${pair}'. Expected key=value format.`);
           process.exitCode = 1;
           return;
@@ -114,7 +114,7 @@ reverie
         const k = pair.slice(0, eqIdx);
         const v = pair.slice(eqIdx + 1);
         if (!k) {
-          commands.warnUnresolvedReferences(stored);
+          commands.warnUnresolvedReferences(stored, scope ?? 'project');
           printError(`Invalid batch pair '${pair}'. Key cannot be empty.`);
           process.exitCode = 1;
           return;
@@ -129,7 +129,7 @@ reverie
           async () => {
             const result = await commands.setEntry(rk, v, options.force, undefined, undefined, undefined, options.global);
             if (result) stored.push([rk, v]);
-            if (!deferEnvelope) commands.warnUnresolvedReferences(stored);
+            if (!deferEnvelope) commands.warnUnresolvedReferences(stored, scope ?? 'project');
             return result;
           }
         );
@@ -216,7 +216,7 @@ reverie
         // prompt (shownValue is undefined then): both are secrets, and the
         // warning would print part of one.
         if (result && shownValue !== undefined && !options.encrypt) {
-          commands.warnUnresolvedReferences([[resolvedKey, shownValue]]);
+          commands.warnUnresolvedReferences([[resolvedKey, shownValue]], scope ?? 'project');
         }
         return result;
       }

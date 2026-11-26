@@ -116,9 +116,16 @@ vi.mock('../storage', () => ({
     Object.assign(mockData, d);
   }),
   getValue: vi.fn((key: string) => getNestedMock(mockData, key)),
+  // #280: this mock has one store; a value read in the default scope counts as the project's.
+  getValueWithStore: vi.fn((key: string, scope?: string) => {
+    const value = getNestedMock(mockData, key);
+    return value === undefined ? undefined : { value, store: scope === 'global' ? 'global' : 'project' };
+  }),
   setValue: vi.fn((key: string, value: string) => setNestedMock(mockData, key, value)),
   removeValue: vi.fn((key: string) => removeNestedMock(mockData, key)),
   getEntriesFlat: vi.fn(() => flattenMock(mockData)),
+  // #280: for listings in the CLI; the MCP tools read one store at a time.
+  entryStoreOf: vi.fn(() => { throw new Error('entryStoreOf is not mocked in this suite'); }),
   // Round-2 import validators — see mcp-server.test.ts for the same shim.
   validateImportEntries: vi.fn(),
   validateImportAliases: vi.fn(),
@@ -275,6 +282,9 @@ vi.mock('../utils/entryIdentity', () => ({
   keysOpeningSameEntry: vi.fn(() => []),
   opensEntryFile: vi.fn(() => false),
   storedSpellingOf: vi.fn(() => undefined),
+  // #279: the alias-name check, by name only — this mock's filesystem folds nothing.
+  entryNamedBy: vi.fn((name: string, keys: ReadonlySet<string>) =>
+    keys.has(name) ? name : [...keys].find(k => k.toLowerCase() === name.toLowerCase())),
 }));
 
 vi.mock('../formatting', () => {

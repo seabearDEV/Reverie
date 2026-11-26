@@ -172,6 +172,9 @@ vi.mock('../utils/entryIdentity', () => ({
   keysOpeningSameEntry: vi.fn(() => []),
   opensEntryFile: vi.fn(() => false),
   storedSpellingOf: vi.fn(() => undefined),
+  // #279: the alias-name check, by name only — this mock's filesystem folds nothing.
+  entryNamedBy: vi.fn((name: string, keys: ReadonlySet<string>) =>
+    keys.has(name) ? name : [...keys].find(k => k.toLowerCase() === name.toLowerCase())),
 }));
 
 // Mock readline for TTY confirmation prompts

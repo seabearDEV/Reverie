@@ -371,6 +371,8 @@ rvr set server.production.ip 192.168.1.100 -a ip
 rvr remove server.production.ip
 ```
 
+An alias is looked up before an entry, so an alias named after an entry would stand in for it wherever the name is used. Every command that adds an alias (`alias set`, `alias rename`, `set -a`, `rename --set-alias`, an import, and their MCP counterparts) refuses a name that is the key of an entry in either store, in another case too, with `INVALID_INPUT`. A flagged command is gated under the name you type as well as the entry an alias points it to (see [Run Confirmation](#run-confirmation)).
+
 ### Copying Data
 
 Copy an entry (or an entire subtree) to a new key:
@@ -455,6 +457,8 @@ rvr get paths.myproject --source
 rvr set paths.myproject -p
 ```
 
+A reference resolves in the store of the entry that holds it. In a global entry, `${key}` and `$(key)`, and the aliases they name, read the global store only, all the way down: inside a project, even one you just cloned, your own global commands neither show nor run that project's entries, with or without `-G`. In a project entry they read the project, then the global store, the way a lookup by key does; a global entry reached that way still resolves its own references in the global store. `get`, `find`, `lint`, `run` and its preview, and the MCP tools all follow this rule, so what a read shows is what a run runs. A command that has to pick up a project's values belongs in that project's store.
+
 A reference that does not resolve — no such key — does not make the entry unreadable. `get` returns the value as written and warns (on stderr; `warnings[]` with code `INTERPOLATION_UNRESOLVED` in JSON), `set` warns when it stores one, and `rvr lint` lists them. At `set`, a value that is encrypted, or typed at the masked `--prompt`, is not inspected, because the warning quotes the reference. `run` still refuses to execute a command with an unresolved reference. For text that only looks like a reference, such as documentation for a tool that uses `${VAR}` itself, escape it:
 
 ```bash
@@ -510,7 +514,7 @@ rvr set cmd.home 'ls /Users/$(user)'
 Exec interpolation supports:
 
 - **Recursion**: stored commands can contain `${key}` or `$(key)` references that resolve before execution
-- **Caching**: the same key is only executed once per interpolation pass
+- **Caching**: an entry's command is only executed once per run, however often it is referenced
 - **Circular detection**: `$(a)` → `$(b)` → `$(a)` throws an error
 - **Timeout**: commands are killed after 10 seconds
 - **Cross-type references**: `${key}` values can contain `$(key)` and vice versa
@@ -759,7 +763,7 @@ rvr run commands.deploy -y
 
 The key has to name an entry, in the project store or the global one, whichever list `-G` picks: `confirm set` and `set <key> --confirm` refuse a key that is in neither, and a namespace. The flag is listed under the name the entry is stored as, so it gates wherever the store is copied: on a default macOS volume, `rvr confirm set commands.DEPLOY` lists `commands.deploy`, and `commands.ﬁx` (with the fi ligature) lists `commands.fix`. Inside a project, an entry stored only in the global store gets its flag in the global list, which every project reads and every rename sees; an entry in the project store gets it in the project's list, or the global one with `-G`. If the global list cannot be used (the store cannot be written, or its list cannot be read), a global-only entry's flag goes in the project's list, with a warning that it applies only in that project. Where the two stores spell one entry differently, the flag is listed under each spelling. The success line says when the name or the list is not the one you gave. `set <key> <value> --confirm` stores the value and its flag (and a `-a` alias) in one write: all of it, or nothing.
 
-A flagged command asks for confirmation under any spelling that reaches it, directly, through a `${reference}` or through an alias: on a filesystem that ignores case, `rvr run commands.Deploy` opens the entry stored as `commands.deploy`, and is gated like it. `confirm remove` clears the flag listed under the name it is given, in the list it is given for. If the key is still gated afterwards — by a flag under another spelling, by the other store's list, or by a list that cannot be read — it names every one of them; it exits 1 only when it removed nothing. Renaming an entry or a namespace flags the new keys of the gated entries it moves and leaves the old names flagged (a rename is refused while either list cannot be read, since it could not carry a flag from that list), and removing one leaves its flags listed too: a flag gates its name in every project, and the global list may be gating another project's entry of the same name. Clear a flag with `confirm remove` once nothing uses it.
+A flagged command asks for confirmation under any spelling that reaches it, directly, through a `${reference}` or through an alias: on a filesystem that ignores case, `rvr run commands.Deploy` opens the entry stored as `commands.deploy`, and is gated like it. A flag also gates its name wherever the name is used, whatever an alias makes of it: every key given to `run`, a `--chain` entry and each key it lists, and every `${…}` and `$(…)` a run reaches are checked as written and as their alias resolves. So a cloned project's `_aliases.json` cannot point a name you flagged at a command of its own and run it unasked. `confirm remove` clears the flag listed under the name it is given, in the list it is given for. If the key is still gated afterwards — by a flag under another spelling, by the other store's list, or by a list that cannot be read — it names every one of them; it exits 1 only when it removed nothing. Renaming an entry or a namespace flags the new keys of the gated entries it moves and leaves the old names flagged (a rename is refused while either list cannot be read, since it could not carry a flag from that list), and removing one leaves its flags listed too: a flag gates its name in every project, and the global list may be gating another project's entry of the same name. Clear a flag with `confirm remove` once nothing uses it.
 
 ### Staleness Detection
 

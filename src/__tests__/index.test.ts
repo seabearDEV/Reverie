@@ -193,7 +193,8 @@ describe('CLI Entry Point (index.ts)', () => {
     it('a value given as an argument is checked once it is stored', async () => {
       mockSetEntry.mockResolvedValue({ key: 'my.key' });
       await loadCLI('set', '--force', 'my.key', 'uses', '${NOPE}');
-      expect(mockWarnUnresolvedReferences).toHaveBeenCalledWith([['my.key', 'uses ${NOPE}']]);
+      // #280: with the store the value went to, where a read resolves it.
+      expect(mockWarnUnresolvedReferences).toHaveBeenCalledWith([['my.key', 'uses ${NOPE}']], 'project');
     });
 
     it('a value that was not stored is not checked', async () => {

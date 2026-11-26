@@ -39,6 +39,9 @@ vi.mock('../utils/paths', () => ({
 // file-per-entry store layer underneath.
 vi.mock('../storage', () => ({
   loadData: vi.fn(() => ({})),
+  // #280: reached only through interpolation, which nothing here does.
+  getValueWithStore: vi.fn(() => { throw new Error('getValueWithStore is not mocked in this suite'); }),
+  entryStoreOf: vi.fn(() => { throw new Error('entryStoreOf is not mocked in this suite'); }),
 }));
 
 vi.mock('../alias', () => ({

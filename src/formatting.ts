@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { loadConfig } from './config';
 import { isEncrypted } from './utils/crypto';
-import { interpolate } from './utils/interpolate';
+import { interpolateFrom, type EntryStore } from './utils/interpolate';
 import { interpretEscapes, visibleLength, wordWrap } from './utils/wordWrap';
 import { getBinaryName } from './utils/binaryName';
 
@@ -285,6 +285,8 @@ export function showExamples(): void {
 /**
  * Build a tree-formatted string from nested data.
  * When colorize is omitted it defaults to the user's color setting.
+ * `from`: the store the data was read from, where the values' references
+ * resolve (#280).
  */
 export function formatTree(
   data: Record<string, unknown>,
@@ -297,7 +299,8 @@ export function formatTree(
   source = false,
   keysOnly = false,
   maxDepth?: number,
-  currentDepth = 1
+  currentDepth = 1,
+  from: EntryStore = 'project',
 ): string {
   const colorEnabled = colorize ?? isColorEnabled();
   const lines: string[] = [];
@@ -319,7 +322,7 @@ export function formatTree(
       lines.push(`${fullPrefix}${displayKey}${aliasDisplay}`);
       if (maxDepth === undefined || currentDepth < maxDepth) {
         const childPrefix = prefix + (isLast ? ' '.repeat(4) : '│   ');
-        lines.push(formatTree(value as Record<string, unknown>, keyToAliasMap, childPrefix, fullPath, colorEnabled, plain, searchTerm, source, keysOnly, maxDepth, currentDepth + 1));
+        lines.push(formatTree(value as Record<string, unknown>, keyToAliasMap, childPrefix, fullPath, colorEnabled, plain, searchTerm, source, keysOnly, maxDepth, currentDepth + 1, from));
       }
     } else if (keysOnly || (maxDepth !== undefined && currentDepth <= maxDepth)) {
       lines.push(`${fullPrefix}${displayKey}${aliasDisplay}`);
@@ -327,7 +330,7 @@ export function formatTree(
       const rawValue = String(value);
       let resolved = rawValue;
       if (!source && !isEncrypted(rawValue)) {
-        try { resolved = interpolate(rawValue); } catch { /* use raw */ }
+        try { resolved = interpolateFrom(rawValue, from); } catch { /* use raw */ }
       }
       const masked = isEncrypted(rawValue) ? '[encrypted]' : (plain ? resolved : interpretEscapes(resolved));
       const valueLines = masked.split('\n');
@@ -354,7 +357,7 @@ export function formatTree(
 /**
  * Display data in a tree format (prints to stdout)
  */
-export function displayTree(data: Record<string, unknown>, keyToAliasMap: Record<string, string> = {}, prefix = '', path = '', plain = false, searchTerm?: string, source = false, keysOnly = false, maxDepth?: number): void {
-  console.log(formatTree(data, keyToAliasMap, prefix, path, undefined, plain, searchTerm, source, keysOnly, maxDepth));
+export function displayTree(data: Record<string, unknown>, keyToAliasMap: Record<string, string> = {}, prefix = '', path = '', plain = false, searchTerm?: string, source = false, keysOnly = false, maxDepth?: number, from: EntryStore = 'project'): void {
+  console.log(formatTree(data, keyToAliasMap, prefix, path, undefined, plain, searchTerm, source, keysOnly, maxDepth, 1, from));
 }
 
