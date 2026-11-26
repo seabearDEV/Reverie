@@ -267,10 +267,13 @@ function migrateLegacyProjectDir(legacyPath: string, newPath: string, parentDir:
   }
   fs.renameSync(legacyPath, newPath);
 
-  // Rename sibling auto-backup dir if present.
+  // Rename sibling auto-backup dir if present — a real directory only
+  // (#282): a cloned repo can ship `.codexcli.backups` as a symlink out of
+  // the repo, and carried over it became the backups directory. lstat for
+  // the destination too, so a dangling link there is not renamed over.
   const legacyBackups = path.join(parentDir, LEGACY_BACKUPS_DIR_NAME);
   const newBackups = path.join(parentDir, BACKUPS_DIR_NAME);
-  if (fs.existsSync(legacyBackups) && !fs.existsSync(newBackups)) {
+  if (isRealDirectory(legacyBackups) && !pathEntryExists(newBackups)) {
     try {
       fs.renameSync(legacyBackups, newBackups);
     } catch {
@@ -475,6 +478,16 @@ function isDirectorySafe(p: string): boolean {
 function isRealDirectory(p: string): boolean {
   try {
     return fs.lstatSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Is there anything at `p`, a symlink included (existsSync follows one)? */
+function pathEntryExists(p: string): boolean {
+  try {
+    fs.lstatSync(p);
+    return true;
   } catch {
     return false;
   }
