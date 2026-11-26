@@ -5,11 +5,10 @@ import {
   removeConfirm,
   hasConfirm,
   removeConfirmForKey,
-  moveConfirm,
   flagsGating,
   gatedAmong,
 } from '../confirm';
-import { keysOpeningSameEntry, entriesOpenedBy } from '../utils/entryIdentity';
+import { keysOpeningSameEntry, entriesOpenedBy, opensEntryFile } from '../utils/entryIdentity';
 
 vi.mock('../store', () => {
   let confirmKeys: Record<string, true> = {};
@@ -25,6 +24,12 @@ vi.mock('../store', () => {
       if (next !== null) saveConfirmMap(next, scope);
     }),
     loadConfirmMapMerged: vi.fn(() => ({ ...confirmKeys })),
+    // #259: setConfirm decides under both stores' locks; here one store with
+    // no entries, so whether the key names one is opensEntryFile's answer.
+    updateUnderBothLocks: vi.fn((scope: string, fn: (target: unknown, other: unknown) => { confirm: Record<string, true> } | null) => {
+      const next = fn({ scope, dir: '/mock/store', data: { entries: {}, aliases: {}, confirm: loadConfirmMap(scope) }, unreadable: [] }, undefined);
+      if (next !== null) saveConfirmMap(next.confirm, scope);
+    }),
     clearStoreCaches: vi.fn(() => { confirmKeys = {}; }),
     findProjectFile: vi.fn(() => null),
     clearProjectFileCache: vi.fn(),
@@ -36,6 +41,8 @@ vi.mock('../store', () => {
 vi.mock('../utils/entryIdentity', () => ({
   keysOpeningSameEntry: vi.fn(() => []),
   entriesOpenedBy: vi.fn(() => new Map()),
+  opensEntryFile: vi.fn(() => true),
+  storedSpellingOf: vi.fn(() => undefined),
 }));
 
 import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged } from '../store';
@@ -54,6 +61,7 @@ describe('Confirm Metadata', () => {
     (loadConfirmMapMerged as Mock).mockReturnValue({ ...defaultConfirm });
     (keysOpeningSameEntry as Mock).mockReturnValue([]);
     (entriesOpenedBy as Mock).mockReturnValue(new Map());
+    (opensEntryFile as Mock).mockReturnValue(true);
     console.log = vi.fn();
     console.error = vi.fn();
   });
@@ -93,12 +101,20 @@ describe('Confirm Metadata', () => {
 
   describe('setConfirm', () => {
     it('adds a key to confirm set', () => {
-      setConfirm('commands.new');
+      expect(setConfirm('commands.new')).toBe(true);
 
       expect(saveConfirmMap).toHaveBeenCalled();
       const savedData = (saveConfirmMap as Mock).mock.calls[0][0];
       expect(savedData['commands.new']).toBe(true);
       expect(savedData['commands.deploy']).toBe(true);
+    });
+
+    it('#259: writes nothing, and says so, when the key names no entry where the flag is written', () => {
+      // The caller looked the key up before any lock; by the time the list is
+      // written, a rename may have moved the entry.
+      (opensEntryFile as Mock).mockReturnValue(false);
+      expect(setConfirm('commands.new')).toBe(false);
+      expect(saveConfirmMap).not.toHaveBeenCalled();
     });
   });
 
@@ -276,48 +292,6 @@ describe('Confirm Metadata', () => {
       list({ 'commands.build': true, 'Commands.deploy': true, 'commandsx.deploy': true });
       removeConfirmForKey('commands');
       expect(saved()).toEqual({ 'Commands.deploy': true, 'commandsx.deploy': true });
-    });
-  });
-
-  // Only the flag on the renamed key itself used to move, so renaming a
-  // namespace left its entries' flags behind. The caller says which moved
-  // entries were gated, asked before anything moved; nothing here infers it.
-  //
-  // And a rename drops nothing. A flag gates by name, and the global list is
-  // read in every project: the flag on a renamed key may be what gates
-  // another project's entry of the same name, which the rename cannot see.
-  describe('moveConfirm', () => {
-    const list = (scoped: Record<string, true>) => {
-      (loadConfirmMap as Mock).mockReturnValue({ ...scoped });
-    };
-    const saved = () => (saveConfirmMap as Mock).mock.calls[0][0] as Record<string, true>;
-
-    it('flags the new key and leaves the old one listed', () => {
-      moveConfirm([['commands.deploy', 'commands.ship']]);
-      expect(saved()).toEqual({ 'commands.deploy': true, 'commands.ship': true, 'commands.rm-logs': true });
-    });
-
-    it('does that for each entry it is given, and touches no other flag', () => {
-      list({ 'ops.deploy': true, 'ops.db.wipe': true, 'OPS.deploy': true, 'ops2.deploy': true });
-      moveConfirm([['ops.deploy', 'jobs.deploy'], ['ops.db.wipe', 'jobs.db.wipe']]);
-      expect(saved()).toEqual({
-        'ops.deploy': true, 'ops.db.wipe': true, 'OPS.deploy': true, 'ops2.deploy': true,
-        'jobs.deploy': true, 'jobs.db.wipe': true,
-      });
-    });
-
-    it('flags the new key in the list it writes to when the flag lived in the other one', () => {
-      list({});
-      moveConfirm([['ops.deploy', 'ops.ship']]);
-      expect(saved()).toEqual({ 'ops.ship': true });
-    });
-
-    it('writes nothing when there is nothing to add', () => {
-      moveConfirm([]);
-      expect(saveConfirmMap).not.toHaveBeenCalled();
-      // The new key is already flagged.
-      moveConfirm([['commands.rm-logs', 'commands.deploy']]);
-      expect(saveConfirmMap).not.toHaveBeenCalled();
     });
   });
 

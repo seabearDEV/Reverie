@@ -4,7 +4,8 @@ import os from 'os';
 import path from 'path';
 import { loadData, handleError, getValue, getValueForWrite, setValue, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
-import { assertKeysWritable, renameDestinationProblem, renamedLeaves } from '../utils/keyCollision';
+import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
+import { renameKey, RenameRefusal } from '../rename';
 import { isValidEntryKey } from '../utils/directoryStore';
 import { findProjectFile, updateEntries, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
@@ -12,8 +13,8 @@ import { displayTree } from '../formatting';
 import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
-import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, updateAliases, resolveKey, renameAlias } from '../alias';
-import { hasConfirm, setConfirm, removeConfirm, flagsListedUnder, moveConfirm, flagsGating, gatedAmong } from '../confirm';
+import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, resolveKey, renameAlias } from '../alias';
+import { hasConfirm, setConfirm, removeConfirm, flagsListedUnder, flagsGating } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
@@ -433,9 +434,19 @@ export function confirmTargetProblem(
   return { code: 'NOT_FOUND', message: `Entry '${key}' not found. Cannot update confirm on a non-existent entry.` };
 }
 
+/**
+ * #259: the value was stored, and by the time the flag is written the entry
+ * is gone — moved or removed by another process in between. setConfirm
+ * writes no flag for a key that names nothing; say so.
+ */
+function flagNotSet(key: string): void {
+  printError(`Entry '${key}' was moved or removed before its confirmation flag was set: no flag was set.`, 'NOT_FOUND');
+  process.exitCode = 1;
+}
+
 async function handlePostSetConfirm(key: string, confirm: boolean | undefined, scope?: Scope  ): Promise<void> {
   if (confirm === true) {
-    setConfirm(key, scope);
+    if (setConfirm(key, scope) === false) flagNotSet(key);
   } else if (confirm === false) {
     const removed = removeConfirm(key, scope);
     // The value is stored either way; say so if the key is still gated.
@@ -450,9 +461,7 @@ async function handlePostSetConfirm(key: string, confirm: boolean | undefined, s
     } catch { /* unresolvable scope: nothing was scanned, nothing to skip for */ }
     if (confirmUnreadable) return;
     const answer = await askConfirmation('Require confirmation to run? [y/N] ');
-    if (answer.toLowerCase() === 'y') {
-      setConfirm(key, scope);
-    }
+    if (answer.toLowerCase() === 'y' && setConfirm(key, scope) === false) flagNotSet(key);
   }
 }
 
@@ -477,7 +486,13 @@ export async function setEntry(key: string, value: string | undefined, force = f
         // refuse a --no-confirm that cannot see the flag it is asked to drop.
         assertSidecarsWritable(() => resolveScopeForWrite(scope), alias ? ['confirm', 'aliases'] : ['confirm']);
         if (confirm) {
-          setConfirm(key, scope);
+          // #259: asked again under the store locks — a rename or a removal
+          // since the look above leaves nothing under this name to flag.
+          if (setConfirm(key, scope) === false) {
+            printError(`Entry '${key}' not found. Cannot update confirm on a non-existent entry.`, 'NOT_FOUND');
+            process.exitCode = 1;
+            return;
+          }
           printSuccess(`Entry '${key}' now requires confirmation to run.`);
         } else {
           const removed = removeConfirm(key, scope);
@@ -1084,10 +1099,8 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     return;
   }
 
-  // #224: the move below writes the new keys and then removes the old key
-  // with everything under it. Refuse a destination that would be removed
-  // with it, or that cannot be stored at all — both used to report success
-  // with the entries gone.
+  // #224: a destination that would be removed with the source, or that
+  // cannot be stored at all, used to report success with the entries gone.
   const destinationProblem = renameDestinationProblem(oldKey, newKey, isValidEntryKey);
   if (destinationProblem) {
     printError(destinationProblem, 'INVALID_INPUT');
@@ -1102,85 +1115,24 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
     return;
   }
 
-  // #215: a rename moves the value, re-points aliases and moves the confirm
-  // flag. With either sidecar unreadable it cannot know what to carry over —
-  // refuse before the value moves.
-  assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
-
-  // Which of the entries about to move does the gate ask about? Asked now:
-  // it looks at their files, and afterwards those are gone.
-  const leaves = renamedLeaves(oldKey, newKey, value);
-  const gatedNow = gatedAmong(leaves.map(([from]) => from));
-  const gatedLeaves = leaves.filter(([from]) => gatedNow.has(from));
-
-  // Move the value. A refused collision (#216 / #224) is thrown before
-  // anything is written; report it and leave the source where it is.
+  // #259: the move, the alias re-point and the flags in one transaction,
+  // decided from the stores as they stand under their locks. The checks
+  // above give the usual answers; renameKey asks again there, and refuses
+  // another spelling of the source (#247) and an unreadable list (#245).
   try {
-    if (typeof value === 'string') {
-      setValue(newKey, value, scope);
-    } else {
-      // Batch: load once, set all leaves, save once (instead of O(L) file writes).
-      // Apply the project-resolution guard here too — this path bypasses
-      // storage.ts setValue, so the guard would otherwise be skipped (#99).
-      const effectiveScope = resolveScopeForWrite(scope);
-      const leaves = Object.entries(flattenObject({ [oldKey]: value }))
-        .map(([flatKey, flatVal]): [string, string] => [newKey + flatKey.slice(oldKey.length), String(flatVal)]);
-      // #254: under the store lock, against the store as it stands there.
-      updateEntries((entries, meta) => {
-        assertKeysWritable(entries, leaves.map(([leafKey]) => leafKey));
-        for (const [leafKey, leafValue] of leaves) setNestedValue(entries, leafKey, leafValue);
-        meta[newKey] = Date.now();
-      }, effectiveScope);
-    }
+    renameKey(oldKey, newKey, scope, newAlias);
   } catch (error) {
+    if (error instanceof RenameRefusal) {
+      printError(error.message, error.code);
+      process.exitCode = 1;
+      return;
+    }
     handleError('Failed to rename entry:', error);
     return;
   }
-  removeValue(oldKey, scope);
 
-  // Update aliases: re-point any alias targeting oldKey (or children) to newKey.
-  // Batch: one write for all of them (instead of O(A*4) file I/O). Decided
-  // against the map as it stands under the store lock (#254).
-  const oldPrefix = oldKey + '.';
-  const repoint = (current: Record<string, string>): Record<string, string> | null => {
-    // First pass: collect re-point updates (alias -> newTarget)
-    const updates: [string, string][] = [];
-    for (const [alias, target] of Object.entries(current)) {
-      if (target === oldKey) {
-        updates.push([alias, newKey]);
-      } else if (target.startsWith(oldPrefix)) {
-        updates.push([alias, newKey + target.slice(oldKey.length)]);
-      }
-    }
-    if (updates.length === 0) return null;
-
-    // Enforce one-alias-per-entry: remove any existing alias already pointing
-    // to one of the new targets before re-pointing (same rule as setAlias)
-    const aliases = { ...current };
-    const newTargets = new Set(updates.map(([, t]) => t));
-    for (const [alias, target] of Object.entries(aliases)) {
-      if (newTargets.has(target)) {
-        delete aliases[alias];
-      }
-    }
-    // Apply re-pointings
-    for (const [alias, newTarget] of updates) {
-      aliases[alias] = newTarget;
-    }
-    return aliases;
-  };
-  // Nothing points at the old key: nothing to write.
-  if (repoint(loadAliases(scope)) !== null) updateAliases(repoint, scope);
-
-  // Confirm metadata: each gated entry that moved is flagged under its new
-  // key. The old name keeps its flag — it may be what gates an entry of that
-  // name somewhere this rename cannot see.
-  moveConfirm(gatedLeaves, scope);
-
-  // Set a new alias on the renamed key
-  if (newAlias) {
-    setAlias(newAlias, newKey, scope);
-  }
+  // As setAlias reports it; the alias went in with the rename.
+  if (newAlias) console.log(`Alias '${newAlias}' added successfully.`);
 
   printSuccess(`Entry '${oldKey}' renamed to '${newKey}'.`);
   return { from: oldKey, to: newKey, kind: 'entry', ...(newAlias ? { alias: newAlias } : {}) };

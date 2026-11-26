@@ -50,6 +50,12 @@ export interface ScopedStore {
    * not re-entrant.
    */
   update(fn: (current: UnifiedData) => UnifiedData | null): void;
+  /**
+   * Read the store under its lock and decide from it while the lock is held
+   * (#259); writes nothing. `fn` is synchronous, must not write this store,
+   * and may update another one — see updateUnderBothLocks.
+   */
+  inspect<T>(fn: (current: UnifiedData) => T): T;
   clear(): void;
   /**
    * Fast-path single-entry read. Reads exactly one entry file (no directory
@@ -370,6 +376,69 @@ export function updateAll(
 /** updateAll with sections that do not depend on the store (import replace). */
 export function saveAll(sections: StoreSections, scope?: Scope): void {
   updateAll(() => sections, scope);
+}
+
+/** One store as a two-store transaction sees it, under that store's lock. */
+export interface LockedStore {
+  scope: 'project' | 'global';
+  /** The store directory, for what only the filesystem answers: which file a key opens. */
+  dir: string;
+  /** The store as it stands under its lock, in fresh objects. */
+  data: UnifiedData;
+  /** Its files that do not parse, as of the scan under the lock (#215). */
+  unreadable: UnreadableFile[];
+}
+
+/**
+ * Change one store while holding the locks of both (#259), for a write that
+ * decides from the other store too. A rename flags each entry it moves that
+ * a flag in EITHER list gates; `confirm set` checks that its key still names
+ * an entry, in either store. With only the written store's lock held, the
+ * other store could change between that read and the write.
+ *
+ * `fn(target, other)` gets the store `scope` writes and the other store
+ * (undefined when there is no project store), each as it stands under its
+ * lock, and returns the target's new state, or null to write nothing. Only
+ * the target is written. The contract of update(): `fn` is synchronous and
+ * reads or writes no store itself.
+ *
+ * LOCK ORDER: the project store's lock first, then the global store's,
+ * whichever of the two is written. Nothing else holds two store locks —
+ * every other write holds its own store's lock and waits for no other — so
+ * two of these transactions cannot wait on each other in a cycle. The global
+ * lock, which every project shares, is the one held for less time. If the
+ * second lock times out (LockTimeoutError) the first is released and nothing
+ * is written.
+ */
+export function updateUnderBothLocks(
+  scope: 'project' | 'global',
+  fn: (target: LockedStore, other: LockedStore | undefined) => UnifiedData | null,
+): void {
+  const global = getGlobalStore();
+  const globalDir = getGlobalStoreDirPath();
+  const project = getProjectStore();
+  const projectDir = projectStoreDirPath;
+  const view = (store: ScopedStore, which: 'project' | 'global', dir: string, data: UnifiedData): LockedStore =>
+    ({ scope: which, dir, data, unreadable: store.unreadable() });
+
+  // One store, or one directory reached under both names: one lock.
+  if (!project || projectDir === null || path.resolve(projectDir) === path.resolve(globalDir)) {
+    if (scope === 'project' && project && projectDir !== null) {
+      project.update(current => fn(view(project, 'project', projectDir, current), undefined));
+    } else {
+      global.update(current => fn(view(global, 'global', globalDir, current), undefined));
+    }
+    return;
+  }
+  if (scope === 'project') {
+    project.update(current => global.inspect(other =>
+      fn(view(project, 'project', projectDir, current), view(global, 'global', globalDir, other))));
+  } else {
+    project.inspect(other => {
+      global.update(current =>
+        fn(view(global, 'global', globalDir, current), view(project, 'project', projectDir, other)));
+    });
+  }
 }
 
 function stampImportMeta(

@@ -979,6 +979,36 @@ export function createDirectoryStore(
   }
 
   /**
+   * Read the store as it stands under its lock, and decide something from
+   * it while the lock is still held (#259). For a transaction that writes
+   * another store and has to read this one consistently with that write: a
+   * rename reads the other store's confirmation list, and no flag can be set
+   * there until the rename is done.
+   *
+   * Writes nothing, so the epoch stays even and readers are not held up.
+   * `fn` gets the same fresh state update() hands its caller (full scan,
+   * both sidecars re-read) and `unreadable()` is current while it runs. It
+   * must be synchronous and must not write this store. It may update
+   * another store: that is how two locks are held at once — see
+   * updateUnderBothLocks in store.ts, the only caller, for the lock order.
+   */
+  function inspect<T>(fn: (current: UnifiedData) => T): T {
+    const dir = getDirPath();
+    const read = (): T => {
+      dirMtimeMs = -1;
+      scanAndSync();
+      aliasesCache = rereadSidecar<Record<string, string>>(path.join(dir, ALIASES_FILE), 'aliases');
+      confirmCache = rereadSidecar<Record<string, true>>(path.join(dir, CONFIRM_FILE), 'confirm');
+      return fn(snapshot());
+    };
+    // The lock file sits beside the store directory. Where even its parent
+    // is missing, no store has ever been written here and there is nothing
+    // to hold still: read the empty store without the lock.
+    if (!fs.existsSync(path.dirname(path.resolve(getStoreLockKey(dir))))) return read();
+    return withStoreLock(dir, read);
+  }
+
+  /**
    * Refresh the dir-mtime fast-skip token after writes of our own. Only
    * after a scan under the lock: then every later change was ours, and the
    * caches are authoritative.
@@ -1169,7 +1199,7 @@ export function createDirectoryStore(
     });
   }
 
-  return { load, save, update, clear, getOne, setOne, unreadable };
+  return { load, save, update, inspect, clear, getOne, setOne, unreadable };
 }
 
 // ── Migration ──────────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ import path from 'path';
 import { flattenObject } from '../utils/objectPath';
 import { clearProjectFileCache } from '../utils/paths';
 import { clearStoreCaches } from '../store';
-import { setConfirm, removeConfirm, removeConfirmForKey, moveConfirm } from '../confirm';
+import { setConfirm, removeConfirm, removeConfirmForKey } from '../confirm';
 import { setAlias, removeAlias, renameAlias, removeAliasesForKey } from '../alias';
 import { removeValue } from '../storage';
 import { copyEntry, renameEntry, removeEntry } from '../commands/entries';
@@ -63,15 +63,6 @@ describe('#254: a write by another process survives', () => {
       const d = onDisk();
       for (const k of bKeys) expect(d.confirm[k]).toBe(true);
       expect(Object.keys(d.confirm).filter(k => k.startsWith('ops.'))).toEqual([]);
-    });
-
-    it('moveConfirm keeps the flags set meanwhile', async () => {
-      seed({ entries: { h: { x: 'true' } }, confirm: { 'g.x': true } });
-      const bKeys = await interleave(() => moveConfirm([['g.x', 'h.x']], 'global'), bFlag);
-      const d = onDisk();
-      for (const k of bKeys) expect(d.confirm[k]).toBe(true);
-      expect(d.confirm['h.x']).toBe(true);
-      expect(d.confirm['g.x']).toBe(true);
     });
 
     it('a flag set while a rename moves another flag keeps both (the issue\'s third case)', async () => {

@@ -184,15 +184,20 @@ describe('the confirmation gate follows the entry', () => {
       }
     }, SLOW_TEST_MS);
 
-    it('rename through it: whatever the rename does, no flagged command comes out unflagged', () => {
-      // Where the spelling reads the entry, this "rename" copies it and
-      // leaves the original (the removal is exact and finds nothing). Both
-      // are then gated. Where it does not read, the rename is refused.
-      const r = rvr('rename', 'commands.DEPLOY', 'tmp.x');
+    it('rename through it: refused where the spelling opens the entry, naming the stored key; not found where it does not (#247)', () => {
+      // Where the spelling reads the entry, this "rename" used to copy it
+      // and leave the original (the removal is by name and finds nothing),
+      // reporting it renamed. Now nothing moves either way.
+      for (const key of ['commands.DEPLOY', `command${LONG_S}.deploy`]) {
+        const reads = json('get', key).ok;
+        const env = json('rename', key, 'tmp.x');
+        expect(env.ok, key).toBe(false);
+        expect(env.error?.code, key).toBe(reads ? 'INVALID_INPUT' : 'NOT_FOUND');
+        if (reads) expect(env.error?.message, key).toContain("did you mean 'commands.deploy'?");
+      }
+      expect(projectKeys()).not.toContain('tmp.x');
+      expect(projectFlags()).toEqual(['commands.deploy']);
       expectNotRun('deploy', 'run', 'commands.deploy');
-      if (r.status === 0) expectNotRun('deploy', 'run', 'tmp.x');
-      else expect(projectKeys()).not.toContain('tmp.x');
-      expect(projectFlags()).toContain('commands.deploy');
     });
   });
 

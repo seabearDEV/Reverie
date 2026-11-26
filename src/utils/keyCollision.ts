@@ -183,11 +183,11 @@ export function findCollidingPairs(keys: Iterable<string>): [string, string][] {
 /**
  * Why `oldKey` cannot be renamed to `newKey`, or null when it can be tried.
  *
- * A rename writes the new keys and then removes the old key with everything
- * under it. So a destination under the source (`arch` → `arch.sub`) wrote the
- * subtree and then deleted it along with the original, and a destination that
- * is not a storable key wrote nothing and still removed the source — both
- * reporting success. A destination that differs from the source only by case
+ * A rename removes the old key with everything under it. When it wrote the
+ * new keys first and removed the old one after (before #259), a destination
+ * under the source (`arch` → `arch.sub`) wrote the subtree and then deleted
+ * it along with the original, and a destination that is not a storable key
+ * wrote nothing and still removed the source — both reporting success. A destination that differs from the source only by case
  * is the same file on a case-insensitive filesystem.
  *
  * `isValidKey` is passed in so this module keeps no store imports.
@@ -204,15 +204,4 @@ export function renameDestinationProblem(oldKey: string, newKey: string, isValid
     return `Cannot rename '${oldKey}' to '${newKey}': the new key is under the old one. Rename through a temporary key.`;
   }
   return null;
-}
-
-/**
- * The entries a rename of `oldKey` to `newKey` moves, old key to new key: the
- * key itself when it holds a value, every leaf under it when it is a
- * namespace. `value` is what the rename read at `oldKey`.
- */
-export function renamedLeaves(oldKey: string, newKey: string, value: CodexData[string]): [from: string, to: string][] {
-  if (typeof value === 'string') return [[oldKey, newKey]];
-  return Object.keys(flattenObject({ [oldKey]: value }))
-    .map((leaf): [string, string] => [leaf, newKey + leaf.slice(oldKey.length)]);
 }

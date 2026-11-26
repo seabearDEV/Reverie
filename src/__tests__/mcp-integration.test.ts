@@ -363,16 +363,22 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.existsSync(marker('deploy'))).toBe(!gatedBefore);
     });
 
-    it('reverie_rename through another spelling of the source: no flagged command comes out unflagged', () => {
-      // Where the spelling reads the entry, this copies it and leaves the
-      // original (the removal is exact). Both are then gated. Where it does
-      // not read, the rename is refused.
+    it('reverie_rename through another spelling of the source is refused, naming the stored key (#247)', () => {
+      // Where the spelling opens the entry's file this used to copy it, leave
+      // the original (the removal is by name) and report it renamed. Now it
+      // is refused; where the spelling opens nothing, it is not found.
       flag('commands.deploy');
-      const r = callMcpTool('reverie_rename', { oldKey: 'commands.DEPLOY', newKey: 'tmp.x' });
-      expect(flagged()).toContain('commands.deploy');
+      for (const asked of ['commands.DEPLOY', `command${String.fromCodePoint(0x17f)}.deploy`]) {
+        const opens = fs.existsSync(storeFile(`${asked}.json`))
+          && fs.statSync(storeFile(`${asked}.json`)).ino === fs.statSync(storeFile('commands.deploy.json')).ino;
+        const r = callMcpTool('reverie_rename', { oldKey: asked, newKey: 'tmp.x' });
+        expect(r.isError, asked).toBe(true);
+        expect(text(r), asked).toContain(opens ? "is stored as 'commands.deploy'. A rename moves an entry by its stored name — did you mean 'commands.deploy'?" : 'not found');
+        expect(fs.existsSync(storeFile('tmp.x.json')), asked).toBe(false);
+        expect(fs.existsSync(storeFile('commands.deploy.json')), asked).toBe(true);
+      }
+      expect(flagged()).toEqual(['commands.deploy']);
       expect(text(callMcpTool('reverie_run', { key: 'commands.deploy' }))).toContain('requires confirmation before execution');
-      if (!r.isError) expect(text(callMcpTool('reverie_run', { key: 'tmp.x' }))).toContain('requires confirmation before execution');
-      else expect(fs.existsSync(storeFile('tmp.x.json'))).toBe(false);
       expect(fs.existsSync(marker('deploy'))).toBe(false);
     });
 
@@ -915,6 +921,35 @@ describe('MCP Integration (real I/O)', () => {
       expect(r.content[0].text).toMatch(/^Refusing to write the alias map/);
       expect(callMcpTool('reverie_get', { key: 'arch.store' }).content[0].text).toContain('file per entry');
       expect(fs.readFileSync(storeFile('_aliases.json'), 'utf8')).toBe(aliases);
+    });
+
+    it('reverie_rename refuses while the OTHER store\'s confirmation list cannot be read (#245)', async () => {
+      // The flag that gates the entry may be in either list. With the global
+      // list unreadable, a project rename could not carry it.
+      const projectDir = path.join(tmpDir, 'proj');
+      const projectStore = path.join(projectDir, '.reverie');
+      fs.mkdirSync(projectStore, { recursive: true });
+      fs.writeFileSync(path.join(projectStore, '_aliases.json'), '{}');
+      fs.writeFileSync(path.join(projectStore, '_confirm.json'), '{}');
+      fs.writeFileSync(path.join(projectStore, 'ops.deploy.json'), JSON.stringify({ value: 'true' }));
+      const broken = conflictedSidecar('"ops.deploy": true,', '"ops.build": true,');
+      fs.writeFileSync(storeFile('_confirm.json'), broken);
+      await withMcpSession(async (call) => {
+        const r = await call('reverie_rename', { oldKey: 'ops.deploy', newKey: 'ops.ship' });
+        expect(r.isError).toBe(true);
+        expect(r.content[0].text).toMatch(/^Refusing to rename 'ops\.deploy' while the global store's confirmation list cannot be read/);
+        // And from the other side: rename in the global store while the project list is unreadable.
+        fs.writeFileSync(storeFile('_confirm.json'), '{}');
+        fs.writeFileSync(storeFile('jobs.deploy.json'), JSON.stringify({ value: 'true' }));
+        fs.writeFileSync(path.join(projectStore, '_confirm.json'), broken);
+        const g = await call('reverie_rename', { oldKey: 'jobs.deploy', newKey: 'jobs.ship', scope: 'global' });
+        expect(g.isError).toBe(true);
+        expect(g.content[0].text).toMatch(/^Refusing to rename 'jobs\.deploy' while the project store's confirmation list cannot be read/);
+      }, { cwd: projectDir, project: true });
+      expect(fs.existsSync(path.join(projectStore, 'ops.deploy.json'))).toBe(true);
+      expect(fs.existsSync(path.join(projectStore, 'ops.ship.json'))).toBe(false);
+      expect(fs.existsSync(storeFile('jobs.deploy.json'))).toBe(true);
+      expect(fs.existsSync(storeFile('jobs.ship.json'))).toBe(false);
     });
 
     it('reverie_rename and reverie_remove refuse before the entry moves or goes', () => {

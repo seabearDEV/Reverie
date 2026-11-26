@@ -484,7 +484,13 @@ confirmCommand
           printError(problem.message, problem.code);
           return undefined;
         }
-        setConfirm(resolvedKey, scope);
+        // #259: asked again under the store locks, where the flag is written.
+        // A rename or a removal since the look above leaves nothing under
+        // this name, and a flag there would gate nothing that moved.
+        if (setConfirm(resolvedKey, scope) === false) {
+          printError(`Entry '${resolvedKey}' not found. Cannot update confirm on a non-existent entry.`, 'NOT_FOUND');
+          return undefined;
+        }
         console.log(`Entry '${resolvedKey}' now requires confirmation to run.`);
         return { key: resolvedKey, confirm: true };
       }

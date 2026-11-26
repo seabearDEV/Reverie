@@ -33,10 +33,11 @@ import {
 } from "./utils/paths";
 import { fileURLToPath } from "url";
 import { findProjectFile, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
-import { hasConfirm, gatedAmong, moveConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
+import { hasConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
+import { renameKey, RenameRefusal } from "./rename";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
-import { KeyCollisionError, assertKeysWritable, renameDestinationProblem, renamedLeaves } from "./utils/keyCollision";
+import { KeyCollisionError, assertKeysWritable, renameDestinationProblem } from "./utils/keyCollision";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
@@ -866,9 +867,8 @@ server.tool(
         return errorResponse(`Key '${oldKey}' not found.`, 'NOT_FOUND');
       }
 
-      // #224: the move writes the new keys and then removes the old key with
-      // everything under it. Refuse a destination that would be removed with
-      // it, or that cannot be stored at all.
+      // #224: a destination that would be removed with the source, or that
+      // cannot be stored at all.
       const destinationProblem = renameDestinationProblem(resolvedOld, newKey, isValidEntryKey);
       if (destinationProblem) return errorResponse(destinationProblem, 'INVALID_INPUT');
 
@@ -877,82 +877,18 @@ server.tool(
         return errorResponse(`Key '${newKey}' already exists. Remove it first or choose a different key.`, 'INVALID_INPUT');
       }
 
-      // #215: a rename moves the value, re-points aliases and moves the
-      // confirm flag. With either sidecar unreadable it cannot know what to
-      // carry over — refuse before the value moves.
-      assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
-
-      // Which of the entries about to move does the gate ask about? Asked
-      // now: it looks at their files, and afterwards those are gone.
-      const movedLeaves = renamedLeaves(resolvedOld, newKey, value);
-      const gatedNow = gatedAmong(movedLeaves.map(([from]) => from));
-      const gatedLeaves = movedLeaves.filter(([from]) => gatedNow.has(from));
-
-      // Move the value
-      if (typeof value === 'string') {
-        setValue(newKey, value, scope);
-      } else {
-        // Batch: load once, set all leaves, save once. Pre-resolve the
-        // scope so the project-resolution guard fires here too (#99).
-        const writeScope = resolveScopeForWrite(scope);
-        const leaves = Object.entries(flattenObject({ [resolvedOld]: value }))
-          .map(([flatKey, flatVal]): [string, string] => [newKey + flatKey.slice(resolvedOld.length), String(flatVal)]);
-        // #254: under the store lock, against the store as it stands there.
-        updateEntries((entries, meta) => {
-          // #216 / #224: checked against the store as it stands, before the
-          // first leaf is set. A refusal saves nothing and the source stays.
-          assertKeysWritable(entries, leaves.map(([leafKey]) => leafKey));
-          for (const [leafKey, leafValue] of leaves) setNestedValue(entries, leafKey, leafValue);
-          meta[newKey] = Date.now();
-        }, writeScope);
-      }
-      removeValue(resolvedOld, scope);
-
-      // Update aliases: re-point any alias targeting oldKey (or children) to
-      // newKey. Decided against the map as it stands under the store lock (#254).
-      const oldPrefix = resolvedOld + '.';
-      const repoint = (current: Record<string, string>): Record<string, string> | null => {
-        const updates: [string, string][] = [];
-        for (const [a, target] of Object.entries(current)) {
-          if (target === resolvedOld) {
-            updates.push([a, newKey]);
-          } else if (target.startsWith(oldPrefix)) {
-            updates.push([a, newKey + target.slice(resolvedOld.length)]);
-          }
-        }
-        if (updates.length === 0) return null;
-
-        // Enforce one-alias-per-entry: remove any existing alias already pointing to a new target
-        const aliases = { ...current };
-        const newTargets = new Set(updates.map(([, t]) => t));
-        for (const [a, target] of Object.entries(aliases)) {
-          if (newTargets.has(target)) {
-            delete aliases[a];
-          }
-        }
-        for (const [a, newTarget] of updates) {
-          aliases[a] = newTarget;
-        }
-        return aliases;
-      };
-      // Nothing points at the old key: nothing to write.
-      if (repoint(loadAliases(scope)) !== null) updateAliases(repoint, scope);
-
-      // Confirm metadata: each gated entry that moved is flagged under its
-      // new key. The old name keeps its flag — it may be what gates an entry
-      // of that name somewhere this rename cannot see.
-      moveConfirm(gatedLeaves, scope);
-
-      // Set a new alias on the renamed key
-      if (alias) {
-        setAlias(alias, newKey, scope);
-      }
+      // #259: the move, the alias re-point and the flags in one transaction,
+      // decided from the stores as they stand under their locks — the same
+      // code as `rvr rename`. It asks again what was checked above, and
+      // refuses another spelling of the source (#247) and an unreadable
+      // confirmation list in either store (#245).
+      renameKey(resolvedOld, newKey, scope, alias);
 
       return textResponse(`Renamed: ${resolvedOld} -> ${newKey}`);
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
-      // #216 / #224: the refusal is complete on its own.
-      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
+      // #216 / #224 / #247: the refusal is complete on its own.
+      if (err instanceof KeyCollisionError || err instanceof RenameRefusal) return errorResponse(err.message, err.code);
       return errorResponse(`Error renaming entry: ${String(err)}`);
     }
   }
