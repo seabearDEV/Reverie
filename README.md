@@ -626,7 +626,7 @@ rvr set server.ip 192.168.1.100 -G
 rvr init --remove
 ```
 
-**Scope flags:** The `-G` / `--global` flag is available on `set`, `get`, `run`, `find`, `copy`, `edit`, `rename`, and `remove`. Data management commands (`export`, `import`, `reset`) also support `-P` / `--project`.
+**Scope flags:** The `-G` / `--global` flag is available on `set`, `get`, `run`, `find`, `copy`, `edit`, `rename`, and `remove`. Data management commands (`export`, `import`, `reset`) also support `-P` / `--project`. With `-G`, a name you type resolves through the global aliases only, so a project's `_aliases.json` cannot point a `-G` command at another global entry; without it, the project's aliases apply over the global ones, and a write still lands in the project store.
 
 #### Recommended Schema
 
