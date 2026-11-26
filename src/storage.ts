@@ -218,6 +218,8 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
     // Falling through would hand the write to save(), which guards too, but
     // the fast path's error is the precise one.
     if (err instanceof StoreUnreadableError) throw err;
+    // #246: so does a write that would land in another entry's file.
+    if (err instanceof KeyCollisionError) throw err;
     debug(`setValue fast-path failed, falling through: ${String(err)}`);
   }
   const data = loadEntries(effectiveScope);

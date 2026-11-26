@@ -24,7 +24,7 @@ import { withFileLock } from './fileLock';
 import { flattenObject, expandFlatKeys } from './objectPath';
 import { debug } from './debug';
 import { StoreUnreadableError, UnreadableFile, classifyUnparseable, keysCollide, nameCollisionError } from './unreadable';
-import { collidesWithAny } from './keyCollision';
+import { KeyCollisionError, collidesWithAny } from './keyCollision';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -181,6 +181,38 @@ export function isValidEntryKey(key: string): boolean {
  * Throws if the key is invalid (would escape the store directory or collide
  * with a reserved sidecar name).
  */
+/**
+ * #246: the stored key, other than `key`, whose entry file `key`'s path opens.
+ *
+ * A key maps to its filename, and a filesystem that folds names opens an
+ * existing file for a spelling no name comparison predicts: APFS folds `ſ`
+ * to `s` and `ﬁ` to `fi` (case is caught earlier, by name). Asked of the
+ * filesystem as #234 does — are these the same file — with lstat, so a
+ * symlink is never followed. A stored key that differs only by Unicode
+ * normalization is the same key, not a twin: HFS+ and exFAT list names in
+ * NFD, so an NFC key would otherwise find its own entry. Costs a stat per
+ * stored key, and runs only when `key`'s path exists under no listed name.
+ */
+function foldTwin(dir: string, key: string, storedKeys: Iterable<string>): string | undefined {
+  const idOf = (k: string): string | undefined => {
+    try {
+      const st = fs.lstatSync(entryFilePath(dir, k), { bigint: true });
+      return `${st.dev}:${st.ino}`;
+    } catch {
+      return undefined;
+    }
+  };
+  const id = idOf(key);
+  if (id === undefined) return undefined;
+  const nfc = key.normalize('NFC');
+  for (const other of storedKeys) {
+    if (other === key) continue;
+    if (idOf(other) !== id) continue;
+    return other.normalize('NFC') === nfc ? undefined : other;
+  }
+  return undefined;
+}
+
 export function entryFilePath(dir: string, key: string): string {
   if (!isValidEntryKey(key)) {
     throw new Error(`Invalid store key: ${JSON.stringify(key)}`);
@@ -803,6 +835,19 @@ export function createDirectoryStore(
         }
       }
 
+      // 3d. Nor a new key whose path opens another entry's file (#246) —
+      //     copy, rename and import write through here. An entry this same
+      //     save deletes is not in the way: its file goes first (step 4).
+      const deleting = new Set(toDelete);
+      for (const [key] of toWrite) {
+        if (entryCache.has(key)) continue;
+        const twin = foldTwin(dir, key, entryCache.keys());
+        if (twin !== undefined && !deleting.has(twin)) {
+          writeEpoch(dir, inProgressEpoch + 1);
+          throw new KeyCollisionError({ kind: 'fold', key, existing: [twin] });
+        }
+      }
+
       // 4. Apply deltas. Each atomicWriteFileSync is individually atomic;
       //    concurrent readers detect mid-commit state via the odd epoch we
       //    wrote in step 0 and retry their scan in load().
@@ -955,6 +1000,13 @@ export function createDirectoryStore(
       const otherKeys = dirEntries.filter(isEntryFilename).map(keyFromFilename);
       if (collidesWithAny(key, otherKeys)) {
         return false;
+      }
+      // #246: a spelling the name check cannot see that opens another entry's
+      // file. Refused here: the slow path compares names too, and its save()
+      // would write the same file.
+      if (!otherKeys.includes(key)) {
+        const twin = foldTwin(dir, key, otherKeys);
+        if (twin !== undefined) throw new KeyCollisionError({ kind: 'fold', key, existing: [twin] });
       }
 
       // Read the existing entry before anything is touched: to preserve

@@ -22,7 +22,7 @@
 import type { CodexData } from '../types';
 import { flattenObject } from './objectPath';
 
-export type KeyCollisionKind = 'case' | 'parent' | 'child';
+export type KeyCollisionKind = 'case' | 'fold' | 'parent' | 'child';
 
 export interface KeyCollision {
   kind: KeyCollisionKind;
@@ -41,6 +41,13 @@ function describeCollision(c: KeyCollision): string {
     const other = `'${c.existing[0]}'`;
     return `Refusing to write ${key}: it differs only by case from the existing key ${other}, `
       + `and on a case-insensitive filesystem the two are one file. Write to ${other}, or rename it first.`;
+  }
+  if (c.kind === 'fold') {
+    // #246: a spelling no name comparison catches (APFS folds `ſ` to `s`,
+    // `ﬁ` to `fi`, …): the filesystem opened the existing key's file.
+    const other = `'${c.existing[0]}'`;
+    return `Refusing to write ${key}: on this filesystem it opens the file of the existing key ${other}, `
+      + `so the write would replace that entry. Write to ${other}, or pick another key.`;
   }
   if (c.kind === 'child') {
     const other = `'${c.existing[0]}'`;
