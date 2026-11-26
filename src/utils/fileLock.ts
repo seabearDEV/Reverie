@@ -76,7 +76,11 @@ function acquireLock(filePath: string, waitMs: number): void {
           continue;
         }
 
-        throw new LockTimeoutError(`Unable to acquire lock on ${filePath} after ${waitMs}ms.`, { cause: err });
+        throw new LockTimeoutError(
+          `Unable to acquire lock on ${filePath} after ${waitMs}ms: another process held it the whole time, so nothing was written. `
+          + `Try again; a lock left by a process that crashed clears after ${LOCK_STALE_MS / 1000} seconds.`,
+          { cause: err },
+        );
       }
       throw err;
     }
