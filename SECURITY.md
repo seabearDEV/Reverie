@@ -47,8 +47,8 @@ Out of scope:
 
 ## Detection and response
 
-Detection is scheduled — Dependabot alerts, a weekly `bun audit` cron, CodeQL,
-and an agentic adversarial audit before every minor release
+Detection is scheduled — a weekly `bun audit` cron that files an issue on any
+known advisory, CodeQL, and an agentic adversarial audit before every minor release
 (docs/security/release-process.md). Patching is event-driven:
 
 - **Critical / high** → out-of-band patch release immediately.
