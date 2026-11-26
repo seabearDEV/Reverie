@@ -1,0 +1,7 @@
+{
+  "value": "A quiet Security tab says nothing about dependencies. GitHub's dependency graph does not read bun.lock: its SBOM lists only package.json's direct deps, as ranges, and no transitive packages. So Dependabot alerts went silent at the Bun migration (the last ones were on package-lock.json, 2026-05-07). Only bun audit sees the tree. Its weekly run (security-scan.yml) failed all 18 runs from its first, unnoticed, while the tree built up 69 advisories (1 critical, 20 high), cleared by fix/security-tab. CHECK: bun audit locally, or the latest Security scan run, not the tab. REACHABILITY: rvr ships only what src/index.ts bundles: zod, the SDK's stdio server (server/mcp.js, server/stdio.js), ajv, ajv-formats, zod-to-json-schema, fast-uri, commander, chalk. The SDK's HTTP stack (hono, @hono/node-server, express, body-parser, proxy-addr, qs, ip-address) and the eslint stack (minimatch, brace-expansion) never ship. To re-derive: bun build src/index.ts --target bun --outfile x.js, then grep -oE '// node_modules/[^/]+' x.js | sort | uniq -c. See [[context.dependabotOverrides]], [[context.bunTransitiveDedup]].",
+  "meta": {
+    "created": 1795650564569,
+    "updated": 1795650564569
+  }
+}
