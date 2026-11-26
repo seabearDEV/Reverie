@@ -155,7 +155,19 @@ export function moveConfirm(gated: readonly (readonly [from: string, to: string]
   debug(`Confirm carried to ${gated.length} renamed entr${gated.length === 1 ? 'y' : 'ies'} (${effectiveScope})`);
 }
 
-// Cascade delete: remove key and any children (e.g., removing "commands" removes "commands.deploy")
+/**
+ * The flags listed under `key` or a key below it in the list `scope` writes —
+ * what a removal leaves in place (#244), so the command can say so.
+ */
+export function flagsListedUnder(key: string, scope?: Scope): string[] {
+  const list = loadConfirmMap(resolveScopeForWrite(scope));
+  const prefix = key + '.';
+  return Object.keys(list).filter(k => list[k] === true && (k === key || k.startsWith(prefix))).sort();
+}
+
+// Drop the flags listed under a key and its children (e.g. "commands" drops
+// "commands.deploy"). Since #244 no removal calls this: a removal leaves the
+// flags, as a rename does, and only `confirm remove` clears one.
 export function removeConfirmForKey(key: string, scope?: Scope  ): void {
   const effectiveScope = resolveScopeForWrite(scope);
   removeConfirmFromScope(key, effectiveScope);

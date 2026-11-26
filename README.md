@@ -748,7 +748,7 @@ rvr confirm remove commands.deploy
 rvr run commands.deploy -y
 ```
 
-The key has to name an entry: `confirm set` and `set <key> --confirm` refuse a key that is not in the store and a namespace. A flagged command asks for confirmation under any spelling that reaches it, directly, through a `${reference}` or through an alias: on a filesystem that ignores case, `rvr run commands.Deploy` opens the entry stored as `commands.deploy`, and is gated like it. `confirm remove` clears the flag listed under the name it is given, and tells you if the key is still gated by another one. Renaming an entry or a namespace flags the new keys of the gated entries it moves and leaves the old names flagged; clear those with `confirm remove` once nothing uses them.
+The key has to name an entry: `confirm set` and `set <key> --confirm` refuse a key that is not in the store and a namespace. A flagged command asks for confirmation under any spelling that reaches it, directly, through a `${reference}` or through an alias: on a filesystem that ignores case, `rvr run commands.Deploy` opens the entry stored as `commands.deploy`, and is gated like it. `confirm remove` clears the flag listed under the name it is given, and tells you if the key is still gated by another one. Renaming an entry or a namespace flags the new keys of the gated entries it moves and leaves the old names flagged, and removing one leaves its flags listed too: a flag gates its name in every project, and the global list may be gating another project's entry of the same name. Clear a flag with `confirm remove` once nothing uses it.
 
 ### Staleness Detection
 

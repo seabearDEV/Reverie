@@ -33,7 +33,7 @@ import {
 } from "./utils/paths";
 import { fileURLToPath } from "url";
 import { findProjectFile, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
-import { hasConfirm, gatedAmong, moveConfirm, loadConfirmKeys, saveConfirmKeys, removeConfirmForKey } from "./confirm";
+import { hasConfirm, gatedAmong, moveConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
 import { loadConfig, getConfigSetting, setConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections } from "./utils/importSections";
 import { KeyCollisionError, assertKeysWritable, renameDestinationProblem, renamedLeaves } from "./utils/keyCollision";
@@ -746,10 +746,14 @@ server.tool(
       if (!removed) {
         return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
       }
-      // Cascade delete: remove any aliases and confirm metadata for this key or its children
+      // Cascade delete: remove any aliases for this key or its children. The
+      // confirmation flags stay (#244): a flag gates its name in every
+      // project, and only reverie's confirm removal clears one.
       removeAliasesForKey(resolvedKey, scope);
-      removeConfirmForKey(resolvedKey, scope);
-      return textResponse(`Removed: ${resolvedKey}`);
+      const kept = flagsListedUnder(resolvedKey, scope);
+      return textResponse(kept.length > 0
+        ? `Removed: ${resolvedKey}\nConfirmation flags kept (a flag gates its name in every project): ${kept.join(', ')}`
+        : `Removed: ${resolvedKey}`);
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
       return errorResponse(`Error removing entry: ${String(err)}`);

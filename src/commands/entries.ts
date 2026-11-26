@@ -13,7 +13,7 @@ import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
 import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, updateAliases, resolveKey, renameAlias } from '../alias';
-import { hasConfirm, setConfirm, removeConfirm, removeConfirmForKey, moveConfirm, flagsGating, gatedAmong } from '../confirm';
+import { hasConfirm, setConfirm, removeConfirm, flagsListedUnder, moveConfirm, flagsGating, gatedAmong } from '../confirm';
 import { resolveScopeForWrite } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
@@ -986,10 +986,15 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   // Cascade delete: remove any aliases pointing to this key or its children
   removeAliasesForKey(key, scope);
 
-  // Cascade delete: remove confirm metadata for this key or its children
-  removeConfirmForKey(key, scope);
-
+  // #244: the confirmation flags stay. A flag gates by name and the global
+  // list is read in every project, so a flag listed under this key may be
+  // what gates another project's entry of the same name — which this removal
+  // cannot see. As with rename (#234), only `confirm remove` clears a flag.
   printSuccess(`Entry '${key}' removed successfully.`);
+  const kept = flagsListedUnder(key, scope);
+  if (kept.length > 0) {
+    printWarning(`The confirmation flag${kept.length === 1 ? '' : 's'} listed under ${kept.map(k => `'${k}'`).join(', ')} stay${kept.length === 1 ? 's' : ''}: a flag gates its name in every project. Clear ${kept.length === 1 ? 'it' : 'them'} with \`${getBinaryName()} confirm remove\` once nothing uses ${kept.length === 1 ? 'it' : 'them'}.`);
+  }
   return { key, removed: true };
 }
 
