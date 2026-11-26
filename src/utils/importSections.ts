@@ -19,8 +19,9 @@ export interface ImportSections {
  *
  * Current-state loaders are passed lazily so this stays pure and a surface
  * never pays a load for a section its file doesn't carry. CLI and MCP
- * import must both build their saveAll payload here — do not reintroduce
- * surface-local section math.
+ * import must both build their payload here, inside updateAll, from the
+ * state it hands them under the store lock (#254) — do not reintroduce
+ * surface-local section math, or a merge base loaded before the lock.
  */
 export function computeImportSections(
   sections: {
