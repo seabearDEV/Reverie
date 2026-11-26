@@ -2,18 +2,30 @@ import fs from 'fs';
 import { debug } from './debug';
 
 const LOCK_STALE_MS = 10_000; // Consider lock stale after 10 seconds
+/**
+ * How long acquireLock waits for a lock another process holds before it gives
+ * up (#254). A store write holds its lock across the read, the change and the
+ * write, a few milliseconds, so concurrent writers queue for about that much
+ * each. The old budget — five doubling retries, 31ms — failed about one in
+ * sixty of twelve concurrent `rvr confirm set`s.
+ */
+const LOCK_WAIT_MS = 1_000;
+/** Longest single sleep between attempts: past it, the backoff stops doubling. */
+const LOCK_BACKOFF_CAP_MS = 16;
 // Reusable buffer for Atomics.wait()-based sleep (avoids per-call allocation)
 const _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
 
 /**
  * Acquire an advisory file lock using a .lock file.
- * Retries with backoff if the lock is held by another process.
- * Automatically breaks stale locks (older than LOCK_STALE_MS).
+ * Retries with backoff while the lock is held by another process, for up to
+ * LOCK_WAIT_MS, then throws. Automatically breaks stale locks (older than
+ * LOCK_STALE_MS).
  */
-function acquireLock(filePath: string, maxRetries = 5): void {
+function acquireLock(filePath: string): void {
   const lockPath = filePath + '.lock';
+  const deadline = Date.now() + LOCK_WAIT_MS;
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     try {
       // O_CREAT | O_EXCL: fail if file already exists (atomic)
       const fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
@@ -22,6 +34,7 @@ function acquireLock(filePath: string, maxRetries = 5): void {
       return;
     } catch (err: unknown) {
       if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'EEXIST') {
+        const remaining = deadline - Date.now();
         // Lock file exists — check if stale
         try {
           const stat = fs.statSync(lockPath);
@@ -31,21 +44,23 @@ function acquireLock(filePath: string, maxRetries = 5): void {
             // unlink and the next openSync, but that's fine — the O_CREAT|O_EXCL
             // re-acquire is atomic so we'll just loop again.
             try { fs.unlinkSync(lockPath); } catch { /* another process may have removed it */ }
-            continue;
+            if (remaining > 0) continue;
           }
         } catch {
           // Lock file disappeared — retry
-          continue;
+          if (remaining > 0) continue;
         }
 
-        if (attempt < maxRetries) {
-          // Sleep with exponential backoff (1ms, 2ms, 4ms, 8ms, 16ms)
-          const waitMs = Math.pow(2, attempt);
+        if (remaining > 0) {
+          // Sleep with exponential backoff (1ms, 2ms, 4ms, 8ms, then 16ms),
+          // with jitter so waiters woken together do not retry in lockstep.
+          const backoff = Math.min(2 ** attempt, LOCK_BACKOFF_CAP_MS);
+          const waitMs = Math.min(remaining, backoff / 2 + Math.random() * (backoff / 2));
           Atomics.wait(_sleepBuf, 0, 0, waitMs);
           continue;
         }
 
-        throw new Error(`Unable to acquire lock on ${filePath} after ${maxRetries} retries.`, { cause: err });
+        throw new Error(`Unable to acquire lock on ${filePath} after ${LOCK_WAIT_MS}ms.`, { cause: err });
       }
       throw err;
     }
