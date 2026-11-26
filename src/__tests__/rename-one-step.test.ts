@@ -27,6 +27,7 @@ import { clearProjectFileCache } from '../utils/paths';
 import { clearStoreCaches } from '../store';
 import { setConfirm } from '../confirm';
 import { renameEntry, setEntry } from '../commands/entries';
+import { importData } from '../commands/data-management';
 import {
   useTempGlobalStore, otherProcess, onDisk, seed, entryKeys, interleave,
   bEntry, type BWrite,
@@ -389,5 +390,69 @@ describe('#259: a source stored both as a leaf and as a namespace', () => {
     const said = (console.error as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n');
     expect(said).toContain(folds ? "did you mean 'k'?" : 'not found');
     expect(fs.existsSync(path.join(tmp.storeDir, 'k9.json'))).toBe(false);
+  });
+});
+
+// Recheck of the review fixes: the undo of a failed write.
+describe('#259: undoing a write that failed part-way', () => {
+  const blockWrite = (key: string) => fs.mkdirSync(path.join(tmp.storeDir, `${key}.json`), { recursive: true });
+  /** Does the store's filesystem open `stored`'s entry file for `asked`? */
+  const opens = (asked: string, stored: string) => {
+    const a = path.join(tmp.storeDir, `${asked}.json`);
+    const b = path.join(tmp.storeDir, `${stored}.json`);
+    return fs.existsSync(a) && fs.statSync(a).ino === fs.statSync(b).ino;
+  };
+
+  it.each([
+    ['another case', 'deploy', 'Deploy'],
+    ['another Unicode normalization', `caf${String.fromCodePoint(0xe9)}`, `cafe${String.fromCodePoint(0x301)}`],
+  ])('an entry stored under %s, written through the other spelling, is put back — not deleted', async (_kind, stored, asked) => {
+    // The write of `asked` lands in `stored`'s file. Undoing it by removing
+    // the path it wrote removed `stored`'s entry.
+    seed({ entries: { [stored]: 'echo ORIGINAL', other: 'o' }, confirm: { [stored]: true } });
+    if (!opens(asked, stored)) return;   // this filesystem keeps them apart: nothing to undo into
+    const file = path.join(tmp.root, 'import.json');
+    fs.writeFileSync(file, JSON.stringify({ [asked]: 'echo NEW', ['z'.repeat(240)]: 'v' }));
+    await importData('entries', file, { force: true, global: true });
+    expect(process.exitCode).toBe(1);
+    const flat = flattenObject(onDisk().entries);
+    expect(flat[stored]).toBe('echo ORIGINAL');
+    expect(flat.other).toBe('o');
+    expect(onDisk().confirm).toEqual({ [stored]: true });
+  });
+
+  it('an undo that fails keeps the flags the list gained, so the leftover is gated', async () => {
+    // a.one is written as n.one, n.two cannot be, and n.one cannot be taken
+    // back. The list keeps n.one's flag: restoring the old list left a copy
+    // of a flagged command that ran unasked.
+    seed({ entries: { a: { one: 'echo one', two: 'echo two' } }, confirm: { 'a.one': true } });
+    blockWrite('n.two');
+    const leftover = path.join(tmp.storeDir, 'n.one.json');
+    const realUnlink = fs.unlinkSync.bind(fs);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(((p: fs.PathLike) => {
+      if (String(p) === leftover) throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+      return realUnlink(p);
+    }) as typeof fs.unlinkSync);
+    await renameEntry('a', 'n', false, undefined, true);
+    vi.restoreAllMocks();
+    expect(process.exitCode).toBe(1);
+    const d = onDisk();
+    expect(flattenObject(d.entries)).toMatchObject({ 'a.one': 'echo one', 'a.two': 'echo two', 'n.one': 'echo one' });
+    expect(d.confirm['n.one']).toBe(true);
+    expect(d.confirm['a.one']).toBe(true);
+  });
+
+  it('a namespace holding a leaf and an entry under it is refused, writing nothing', async () => {
+    fs.mkdirSync(tmp.storeDir, { recursive: true });
+    fs.writeFileSync(path.join(tmp.storeDir, 'ns.k.json'), JSON.stringify({ value: 'echo k' }));
+    fs.writeFileSync(path.join(tmp.storeDir, 'ns.k.sub.json'), JSON.stringify({ value: 'echo sub' }));
+    fs.writeFileSync(path.join(tmp.storeDir, 'ns.other.json'), JSON.stringify({ value: 'o' }));
+    clearStoreCaches();
+    const before = fs.readdirSync(tmp.storeDir).filter(f => f.endsWith('.json') && f !== '_epoch.json').sort();
+    await renameEntry('ns', 'moved', false, undefined, true);
+    expect(process.exitCode).toBe(1);
+    const said = (console.error as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n');
+    expect(said).toContain("'ns.k' is stored both as an entry and as a namespace ('ns.k.sub')");
+    expect(fs.readdirSync(tmp.storeDir).filter(f => f.endsWith('.json') && f !== '_epoch.json').sort()).toEqual(before);
   });
 });

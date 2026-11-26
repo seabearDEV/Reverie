@@ -382,6 +382,15 @@ describe('MCP Integration (real I/O)', () => {
       expect(fs.existsSync(marker('deploy'))).toBe(false);
     });
 
+    it('reverie_rename to a key too long for a file name is refused in one line, and the source stays', () => {
+      callMcpTool('reverie_set', { key: 'keep.k', value: 'precious' });
+      const long = `keep.${'q'.repeat(240)}`;
+      const r = callMcpTool('reverie_rename', { oldKey: 'keep.k', newKey: long });
+      expect(r.isError).toBe(true);
+      expect(text(r)).toBe(`'${long}' is too long for a file name on this filesystem; nothing was renamed.`);
+      expect(fs.existsSync(storeFile('keep.k.json'))).toBe(true);
+    });
+
     it('reverie_rename to a key with a NUL in it is refused, and the source stays (#259 review)', () => {
       callMcpTool('reverie_set', { key: 'keep.k', value: 'precious' });
       const r = callMcpTool('reverie_rename', { oldKey: 'keep.k', newKey: 'keep.a\u0000b' });

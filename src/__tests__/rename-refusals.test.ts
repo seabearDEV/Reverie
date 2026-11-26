@@ -181,9 +181,27 @@ describe('rename refusals that write nothing (#247, #245)', () => {
       const long = `notes.${'q'.repeat(235)}`;
       const text = rvr('rename', '-G', 'notes.k', long);
       expect(text.status).toBe(1);
-      expect(text.stderr).toContain('is too long for a file name');
+      expect(text.stderr).toContain(`'${long}' is too long for a file name on this filesystem; nothing was renamed.`);
+      expect(text.stderr).not.toMatch(/^\s+at /m);
       expect(json('rename', '-G', 'notes.k', long).error?.code).toBe('INVALID_INPUT');
       expect(snapshot(globalStore())).toBe(before);
+    });
+
+    it('a key the filesystem accepts renames, however many bytes it takes (APFS counts characters)', () => {
+      // 80 CJK characters: 246 bytes of UTF-8. Whether that fits is the
+      // filesystem's rule; `set` is the probe.
+      const key = `notes.${'\u6f22'.repeat(80)}`;
+      const fits = rvr('set', '-G', key, 'probe').status === 0;
+      rvr('rm', '-G', key, '-f');
+      expect(rvr('set', '-G', 'notes.k', 'precious', '--confirm').status).toBe(0);
+      const env = json('rename', '-G', 'notes.k', key);
+      if (fits) {
+        expect(env.ok).toBe(true);
+        expect(json('run', '-G', key).error?.code).toBe('REQUIRES_CONFIRMATION');
+      } else {
+        expect(env.error?.code).toBe('INVALID_INPUT');
+        expect(json('get', '-G', 'notes.k').ok).toBe(true);
+      }
     });
 
     it('a namespace whose new leaf would be too long: refused, nothing moved, the flagged leaf still gated', () => {
@@ -191,7 +209,9 @@ describe('rename refusals that write nothing (#247, #245)', () => {
       expect(rvr('set', '-G', 'a.short', `touch ${path.join(dataDir, 'ran')}`, '--confirm').status).toBe(0);
       const before = snapshot(globalStore());
       const n = 'n'.repeat(60);
-      expect(rvr('rename', '-G', 'a', n).status).toBe(1);
+      const r = rvr('rename', '-G', 'a', n);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(`'${n}.${'x'.repeat(200)}' is too long for a file name on this filesystem; nothing was renamed.`);
       expect(snapshot(globalStore())).toBe(before);
       expect(json('run', '-G', 'a.short').error?.code).toBe('REQUIRES_CONFIRMATION');
       expect(json('run', '-G', `${n}.short`).error?.code).toBe('NOT_FOUND');

@@ -976,6 +976,28 @@ export function createDirectoryStore(
       const confirmGains = rewriteConfirm && !shallowEquals(oldConfirm, unionConfirm);
       const confirmLoses = rewriteConfirm && !shallowEquals(unionConfirm, data.confirm);
       const written: [string, EntryWrapper][] = [];
+      // What each write replaced, to put back if a later one fails. Found by
+      // the file the key's path opens, not by the key: on a filesystem that
+      // folds names the write of `Deploy` lands in the file of a stored
+      // `deploy`, and undoing it by unlinking that path deleted `deploy`.
+      const replaced: ({ path: string; content: string } | undefined)[] = [];
+      const priorOf = (key: string): { path: string; content: string } | undefined => {
+        const filePath = entryFilePath(dir, key);
+        const exact = entryCache.get(key);
+        if (exact) return { path: filePath, content: serializeEntryWrapper(exact.wrapper) };
+        const id = fileIdentity(filePath);
+        if (id === undefined) return undefined;   // a new file: undone by removing it
+        for (const [other, cached] of entryCache) {
+          if (fileIdentity(entryFilePath(dir, other)) === id) {
+            return { path: entryFilePath(dir, other), content: serializeEntryWrapper(cached.wrapper) };
+          }
+        }
+        try {
+          return { path: filePath, content: fs.readFileSync(filePath, 'utf8') };
+        } catch {
+          return undefined;
+        }
+      };
       let confirmTouched = false;
       try {
         if (confirmGains) {
@@ -990,23 +1012,29 @@ export function createDirectoryStore(
           const wrapper: EntryWrapper = updated !== undefined
             ? { value, meta: { created: existingCreated ?? updated, updated } }
             : { value };
+          const prior = priorOf(key);
           atomicWriteFileSync(entryFilePath(dir, key), serializeEntryWrapper(wrapper));
           written.push([key, wrapper]);
+          replaced.push(prior);
         }
         if (rewriteAliases) atomicWriteFileSync(aliasPath, serializeSidecar(data.aliases));
       } catch (err) {
         // Put back what this commit wrote; delete nothing. Best effort: a
-        // file that cannot be restored is left as written.
-        for (const [key] of written) {
-          const before = entryCache.get(key);
+        // file that cannot be restored is left as written — and then the
+        // confirmation list keeps the flags it gained, so that leftover is
+        // gated too (a flag too many gates nothing that exists).
+        let undoFailed = false;
+        written.forEach(([key], i) => {
+          const prior = replaced[i];
           try {
-            if (before) atomicWriteFileSync(entryFilePath(dir, key), serializeEntryWrapper(before.wrapper));
+            if (prior) atomicWriteFileSync(prior.path, prior.content);
             else fs.unlinkSync(entryFilePath(dir, key));
           } catch (undo) {
+            undoFailed = true;
             debug(`Could not undo the write of ${key}: ${String(undo)}`);
           }
-        }
-        if (confirmTouched) {
+        });
+        if (confirmTouched && !undoFailed) {
           try {
             atomicWriteFileSync(confirmPath, serializeSidecar(oldConfirm));
           } catch (undo) {
