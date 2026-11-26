@@ -16,6 +16,15 @@ if (!process.env.RVR_DATA_DIR) {
 // Spawn suites inherit this via process.env spreads into child env.
 process.env.RVR_TEST = '1';
 
+// #274: in-process tests run from the checkout, so project resolution finds
+// its own committed `.reverie/`. A store mock missing an export lets a call
+// fall through to the real module, and that wrote the checkout's store
+// (2026-11-26). With this set, the store refuses every write inside the
+// checkout (testCheckoutRefusal in utils/directoryStore.ts). The checkout is
+// the one this file is in. Spawned children inherit it through the env
+// spreads, as they do RVR_TEST.
+process.env.RVR_TEST_CHECKOUT = path.resolve(import.meta.dir, '..', '..');
+
 // #207: the suite usually runs inside an agent harness (no test job runs on
 // PRs), where the harness's session variable is set. Left in place, every
 // in-process test and every spawned child would adopt one shared session and

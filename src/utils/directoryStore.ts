@@ -24,12 +24,62 @@ import { STORE_LOCK_WAIT_MS, withFileLock } from './fileLock';
 
 /** A store write's lock: it may wait for other writers' transactions (#254). */
 function withStoreLock<T>(dir: string, fn: () => T): T {
+  // The lock file is a write too, beside the store (#274).
+  assertNotTestCheckout(dir);
   return withFileLock(getStoreLockKey(dir), fn, STORE_LOCK_WAIT_MS);
 }
 import { flattenObject, expandFlatKeys } from './objectPath';
 import { debug } from './debug';
 import { StoreUnreadableError, UnreadableFile, classifyUnparseable, keysCollide, nameCollisionError } from './unreadable';
 import { KeyCollisionError, collidesWithAny } from './keyCollision';
+
+// ── Test guard (#274) ──────────────────────────────────────────────────
+
+/**
+ * The checkout the test suite runs from, set by the test preload
+ * (src/__tests__/_setup.ts) and inherited by every child a suite spawns.
+ */
+export const TEST_CHECKOUT_ENV = 'RVR_TEST_CHECKOUT';
+
+/** `p` with symlinks resolved as far as the path exists; the rest appended as given. */
+function canonicalPath(p: string): string {
+  const resolved = path.resolve(p);
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    // Not there yet, or `fs` is a test's mock: resolve the parent instead.
+    const parent = path.dirname(resolved);
+    return parent === resolved ? resolved : path.join(canonicalPath(parent), path.basename(resolved));
+  }
+}
+
+function isInside(target: string, root: string): boolean {
+  const rel = path.relative(root, target);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+/**
+ * #274: why a store write to `dir` is refused, or undefined. Under the test
+ * suite (RVR_TEST=1, with the checkout recorded by the preload), a store
+ * inside the checkout is the repository's own `.reverie/` — its entries are
+ * committed — reached because in-process tests run from the checkout and a
+ * store mock missing an export fell through to the real module. Refused for
+ * every write: entry, sidecar, epoch and lock. A test that needs a project
+ * store makes one in a temp directory.
+ */
+export function testCheckoutRefusal(dir: string): string | undefined {
+  if (process.env.RVR_TEST !== '1') return undefined;
+  const root = process.env[TEST_CHECKOUT_ENV];
+  if (!root) return undefined;
+  if (!isInside(path.resolve(dir), path.resolve(root)) && !isInside(canonicalPath(dir), canonicalPath(root))) return undefined;
+  return `Refusing to write the store at ${dir}: it is inside the checkout under test (${root}), and RVR_TEST is set. `
+    + 'A test that needs a project store makes one in a temp directory (#274).';
+}
+
+function assertNotTestCheckout(dir: string): void {
+  const refusal = testCheckoutRefusal(dir);
+  if (refusal !== undefined) throw new Error(refusal);
+}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -843,6 +893,7 @@ export function createDirectoryStore(
    */
   function update(fn: (current: UnifiedData) => UnifiedData | null): void {
     const dir = getDirPath();
+    assertNotTestCheckout(dir);
     ensureDir();
     ensureStoreSeeds(dir);
 
@@ -1254,6 +1305,7 @@ export function createDirectoryStore(
       throw new Error(`Invalid store key: ${JSON.stringify(key)}`);
     }
     const dir = getDirPath();
+    assertNotTestCheckout(dir);
     ensureDir();
     ensureStoreSeeds(dir);
 
@@ -1430,6 +1482,7 @@ export function migrateFileToDirectory(
       if (fs.statSync(newDirPath).isDirectory()) return { status: 'already-present', entryCount: 0 };
     } catch { /* no directory yet: take the lock and look again */ }
   }
+  assertNotTestCheckout(newDirPath);   // #274: the lock, the directory, the backup
   return withFileLock(getStoreLockKey(newDirPath), () =>
     migrateFileToDirectoryLocked(oldFilePath, newDirPath)
   );
