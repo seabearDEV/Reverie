@@ -11,6 +11,9 @@ vi.mock('../alias', () => ({
   loadAliases: vi.fn(() => ({})),
 }));
 vi.mock('../store', () => ({
+  // #256: setConfirm's read of both stores; not used here. A throw, so a
+  // call can never fall through to the real store.
+  inspectBothStores: vi.fn(() => { throw new Error('inspectBothStores is not mocked in this suite'); }),
   loadMeta: vi.fn(() => ({})),
   loadMetaMerged: vi.fn(() => ({})),
   getStalenessTag: vi.fn(() => ''),

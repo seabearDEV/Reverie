@@ -262,12 +262,21 @@ describe('the confirmation gate follows the entry', () => {
       expect(ran('deploy')).toBe(true);
     });
 
-    it('confirm remove: says so too when it did remove the named flag and another still gates the key', () => {
+    it('confirm remove: when it did remove the named flag and another still gates the key, it succeeds and warns (#257)', () => {
+      // It removed what it was asked to: a success, not INVALID_INPUT with a
+      // failed audit row. What still gates the key is a warning.
       listFlags('commands.deploy', 'commands.DEPLOY');
       const r = rvr('confirm', 'remove', 'commands.deploy');
-      expect(r.status).toBe(1);
-      expect(r.stderr).toContain("The flag listed as 'commands.deploy' was removed, but 'commands.deploy' still requires confirmation: it is flagged as 'commands.DEPLOY' in the project list");
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain("Confirmation removed from 'commands.deploy'.");
+      expect(r.stdout).toContain("The flag listed as 'commands.deploy' was removed, but 'commands.deploy' still requires confirmation: it is flagged as 'commands.DEPLOY' in the project list");
       expect(projectFlags()).toEqual(['commands.DEPLOY']);
+      listFlags('commands.deploy', 'commands.DEPLOY');
+      const env = json('confirm', 'remove', 'commands.deploy') as Envelope & { warnings?: { message: string }[] };
+      expect(env.ok).toBe(true);
+      expect(env.result).toEqual({ key: 'commands.deploy', confirm: false, stillGated: true });
+      expect((env.warnings ?? []).map(w => w.message).join('\n')).toContain("it is flagged as 'commands.DEPLOY' in the project list");
+      expect(rvr('run', 'commands.deploy').stderr).toContain(REFUSAL);
     });
 
     it('confirm remove: a key with no flag anywhere is reported as such, not as removed', () => {
@@ -337,13 +346,14 @@ describe('the confirmation gate follows the entry', () => {
       expect(projectFlags()).toEqual(['commands.deploy']);
     });
 
-    it('accepts another case of an entry, and the entry is gated', () => {
+    it('accepts another case of an entry, lists it under the stored spelling, and the entry is gated', () => {
       // It listed the flag before too, and the flag gated nothing: the list
       // was matched by exact spelling. Refusing it now would leave unflagged
-      // what the user asked to flag.
+      // what the user asked to flag. #255: listed as the entry is stored.
       const r = rvr('confirm', 'set', 'commands.STATUS');
       expect(r.status).toBe(0);
-      expect(projectFlags()).toEqual(['commands.STATUS', 'commands.deploy']);
+      expect(r.stdout).toContain("Entry 'commands.status' (as typed: 'commands.STATUS') now requires confirmation to run.");
+      expect(projectFlags()).toEqual(['commands.deploy', 'commands.status']);
       const gated = rvr('run', 'commands.status');
       expect(gated.status).toBe(1);
       expect(gated.stderr).toContain(REFUSAL);
@@ -367,10 +377,13 @@ describe('the confirmation gate follows the entry', () => {
     it('accepts another case of a global entry when the project has entries in that namespace', () => {
       // The default view replaces the global `gcmds` namespace with the
       // project's, which hides the stored key from a lookup in that view.
+      // #255/#256: stored only in the global store, so the flag is in the
+      // global list, under the stored spelling.
       expect(rvr('set', '-G', 'gcmds.deploy', touch('gdeploy')).status).toBe(0);
       expect(rvr('set', 'gcmds.build', 'true').status).toBe(0);
       expect(rvr('confirm', 'set', 'gcmds.DEPLOY').status).toBe(0);
-      expect(projectFlags()).toEqual(['commands.deploy', 'gcmds.DEPLOY']);
+      expect(projectFlags()).toEqual(['commands.deploy']);
+      expect(globalFlags()).toEqual(['gcmds.deploy']);
       expect(rvr('run', 'gcmds.deploy').stderr).toContain(REFUSAL);
       expect(ran('gdeploy')).toBe(false);
       // A key that names nothing in either store is still refused there.
@@ -395,8 +408,17 @@ describe('the confirmation gate follows the entry', () => {
       fs.writeFileSync(file, '{\n<<<<<<< ours\n=======\n>>>>>>> theirs\n}\n');
       expect(rvr('confirm', 'set', 'commands.status').status).toBe(0);
       expect(projectFlags()).toEqual(['commands.deploy', 'commands.status']);
-      // The flag-only `set` refuses every write to such a key, this one included.
-      expect(json('set', 'commands.status', '--confirm').error?.code).toBe('STORE_UNREADABLE');
+      // #257: the flag-only `set` accepts it as `confirm set` does — it
+      // writes the list, not the entry.
+      expect(rvr('confirm', 'remove', 'commands.status').status).toBe(0);
+      const viaSet = json('set', 'commands.status', '--confirm');
+      expect(viaSet.ok).toBe(true);
+      expect(projectFlags()).toEqual(['commands.deploy', 'commands.status']);
+      expect(json('set', 'commands.status', '--no-confirm').ok).toBe(true);
+      expect(projectFlags()).toEqual(['commands.deploy']);
+      expect(json('set', 'commands.status', '--confirm').ok).toBe(true);
+      // A write to the entry itself is still refused.
+      expect(json('set', 'commands.status', 'other').error?.code).toBe('STORE_UNREADABLE');
       // Once the file is repaired the entry is gated.
       fs.writeFileSync(file, good);
       expect(rvr('run', 'commands.status').stderr).toContain(REFUSAL);
@@ -425,7 +447,7 @@ describe('the confirmation gate follows the entry', () => {
       }
       expect(projectFlags()).toEqual(['commands.deploy']);
       expect(rvr('set', 'commands.STATUS', '--confirm').status).toBe(0);
-      expect(projectFlags()).toEqual(['commands.STATUS', 'commands.deploy']);
+      expect(projectFlags()).toEqual(['commands.deploy', 'commands.status']);
       expect(rvr('run', 'commands.status').stderr).toContain(REFUSAL);
     });
 
@@ -541,14 +563,16 @@ describe('the confirmation gate follows the entry', () => {
     }, SLOW_TEST_MS);
 
     it('a global entry: renaming the project namespace of the same name', () => {
-      // The flag for the global entry sits in the project list. The rename
-      // moved gops.a and nothing else.
+      // The flag for the global entry sits in the global list (#256). The
+      // rename moved gops.a and nothing else.
       expect(rvr('set', '-G', 'gops.deploy', touch('gdeploy')).status).toBe(0);
       expect(rvr('set', 'gops.a', 'true').status).toBe(0);
       expect(rvr('confirm', 'set', 'gops.deploy').status).toBe(0);
-      expect(projectFlags()).toEqual(['commands.deploy', 'gops.deploy']);
+      expect(projectFlags()).toEqual(['commands.deploy']);
+      expect(globalFlags()).toEqual(['gops.deploy']);
       expect(rvr('rename', 'gops', 'gjobs').status).toBe(0);
-      expect(projectFlags()).toEqual(['commands.deploy', 'gops.deploy']);
+      expect(projectFlags()).toEqual(['commands.deploy']);
+      expect(globalFlags()).toEqual(['gops.deploy']);
       const r = rvr('run', 'gops.deploy');
       expect(r.status).toBe(1);
       expect(r.stderr).toContain(REFUSAL);
@@ -567,10 +591,12 @@ describe('the confirmation gate follows the entry', () => {
     it('a global entry renamed from inside a project: the copy is flagged and the original stays gated', () => {
       // The default scope writes to the project, so this "rename" leaves the
       // global entry where it was. It was gated, and it still reads.
+      // The flag is in the global list (#256); the copy's in the project's.
       expect(rvr('set', '-G', 'gcmd.deploy', touch('gdeploy')).status).toBe(0);
       expect(rvr('confirm', 'set', 'gcmd.deploy').status).toBe(0);
       expect(rvr('rename', 'gcmd.deploy', 'moved.deploy').status).toBe(0);
-      expect(projectFlags()).toEqual(['commands.deploy', 'gcmd.deploy', 'moved.deploy']);
+      expect(projectFlags()).toEqual(['commands.deploy', 'moved.deploy']);
+      expect(globalFlags()).toEqual(['gcmd.deploy']);
       for (const key of ['gcmd.deploy', 'moved.deploy']) {
         const r = rvr('run', key);
         expect(r.status, key).toBe(1);

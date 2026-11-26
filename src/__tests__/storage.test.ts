@@ -1,9 +1,14 @@
 import { handleError, loadData, saveData, getErrorMessage, getValue, setValue, removeValue, validateImportEntries, validateImportAliases, validateImportConfirm } from '../storage';
 
 vi.mock('../store', () => ({
+  // #256: setConfirm's read of both stores; not used here. A throw, so a
+  // call can never fall through to the real store.
+  inspectBothStores: vi.fn(() => { throw new Error('inspectBothStores is not mocked in this suite'); }),
   loadEntries: vi.fn(() => ({})),
   saveEntries: vi.fn(),
   updateEntries: vi.fn(),
+  // #268: stubbed so nothing here can reach the real store through it.
+  updateStore: vi.fn(),
   loadEntriesMerged: vi.fn(() => ({})),
   clearStoreCaches: vi.fn(),
   findProjectFile: vi.fn(() => null),

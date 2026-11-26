@@ -14,6 +14,9 @@ vi.mock('../store', () => {
   return {
     loadAliasMap,
     saveAliasMap,
+    // #256: setConfirm's read of both stores; not used here. A throw, so a
+    // call can never fall through to the real store.
+    inspectBothStores: vi.fn(() => { throw new Error('inspectBothStores is not mocked in this suite'); }),
     // #254: the transactional form, over this mock's own load and save — so
     // what a change writes still shows up as a saveAliasMap call.
     updateAliasMap: vi.fn((fn: (a: Record<string, string>) => Record<string, string> | null, scope?: string) => {

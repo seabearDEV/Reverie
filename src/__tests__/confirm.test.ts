@@ -8,7 +8,7 @@ import {
   flagsGating,
   gatedAmong,
 } from '../confirm';
-import { keysOpeningSameEntry, entriesOpenedBy, opensEntryFile } from '../utils/entryIdentity';
+import { keysOpeningSameEntry, entriesOpenedBy, opensEntryFile, storedSpellingOf } from '../utils/entryIdentity';
 
 vi.mock('../store', () => {
   let confirmKeys: Record<string, true> = {};
@@ -30,6 +30,9 @@ vi.mock('../store', () => {
       const next = fn({ scope, dir: '/mock/store', data: { entries: {}, aliases: {}, confirm: loadConfirmMap(scope) }, keys: [], unreadable: [] }, undefined);
       if (next !== null) saveConfirmMap(next.confirm, scope);
     }),
+    // #256: setConfirm decides from a read of both stores; here the one store, as the global one.
+    inspectBothStores: vi.fn((fn: (project: unknown, global: unknown) => unknown) =>
+      fn(undefined, { scope: 'global', dir: '/mock/store', data: { entries: {}, aliases: {}, confirm: loadConfirmMap('global') }, keys: [], unreadable: [] })),
     clearStoreCaches: vi.fn(() => { confirmKeys = {}; }),
     findProjectFile: vi.fn(() => null),
     clearProjectFileCache: vi.fn(),
@@ -45,7 +48,9 @@ vi.mock('../utils/entryIdentity', () => ({
   storedSpellingOf: vi.fn(() => undefined),
 }));
 
-import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged } from '../store';
+import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged, findProjectFile, updateUnderBothLocks, inspectBothStores } from '../store';
+import { StoreUnreadableError } from '../utils/unreadable';
+import { LockTimeoutError } from '../utils/fileLock';
 
 describe('Confirm Metadata', () => {
   const originalConsoleLog = console.log;
@@ -101,7 +106,8 @@ describe('Confirm Metadata', () => {
 
   describe('setConfirm', () => {
     it('adds a key to confirm set', () => {
-      expect(setConfirm('commands.new')).toBe(true);
+      // #255/#256: it says where the flag went — the name and the list.
+      expect(setConfirm('commands.new')).toMatchObject({ key: 'commands.new' });
 
       expect(saveConfirmMap).toHaveBeenCalled();
       const savedData = (saveConfirmMap as Mock).mock.calls[0][0];
@@ -116,6 +122,216 @@ describe('Confirm Metadata', () => {
       expect(setConfirm('commands.new')).toBe(false);
       expect(saveConfirmMap).not.toHaveBeenCalled();
     });
+
+    describe('#255, #256: the list and the name, decided from a read of both stores', () => {
+      // A project store (or none) and the global one, as both the read
+      // (inspectBothStores) and the write under the locks see them. Which
+      // spelling opens which file is the filesystem's answer: here a key
+      // opens a store's file when it is one of its keys or listed in `folds`.
+      interface Side { keys?: string[]; unreadable?: string[]; folds?: Record<string, string>; confirm?: Record<string, true> }
+      type Fn = (a: unknown, b: unknown) => { confirm: Record<string, true> } | null;
+      const view = (scope: 'project' | 'global', side: Side) => ({
+        scope, dir: `/mock/${scope}`,
+        data: { entries: {}, aliases: {}, confirm: { ...(side.confirm ?? {}) } },
+        keys: side.keys ?? [],
+        unreadable: (side.unreadable ?? []).map(key => ({ kind: 'entry', key, path: `/mock/${scope}/${key}.json`, reason: 'conflict' })),
+      });
+      let written: { scope: string; confirm: Record<string, true> }[] = [];
+      let writes: string[] = [];
+      const stores = (project: Side | undefined, global: Side, opts: { globalWrite?: Error; beforeWrite?: (scope: string) => void } = {}) => {
+        written = [];
+        writes = [];
+        const sides: Record<string, Side | undefined> = { '/mock/project': project, '/mock/global': global };
+        (opensEntryFile as Mock).mockImplementation((dir: string, key: string) => {
+          const side = sides[dir];
+          return !!side && ([...(side.keys ?? []), ...(side.unreadable ?? [])].includes(key) || Object.hasOwn(side.folds ?? {}, key));
+        });
+        (storedSpellingOf as Mock).mockImplementation((dir: string, key: string, names: string[]) => names.includes(key) ? undefined : sides[dir]?.folds?.[key]);
+        (inspectBothStores as Mock).mockImplementation((fn: Fn) => fn(project && view('project', project), view('global', global)));
+        (updateUnderBothLocks as Mock).mockImplementation((scope: string, fn: Fn) => {
+          writes.push(scope);
+          opts.beforeWrite?.(scope);
+          if (scope === 'global' && opts.globalWrite) throw opts.globalWrite;
+          const target = scope === 'project' && project ? view('project', project) : view('global', global);
+          const other = target.scope === 'project' ? view('global', global) : project && view('project', project);
+          const next = fn(target, other);
+          if (next !== null) written.push({ scope: target.scope, confirm: next.confirm });
+        });
+      };
+      const errno = (code: string) => Object.assign(new Error(`${code}: permission denied, open '/mock/global/_epoch.json.1.tmp'`), { code });
+      afterEach(() => {
+        (storedSpellingOf as Mock).mockImplementation(() => undefined);
+        (inspectBothStores as Mock).mockImplementation((fn: Fn) =>
+          fn(undefined, { scope: 'global', dir: '/mock/store', data: { entries: {}, aliases: {}, confirm: loadConfirmMap('global') }, keys: [], unreadable: [] }));
+        (updateUnderBothLocks as Mock).mockImplementation((scope: string, fn: Fn) => {
+          const next = fn({ scope, dir: '/mock/store', data: { entries: {}, aliases: {}, confirm: loadConfirmMap(scope) }, keys: [], unreadable: [] }, undefined);
+          if (next !== null) saveConfirmMap(next.confirm, scope);
+        });
+      });
+
+      it('the exact key, when it is stored', () => {
+        stores(undefined, { keys: ['ops.fix', 'OPS.fix'] });
+        expect(setConfirm('ops.fix')).toMatchObject({ key: 'ops.fix' });
+        expect(written).toEqual([{ scope: 'global', confirm: { 'ops.fix': true } }]);
+      });
+
+      it('the stored key whose file the spelling opens (a fold the filesystem makes)', () => {
+        stores(undefined, { keys: ['ops.fix'], folds: { 'ops.\ufb01x': 'ops.fix' } });
+        expect(setConfirm('ops.\ufb01x')).toMatchObject({ key: 'ops.fix' });
+        expect(written).toEqual([{ scope: 'global', confirm: { 'ops.fix': true } }]);
+      });
+
+      it('an unreadable entry is a candidate too: its file is there', () => {
+        stores(undefined, { unreadable: ['ops.fix'], folds: { 'ops.\ufb01x': 'ops.fix' } });
+        expect(setConfirm('ops.\ufb01x')).toMatchObject({ key: 'ops.fix' });
+      });
+
+      it('the one stored key that differs only by case, where no file is shared (a case-sensitive volume)', () => {
+        stores(undefined, { keys: ['ops.Deploy'] });
+        expect(setConfirm('OPS.deploy')).toMatchObject({ key: 'ops.Deploy' });
+      });
+
+      it('several stored keys differing only by case, none of them the key: the spelling typed', () => {
+        stores(undefined, { keys: ['ops.Deploy', 'OPS.DEPLOY'] });
+        expect(setConfirm('ops.deploy')).toMatchObject({ key: 'ops.deploy' });
+        expect(written).toEqual([{ scope: 'global', confirm: { 'ops.deploy': true } }]);
+      });
+
+      describe('the two stores spell the entry differently: every spelling is listed (review F2, N1)', () => {
+        // The project holds `opſ.start`, the global store `ops.start`: one
+        // file each, which APFS lets either name open. Where nothing folds
+        // (a case-sensitive volume, Linux) each name opens only its own, so a
+        // flag under one gates nothing of the other: both are listed, the
+        // written store's first.
+        const LONG = 'op\u017f.start';
+        const twins = () => stores(
+          { keys: [LONG], folds: { 'ops.start': LONG } },
+          { keys: ['ops.start'], folds: { [LONG]: 'ops.start' } },
+        );
+
+        it('-G with the global store\'s name (F2)', () => {
+          twins();
+          expect(setConfirm('ops.start', 'global')).toEqual({ key: 'ops.start', also: [LONG], scope: 'global' });
+          expect(written).toEqual([{ scope: 'global', confirm: { 'ops.start': true, [LONG]: true } }]);
+        });
+
+        it('-G with the project\'s name (N1)', () => {
+          twins();
+          expect(setConfirm(LONG, 'global')).toEqual({ key: 'ops.start', also: [LONG], scope: 'global' });
+          expect(written).toEqual([{ scope: 'global', confirm: { 'ops.start': true, [LONG]: true } }]);
+        });
+
+        it('without -G, the global store\'s name: the project list gets both (N1)', () => {
+          twins();
+          expect(setConfirm('ops.start')).toEqual({ key: LONG, also: ['ops.start'], scope: 'project' });
+          expect(written).toEqual([{ scope: 'project', confirm: { [LONG]: true, 'ops.start': true } }]);
+        });
+
+        it('one already listed: the other is added', () => {
+          stores(
+            { keys: [LONG], folds: { 'ops.start': LONG } },
+            { keys: ['ops.start'], folds: { [LONG]: 'ops.start' }, confirm: { 'ops.start': true } },
+          );
+          expect(setConfirm(LONG, 'global')).toEqual({ key: 'ops.start', also: [LONG], scope: 'global' });
+          expect(written).toEqual([{ scope: 'global', confirm: { 'ops.start': true, [LONG]: true } }]);
+        });
+
+        it('names that differ only by case are listed once', () => {
+          stores({ keys: ['ops.Deploy'], folds: { 'ops.deploy': 'ops.Deploy' } }, { keys: ['ops.deploy'] });
+          expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.Deploy', scope: 'project' });
+        });
+      });
+
+      it('another store\'s spelling only when the written one names no entry: -G on a project entry', () => {
+        stores({ keys: ['ops.fix'], folds: { 'ops.\ufb01x': 'ops.fix' } }, { keys: [] });
+        expect(setConfirm('ops.\ufb01x', 'global')).toMatchObject({ key: 'ops.fix', scope: 'global' });
+      });
+
+      it('#256: an entry stored only in the global store goes in the global list; only that store is written', () => {
+        stores({ keys: ['other.x'] }, { keys: ['ops.deploy'] });
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'global', moved: 'globalOnly' });
+        expect(writes).toEqual(['global']);
+        expect(written).toEqual([{ scope: 'global', confirm: { 'ops.deploy': true } }]);
+      });
+
+      it('#256: a project entry, alone or over a global one, takes the list asked for', () => {
+        stores({ keys: ['ops.deploy'] }, { keys: ['ops.deploy'] });
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'project' });
+        expect(writes).toEqual(['project']);
+        stores({ keys: ['ops.deploy'] }, { keys: [] });
+        expect(setConfirm('ops.deploy', 'global')).toEqual({ key: 'ops.deploy', scope: 'global' });
+      });
+
+      it('the key opens the global entry and the project holds only another case of it: the global list, said why', () => {
+        stores({ keys: ['OPS.deploy'] }, { keys: ['ops.deploy'] });
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'global', moved: 'opensGlobal' });
+      });
+
+      it.each(['EACCES', 'EPERM', 'EROFS'])('the global store cannot be written (%s): the project list, said so (review F1)', (code) => {
+        stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: errno(code) });
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'project', moved: 'globalUnwritable' });
+        expect(writes).toEqual(['global', 'project']);
+        expect(written).toEqual([{ scope: 'project', confirm: { 'ops.deploy': true } }]);
+      });
+
+      it('with -G it fails as asked: no fallback to the project list', () => {
+        stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: errno('EACCES') });
+        expect(() => setConfirm('ops.deploy', 'global')).toThrow('EACCES');
+        expect(written).toEqual([]);
+      });
+
+      it('an unreadable global list, seen in the read: the project list, naming the file, nothing opened in the global store (N2)', () => {
+        const global: Side & { unreadableList?: boolean } = { keys: ['ops.deploy'] };
+        stores({ keys: [] }, global);
+        (inspectBothStores as Mock).mockImplementation((fn: Fn) => fn(view('project', { keys: [] }), {
+          ...view('global', global),
+          unreadable: [{ kind: 'confirm', path: '/mock/global/_confirm.json', reason: 'conflict' }],
+        }));
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'project', moved: 'globalUnreadable', detail: '/mock/global/_confirm.json' });
+        expect(writes).toEqual(['project']);
+        expect(written).toEqual([{ scope: 'project', confirm: { 'ops.deploy': true } }]);
+      });
+
+      it('an unreadable global list found by the write: the same (N2)', () => {
+        const unreadable = new StoreUnreadableError([{ kind: 'confirm', path: '/mock/global/_confirm.json', reason: 'conflict' }], 'write');
+        stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: unreadable });
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'project', moved: 'globalUnreadable', detail: '/mock/global/_confirm.json' });
+        expect(written).toEqual([{ scope: 'project', confirm: { 'ops.deploy': true } }]);
+      });
+
+      it.each(['ENOSPC', 'EIO'])('any failure of the global write (%s): the project list, with the error (N2)', (code) => {
+        stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: errno(code) });
+        expect(setConfirm('ops.deploy')).toMatchObject({ key: 'ops.deploy', scope: 'project', moved: 'globalUnwritable', detail: expect.stringContaining(code) });
+        expect(written).toEqual([{ scope: 'project', confirm: { 'ops.deploy': true } }]);
+      });
+
+      it('a lock another process holds is not a fallback: it fails as any write does', () => {
+        stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: new LockTimeoutError('Unable to acquire lock') });
+        expect(() => setConfirm('ops.deploy')).toThrow(LockTimeoutError);
+        expect(written).toEqual([]);
+      });
+
+      it('with -G an unreadable global list still refuses', () => {
+        const unreadable = new StoreUnreadableError([{ kind: 'confirm', path: '/mock/global/_confirm.json', reason: 'conflict' }], 'write');
+        stores({ keys: [] }, { keys: ['ops.deploy'] }, { globalWrite: unreadable });
+        expect(() => setConfirm('ops.deploy', 'global')).toThrow(StoreUnreadableError);
+        expect(written).toEqual([]);
+      });
+
+      it('already listed where it goes: answered from the read, nothing opened for writing', () => {
+        stores({ keys: [] }, { keys: ['ops.deploy'], confirm: { 'ops.deploy': true } }, { globalWrite: errno('EACCES') });
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'global', moved: 'globalOnly' });
+        expect(writes).toEqual([]);
+      });
+
+      it('the project\'s entry gone by the time its list is written: decided again, and the global list gets it', () => {
+        const project: Side = { keys: ['ops.deploy'] };
+        stores(project, { keys: ['ops.deploy'] }, { beforeWrite: scope => { if (scope === 'project') project.keys = []; } });
+        expect(setConfirm('ops.deploy')).toEqual({ key: 'ops.deploy', scope: 'global', moved: 'globalOnly' });
+        expect(writes).toEqual(['project', 'global']);
+        expect(written).toEqual([{ scope: 'global', confirm: { 'ops.deploy': true } }]);
+      });
+    });
   });
 
   describe('removeConfirm', () => {
@@ -126,6 +342,13 @@ describe('Confirm Metadata', () => {
       const savedData = (saveConfirmMap as Mock).mock.calls[0][0];
       expect(savedData['commands.deploy']).toBeUndefined();
       expect(savedData['commands.rm-logs']).toBe(true);
+    });
+
+    it('#257: a name every object has is not a flag (constructor, toString)', () => {
+      for (const key of ['constructor', 'toString', 'hasOwnProperty']) {
+        expect(removeConfirm(key), key).toBe(false);
+      }
+      expect(saveConfirmMap).not.toHaveBeenCalled();
     });
 
     it('does nothing when key is not in confirm set', () => {
@@ -241,15 +464,35 @@ describe('Confirm Metadata', () => {
       expect(hasConfirm('__proto__')).toBe(false);
     });
 
+    /** A project list and a global list, each as given. */
+    const twoLists = (project: Record<string, true>, global: Record<string, true>) => {
+      (findProjectFile as Mock).mockReturnValue('/mock/project/.reverie');
+      (loadConfirmMap as Mock).mockImplementation((scope?: string) => ({ ...(scope === 'project' ? project : global) }));
+      (loadConfirmMapMerged as Mock).mockReturnValue({ ...global, ...project });
+    };
+    afterEach(() => {
+      (findProjectFile as Mock).mockReturnValue(null);
+      (loadConfirmMap as Mock).mockImplementation(() => ({}));
+    });
+
     it('flagsGating: names each flag that gates the key, and the list it is in', () => {
-      (loadConfirmMapMerged as Mock).mockReturnValue({ 'commands.deploy': true, 'commands.DEPLOY': true, 'other.cmd': true });
       // The global list holds only the exact spelling; the other is the project's.
-      (loadConfirmMap as Mock).mockReturnValue({ 'commands.deploy': true });
+      twoLists({ 'commands.DEPLOY': true, 'other.cmd': true }, { 'commands.deploy': true });
       expect(flagsGating('commands.deploy')).toEqual([
-        { key: 'commands.deploy', scope: 'global' },
         { key: 'commands.DEPLOY', scope: 'project' },
+        { key: 'commands.deploy', scope: 'global' },
       ]);
       expect(flagsGating('commands.greet')).toEqual([]);
+    });
+
+    it('flagsGating: a name flagged in both lists is named in both (#257)', () => {
+      // Merged into one map, the global list was the only one named: clearing
+      // it from there left the project's, and the command failed again.
+      twoLists({ 'ops.deploy': true }, { 'ops.deploy': true });
+      expect(flagsGating('OPS.DEPLOY')).toEqual([
+        { key: 'ops.deploy', scope: 'project' },
+        { key: 'ops.deploy', scope: 'global' },
+      ]);
     });
   });
 

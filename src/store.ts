@@ -384,6 +384,17 @@ export function saveAll(sections: StoreSections, scope?: Scope): void {
   updateAll(() => sections, scope);
 }
 
+/**
+ * One store write that changes several sections at once (#268): `set <key>
+ * <value> --confirm` writes the entry, its flag and its alias together, so
+ * it completes or writes nothing. `fn` gets the store as it stands under its
+ * lock, in fresh objects it may change, and returns the state to write or
+ * null. See "Writes" above.
+ */
+export function updateStore(fn: (current: UnifiedData) => UnifiedData | null, scope?: Scope): void {
+  resolveStore(resolveScopeForWrite(scope)).update(fn);
+}
+
 /** One store as a two-store transaction sees it, under that store's lock. */
 export interface LockedStore {
   scope: 'project' | 'global';
@@ -447,6 +458,30 @@ export function updateUnderBothLocks(
         fn(view(global, 'global', globalDir, current), view(project, 'project', projectDir, other)));
     });
   }
+}
+
+/**
+ * Read both stores as they stand under their locks and decide from them,
+ * writing nothing (#256): which list a confirmation flag goes in. Same lock
+ * order as updateUnderBothLocks, the project's first. A store this process
+ * cannot write is read without its lock, as inspect() does, so a read-only
+ * project or data directory does not fail a command that will not write it.
+ * `project` is undefined when there is no project store, or when it is the
+ * global store's directory. `fn` is synchronous and reads or writes no
+ * store itself.
+ */
+export function inspectBothStores<T>(fn: (project: LockedStore | undefined, global: LockedStore) => T): T {
+  const global = getGlobalStore();
+  const globalDir = getGlobalStoreDirPath();
+  const project = getProjectStore();
+  const projectDir = projectStoreDirPath;
+  const view = (store: ScopedStore, which: 'project' | 'global', dir: string, data: UnifiedData): LockedStore =>
+    ({ scope: which, dir, data, keys: store.storedKeys(), unreadable: store.unreadable() });
+  if (!project || projectDir === null || path.resolve(projectDir) === path.resolve(globalDir)) {
+    return global.inspect(current => fn(undefined, view(global, 'global', globalDir, current)));
+  }
+  return project.inspect(projectCurrent => global.inspect(globalCurrent =>
+    fn(view(project, 'project', projectDir, projectCurrent), view(global, 'global', globalDir, globalCurrent))));
 }
 
 function stampImportMeta(

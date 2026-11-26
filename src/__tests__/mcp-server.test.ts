@@ -255,6 +255,9 @@ vi.mock('../store', () => {
       saveAll(fn({ entries: structuredClone(mockData), aliases: { ...mockAliases }, confirm: { ...mockConfirmKeys } }));
     }),
     // #259: the two-store transaction, over this mock's one store.
+    // #256: setConfirm's read of both stores; not used here. A throw, so a
+    // call can never fall through to the real store.
+    inspectBothStores: vi.fn(() => { throw new Error('inspectBothStores is not mocked in this suite'); }),
     updateUnderBothLocks: vi.fn((_scope: string, fn: (target: any, other: any) => any) => {
       const data = { entries: structuredClone(mockData), aliases: { ...mockAliases }, confirm: { ...mockConfirmKeys }, _meta: { ...mockMetaData } };
       const keysOf = (o: any, pre = ''): string[] => Object.entries(o).flatMap(([k, v]) => (v !== null && typeof v === 'object' ? keysOf(v, `${pre}${k}.`) : [`${pre}${k}`]));

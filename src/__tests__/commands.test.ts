@@ -107,8 +107,24 @@ vi.mock('../store', () => {
     if (JSON.stringify(next.aliases) !== JSON.stringify(before.aliases)) saveAliasMap(next.aliases);
     if (JSON.stringify(next.confirm) !== JSON.stringify(before.confirm)) saveConfirmMap(next.confirm);
   });
+  // #256: setConfirm's read of both stores — this mock's one store, as the global one.
+  const inspectBothStores = vi.fn((fn: (project: unknown, global: unknown) => unknown) => {
+    const keysOf = (o: Record<string, unknown>, pre = ''): string[] => Object.entries(o).flatMap(([k, v]) => (v !== null && typeof v === 'object' ? keysOf(v as Record<string, unknown>, `${pre}${k}.`) : [`${pre}${k}`]));
+    return fn(undefined, { scope: 'global', dir: '/mock/store', data: { ...current(), _meta: {} }, keys: keysOf(current().entries), unreadable: [] });
+  });
+  // #268: one store write of several sections, over this mock's one store.
+  const updateStore = vi.fn((fn: (c: Sections & { _meta: Record<string, number> }) => Sections | null) => {
+    const before = current();
+    const next = fn({ ...current(), _meta: {} });
+    if (next === null) return;
+    if (JSON.stringify(next.entries) !== JSON.stringify(before.entries)) saveEntries(next.entries);
+    if (JSON.stringify(next.aliases) !== JSON.stringify(before.aliases)) saveAliasMap(next.aliases);
+    if (JSON.stringify(next.confirm) !== JSON.stringify(before.confirm)) saveConfirmMap(next.confirm);
+  });
   return {
     updateUnderBothLocks,
+    updateStore,
+    inspectBothStores,
     loadEntries:        vi.fn(()  => clone(storeState.entries)),
     saveEntries,
     updateEntries,
@@ -341,6 +357,20 @@ describe('Commands', () => {
       Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
       expect(storeState.entries.app).toEqual({ version: '1.0.0' });
       expect(takeValueStored()).toBe(false);
+    });
+
+    it('flag-only --confirm: a flag listed in the global list though -G was not given says so', async () => {
+      // This mock is one store, and the transaction always hands it over as
+      // the global one: setConfirm reports the flag in the global list. The
+      // result and the line say so, whatever the reason (#256).
+      await setEntry('app.version', '1.0.0', true);
+      const result = await setEntry('app.version', undefined, false, false, undefined, true);
+      expect(result).toMatchObject({ key: 'app.version', confirm: true, list: 'global' });
+      expect((console.log as Mock).mock.calls.flat().join('\n')).toContain('Its flag is in the global list.');
+      expect(storeState.confirm['app.version']).toBe(true);
+      // With -G, the list asked for: nothing to say.
+      const viaG = await setEntry('app.version', undefined, false, false, undefined, true, true);
+      expect(viaG).toEqual({ key: 'app.version', confirm: true });
     });
 
     it('creates an alias when alias parameter is provided', async () => {

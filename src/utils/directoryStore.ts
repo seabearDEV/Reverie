@@ -971,10 +971,22 @@ export function createDirectoryStore(
       //    rename adds the new keys' flags — a renamed command must never
       //    exist on disk without its flag. A list that both gains and loses
       //    is written twice: the union first, the final list last.
+      //
+      //    When the commit deletes no file, that last write is still inside
+      //    the undo: if it fails, the entries and the alias map it was
+      //    written with are taken back (#268, #257). `set <key> <value>
+      //    --no-confirm` and `set <key> --no-confirm -a <alias>` write a list
+      //    that loses a flag, and left the value or the alias behind when the
+      //    list could not be written. With deletes, it stays after them, as
+      //    before: a delete is not undone, and the list goes last.
       const oldConfirm = confirmCache?.data ?? {};
       const unionConfirm = { ...oldConfirm, ...data.confirm };
       const confirmGains = rewriteConfirm && !shallowEquals(oldConfirm, unionConfirm);
       const confirmLoses = rewriteConfirm && !shallowEquals(unionConfirm, data.confirm);
+      const finalConfirm = rewriteConfirm && (confirmLoses || !confirmGains);
+      const finalConfirmUndoable = finalConfirm && toDelete.length === 0;
+      // The alias map as it stood, to put back: undefined when there was no file.
+      const priorAliases = aliasesCache && aliasesCache.mtimeMs !== -1 ? { ...aliasesCache.data } : undefined;
       const written: [string, EntryWrapper][] = [];
       // What each write replaced, to put back if a later one fails. Found by
       // the file the key's path opens, not by the key: on a filesystem that
@@ -1010,6 +1022,7 @@ export function createDirectoryStore(
         }
       };
       let confirmTouched = false;
+      let aliasesTouched = false;
       try {
         if (confirmGains) {
           atomicWriteFileSync(confirmPath, serializeSidecar(unionConfirm));
@@ -1028,7 +1041,11 @@ export function createDirectoryStore(
           written.push([key, wrapper]);
           replaced.push(prior);
         }
-        if (rewriteAliases) atomicWriteFileSync(aliasPath, serializeSidecar(data.aliases));
+        if (rewriteAliases) {
+          atomicWriteFileSync(aliasPath, serializeSidecar(data.aliases));
+          aliasesTouched = true;
+        }
+        if (finalConfirmUndoable) atomicWriteFileSync(confirmPath, serializeSidecar(data.confirm));
       } catch (err) {
         // Put back what this commit wrote; delete nothing. Best effort: a
         // file that cannot be restored is left as written — and then the
@@ -1048,6 +1065,14 @@ export function createDirectoryStore(
           } catch (undo) {
             undoFailed = true;
             debug(`Could not undo the write of ${key}: ${String(undo)}`);
+          }
+        }
+        if (aliasesTouched) {
+          try {
+            if (priorAliases !== undefined) atomicWriteFileSync(aliasPath, serializeSidecar(priorAliases));
+            else fs.unlinkSync(aliasPath);
+          } catch (undo) {
+            debug(`Could not undo the alias map: ${String(undo)}`);
           }
         }
         if (confirmTouched && !undoFailed) {
@@ -1091,7 +1116,7 @@ export function createDirectoryStore(
         aliasesCache = { data: { ...data.aliases }, mtimeMs: fs.statSync(aliasPath).mtimeMs };
       }
       if (rewriteConfirm) {
-        if (confirmLoses || !confirmGains) atomicWriteFileSync(confirmPath, serializeSidecar(data.confirm));
+        if (finalConfirm && !finalConfirmUndoable) atomicWriteFileSync(confirmPath, serializeSidecar(data.confirm));
         confirmCache = { data: { ...data.confirm }, mtimeMs: fs.statSync(confirmPath).mtimeMs };
       }
 
