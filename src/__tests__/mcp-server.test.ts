@@ -298,7 +298,15 @@ vi.mock('../config', () => ({
     return null;
   }),
   setConfigSetting: vi.fn((key: string, value: any) => {
+    if (key === 'theme' && !['default', 'dark', 'light'].includes(value)) {
+      return { ok: false, code: 'INVALID_INPUT', message: `Invalid theme: '${value}'. Must be one of: default, dark, light` };
+    }
     mockConfig[key] = value;
+    return { ok: true };
+  }),
+  unsetConfigSetting: vi.fn((key: string) => {
+    mockConfig[key] = key === 'colors' ? true : 'default';
+    return { ok: true };
   }),
   VALID_CONFIG_KEYS: ['colors', 'theme'],
   VALID_THEMES: ['default', 'dark', 'light'],
@@ -316,7 +324,7 @@ vi.mock('../utils/telemetry', () => ({
     deliveryCostTokens: 0, netTokensSaved: 0, calibration: {},
   })),
   classifyOp: vi.fn((tool: string) => {
-    if (['reverie_set', 'reverie_remove', 'reverie_copy', 'reverie_rename', 'reverie_import', 'reverie_reset', 'reverie_alias_set', 'reverie_alias_remove', 'reverie_config_set', 'reverie_init'].includes(tool)) return 'write';
+    if (['reverie_set', 'reverie_remove', 'reverie_copy', 'reverie_rename', 'reverie_import', 'reverie_reset', 'reverie_alias_set', 'reverie_alias_remove', 'reverie_config_set', 'reverie_config_unset', 'reverie_init'].includes(tool)) return 'write';
     if (tool === 'reverie_run') return 'exec';
     if (['reverie_context', 'reverie_get', 'reverie_find', 'reverie_export', 'reverie_alias_list', 'reverie_config_get', 'reverie_stale', 'reverie_lint'].includes(tool)) return 'read';
     return 'meta';
@@ -327,7 +335,7 @@ vi.mock('../utils/telemetry', () => ({
   appendMissPath: vi.fn(() => Promise.resolve()),
   getSessionId: vi.fn(() => 'mock-session'),
   extractNamespace: vi.fn((key?: string) => key ? key.split('.')[0] : '*'),
-  keyIsEntryKey: vi.fn((tool: string) => tool !== 'reverie_config_get' && tool !== 'reverie_config_set'),
+  keyIsEntryKey: vi.fn((tool: string) => !['reverie_config_get', 'reverie_config_set', 'reverie_config_unset'].includes(tool)),
 }));
 
 // Mock audit
@@ -363,6 +371,7 @@ function resetMocks() {
 // Import crypto for test data
 import { encryptValue, decryptValue } from '../utils/crypto';
 import { registerUnreadableSource } from '../utils/unreadable';
+import { unsetConfigSetting } from '../config';
 
 // Import the module which triggers tool registrations
 beforeAll(async () => {
@@ -799,6 +808,31 @@ describe('MCP Server Tools', () => {
       const result = await toolHandlers['reverie_config_set']({ key: 'bad', value: 'x' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Unknown config key: 'bad'");
+    });
+
+    it('fails a value the setting rejects instead of reporting it set (#273)', async () => {
+      const result = await toolHandlers['reverie_config_set']({ key: 'theme', value: 'neon' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid theme: 'neon'");
+      expect(result.content[0].text).not.toContain('Config set');
+    });
+  });
+
+  describe('reverie_config_unset (#213)', () => {
+    it('returns a setting to its default and reports the effective value', async () => {
+      await toolHandlers['reverie_config_set']({ key: 'theme', value: 'dark' });
+      const result = await toolHandlers['reverie_config_unset']({ key: 'theme' });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe('Config unset: theme = default (default)');
+      expect((unsetConfigSetting as unknown as Mock)).toHaveBeenCalledWith('theme');
+    });
+
+    it('refuses an unknown key without touching config', async () => {
+      (unsetConfigSetting as unknown as Mock).mockClear();
+      const result = await toolHandlers['reverie_config_unset']({ key: 'bad' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Unknown config key: 'bad'");
+      expect((unsetConfigSetting as unknown as Mock)).not.toHaveBeenCalled();
     });
   });
 

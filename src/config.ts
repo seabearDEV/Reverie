@@ -1,6 +1,11 @@
 import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 import { getConfigFilePath, ensureDataDirectoryExists } from './utils/paths';
 import { atomicWriteFileSync } from './utils/atomicWrite';
+import { withFileLock, STORE_LOCK_WAIT_MS } from './utils/fileLock';
+import { debug } from './utils/debug';
+import { getBinaryName } from './utils/binaryName';
 import { DEFAULT_BOOTSTRAP_GIST_CHARS } from './utils/contextBudget';
 
 // Define the type for configuration
@@ -40,21 +45,6 @@ export const DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES = 28 * 1024;
 // consumers.
 export { DEFAULT_BOOTSTRAP_GIST_CHARS };
 
-// Budget defaults that loadConfig itself persisted on first run — 50KB
-// through v1.1.x, 38KB through v1.3.0. Every install from before #212
-// carries one of them as an explicit value in config.json, so a changed
-// default would never reach it (the 1.2.0 50KB→38KB change didn't: stores
-// created under 1.0/1.1 kept running at 51200). Treat them as unset and
-// apply the current default. Side effect: these two exact values can't be
-// chosen explicitly — setConfigSetting warns; pick a neighbouring value.
-const LEGACY_PERSISTED_BUDGET_DEFAULTS: ReadonlySet<number> = new Set([50 * 1024, 38 * 1024]);
-
-function resolveBudgetSetting(raw: unknown): number {
-  if (typeof raw !== 'number' || raw <= 0) return DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES;
-  if (LEGACY_PERSISTED_BUDGET_DEFAULTS.has(raw)) return DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES;
-  return raw;
-}
-
 // Default configuration
 const defaultConfig: Config = {
   colors: true,
@@ -65,30 +55,249 @@ const defaultConfig: Config = {
   bootstrap_gist_chars: DEFAULT_BOOTSTRAP_GIST_CHARS,
 };
 
+// config.json holds only the settings the user changed (#213); every other
+// setting is its current default, so a changed default reaches every install.
+// CONFIG_FORMAT_KEY marks a file written that way; every write carries it. It
+// is not a setting: loadConfig() never returns it. Whether this install has
+// migrated is recorded beside the file (MIGRATION_RECORD_FILE, below).
+export const CONFIG_FORMAT_KEY = '_format';
+const SPARSE_FORMAT = 2;
+
+// Every default a version before #213 wrote to config.json. Until #213 first
+// run wrote the whole default config and every `config set` wrote the whole
+// object back, so a file without the marker cannot tell a value the user
+// chose from a default that was current when it was written. A read drops a
+// stored value listed here in memory, unless the migration record (below)
+// lists its key, and the next write persists that. The list is closed: from #213
+// on every write carries the marker and stores no default, so a later
+// default change needs no entry. Literals, so that change cannot alter it.
+export const SHIPPED_DEFAULTS: Readonly<Record<string, readonly unknown[]>> = {
+  colors: [true],
+  theme: ['default'],
+  max_backups: [10],
+  import_max_bytes: [50 * 1024 * 1024],
+  bootstrap_max_response_bytes: [50 * 1024, 38 * 1024, 28 * 1024],
+  bootstrap_gist_chars: [160],
+  // Written only by the initial codexCLI commit (90394ed); 0.1.0 lists the
+  // SQLite backend as removed. Not a setting any more, so dropping it is free.
+  backend: ['json'],
+};
+
+type RawConfig = Record<string, unknown>;
+
+/** config.json parses, but not to an object. (Invalid JSON throws SyntaxError.) */
+class MalformedConfigError extends Error {}
+
+function isUnparseable(err: unknown): boolean {
+  return err instanceof SyntaxError || err instanceof MalformedConfigError;
+}
+
+function describeUnparseable(err: unknown): string {
+  return err instanceof MalformedConfigError ? 'does not hold a JSON object' : 'is not valid JSON';
+}
+
+/**
+ * config.json does not parse. A write would replace every setting it holds,
+ * so set and unset refuse (#213) and leave the file as it is.
+ */
+class ConfigUnreadableError extends Error {
+  constructor(configPath: string, cause: unknown) {
+    super(`${configPath} ${describeUnparseable(cause)}, so nothing was written. Fix or remove the file, then retry.`, { cause });
+    this.name = 'ConfigUnreadableError';
+  }
+}
+
+function isEnoent(err: unknown): boolean {
+  return !!err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT';
+}
+
+/** The file's mtime, or null when it does not exist. */
+function configMtime(configPath: string): number | null {
+  try {
+    return fs.statSync(configPath).mtimeMs;
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+}
+
+interface StoredConfig { raw: RawConfig; text: string }
+
+/** config.json as stored, or null when there is none. Throws when it does not hold a JSON object. */
+function readStoredConfig(configPath: string): StoredConfig | null {
+  let text: string;
+  try {
+    text = fs.readFileSync(configPath, 'utf8');
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+  const parsed: unknown = JSON.parse(text);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new MalformedConfigError(`${configPath} does not hold a JSON object`);
+  }
+  return { raw: parsed as RawConfig, text };
+}
+
+/** No marker: written before #213, or rewritten since by a version before it. */
+function isLegacyFile(raw: RawConfig): boolean {
+  const format = raw[CONFIG_FORMAT_KEY];
+  return typeof format !== 'number' || format < SPARSE_FORMAT;
+}
+
+/**
+ * Drop every stored value a shipped version wrote as its default, except for
+ * the keys in `keep`: those this install's last write stored. Returns how
+ * many it dropped.
+ */
+function dropShippedDefaults(raw: RawConfig, keep: ReadonlySet<string>): number {
+  let dropped = 0;
+  for (const [key, values] of Object.entries(SHIPPED_DEFAULTS)) {
+    if (Object.hasOwn(raw, key) && values.includes(raw[key]) && !keep.has(key)) {
+      delete raw[key];
+      dropped++;
+    }
+  }
+  return dropped;
+}
+
+// The migration record (#213): a file beside config.json that versions before
+// #213 never touch. They rewrite config.json whole, every default included,
+// and drop keys they do not know, the marker with them. The record lists the
+// keys this install's last write stored, which are the settings the user set.
+// A config.json without the marker is then read against it: a value equal to
+// an old default is kept for a key in the list — the user's choice, rewritten
+// by an older Reverie still running (an MCP server started before the
+// upgrade, say) — and counts as unset for any other key, as in a file that
+// was never migrated. Values that match no old default are always kept.
+// Every write updates the record before config.json, so a crash between the
+// two errs toward keeping a value.
+export const MIGRATION_RECORD_FILE = 'config.format';
+
+interface MigrationRecord { stored: ReadonlySet<string>; olderRewriteSeen?: string }
+
+const NOTHING: ReadonlySet<string> = new Set();
+
+function migrationRecordPath(configPath: string): string {
+  return path.join(path.dirname(configPath), MIGRATION_RECORD_FILE);
+}
+
+/** The record, or null when this install has not migrated. A record that does not parse lists no keys. */
+function readMigrationRecord(configPath: string): MigrationRecord | null {
+  let text: string;
+  try {
+    text = fs.readFileSync(migrationRecordPath(configPath), 'utf8');
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    return { stored: NOTHING };
+  }
+  try {
+    const parsed = JSON.parse(text) as { stored?: unknown; olderRewriteSeen?: unknown } | null;
+    const stored = Array.isArray(parsed?.stored) ? parsed.stored.filter((k): k is string => typeof k === 'string') : [];
+    const record: MigrationRecord = { stored: new Set(stored) };
+    if (typeof parsed?.olderRewriteSeen === 'string') record.olderRewriteSeen = parsed.olderRewriteSeen;
+    return record;
+  } catch {
+    return { stored: NOTHING };
+  }
+}
+
+function writeMigrationRecord(configPath: string, record: MigrationRecord): void {
+  const out: Record<string, unknown> = { format: SPARSE_FORMAT, stored: [...record.stored].sort() };
+  if (record.olderRewriteSeen !== undefined) out.olderRewriteSeen = record.olderRewriteSeen;
+  atomicWriteFileSync(migrationRecordPath(configPath), JSON.stringify(out, null, 2));
+}
+
+// Rewrites this process has noted, so a note is printed once per process even
+// where the record cannot be written (a read-only data directory).
+const notedRewrites = new Set<string>();
+
+/**
+ * An older Reverie rewrote config.json after this install migrated: say so
+ * once per rewrite. The rewrite is remembered in the record, under the config
+ * lock so the stored-key list a write puts there is never overwritten with a
+ * stale one. Best effort: a busy lock or a read-only directory costs only a
+ * repeat of the note in a later process.
+ */
+function noteOlderRewrite(configPath: string, text: string, record: MigrationRecord): void {
+  const seen = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+  if (record.olderRewriteSeen === seen || notedRewrites.has(`${configPath}:${seen}`)) return;
+  notedRewrites.add(`${configPath}:${seen}`);
+  console.error(`Note: ${configPath} was rewritten by an older Reverie. Settings you changed keep their values; any other setting at an old default follows the current one. \`${getBinaryName()} config unset <key>\` returns a setting to its default.`);
+  try {
+    withFileLock(configPath, () => {
+      const current = readMigrationRecord(configPath);
+      if (current !== null) writeMigrationRecord(configPath, { ...current, olderRewriteSeen: seen });
+    });
+  } catch (err) {
+    debug(`migration record not updated: ${String(err)}`);
+  }
+}
+
+/** Effective settings: each stored value that is valid, the default for the rest. */
+function resolveConfig(raw: RawConfig): Config {
+  const positiveInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0;
+  return {
+    colors: typeof raw.colors === 'boolean' ? raw.colors : defaultConfig.colors,
+    theme: typeof raw.theme === 'string' ? raw.theme : defaultConfig.theme,
+    max_backups: typeof raw.max_backups === 'number' ? raw.max_backups : defaultConfig.max_backups,
+    import_max_bytes: typeof raw.import_max_bytes === 'number' && raw.import_max_bytes > 0
+      ? raw.import_max_bytes
+      : defaultConfig.import_max_bytes,
+    bootstrap_max_response_bytes: typeof raw.bootstrap_max_response_bytes === 'number' && raw.bootstrap_max_response_bytes > 0
+      ? raw.bootstrap_max_response_bytes
+      : defaultConfig.bootstrap_max_response_bytes,
+    bootstrap_gist_chars: positiveInt(raw.bootstrap_gist_chars) ? raw.bootstrap_gist_chars : defaultConfig.bootstrap_gist_chars,
+  };
+}
+
+/** What config.json stores for these settings: the format marker and each setting that differs from its default. */
+function toSparse(config: Config): RawConfig {
+  const out: RawConfig = { [CONFIG_FORMAT_KEY]: SPARSE_FORMAT };
+  for (const key of VALID_CONFIG_KEYS) {
+    if (config[key] !== defaultConfig[key]) out[key] = config[key];
+  }
+  return out;
+}
+
 // Mtime-based cache for config
 let configCache: Config | null = null;
 let configCacheMtime: number | null = null;
+// The last read warning printed, so a broken file is reported once per
+// process, not on each of the several reads a command makes.
+let lastReadWarning: string | null = null;
 
 export function clearConfigCache(): void {
   configCache = null;
   configCacheMtime = null;
+  lastReadWarning = null;
 }
 
-// Load configuration
+/** Write the sparse form of `config`. Call under the config lock. */
+function writeConfigFile(configPath: string, config: Config): void {
+  atomicWriteFileSync(configPath, JSON.stringify(toSparse(config), null, 2));
+  configCache = { ...config };
+  configCacheMtime = fs.statSync(configPath).mtimeMs;
+}
+
+/**
+ * Load configuration: the effective value of every setting. A read never
+ * writes config.json (#213) — a legacy file's shipped defaults are dropped in
+ * memory, and the next write persists that.
+ */
 export function loadConfig(): Config {
+  let configPath = 'config.json';
   try {
-    const configPath = getConfigFilePath();
+    configPath = getConfigFilePath();
 
     // Fast path: check cache via mtime before hitting the filesystem
     if (configCache !== null && configCacheMtime !== null) {
       try {
         if (fs.statSync(configPath).mtimeMs === configCacheMtime) {
-          // Defensive shallow copy: setConfigSetting() and friends call
-          // loadConfig(), mutate the returned object in place, then call
-          // saveConfig() with the mutated reference. Returning the cached
-          // object directly would let those mutations leak into the cache
-          // and contaminate other in-process readers between the mutation
-          // and the next mtime-triggered re-read. Same hazard PR #58 fixed
+          // Defensive shallow copy: callers may mutate the returned object.
+          // Returning the cached object directly would let those mutations
+          // leak into the cache and contaminate other in-process readers
+          // until the next mtime-triggered re-read. Same hazard PR #58 fixed
           // for sidecar caches in directoryStore.ts.
           return { ...configCache };
         }
@@ -99,23 +308,32 @@ export function loadConfig(): Config {
       }
     }
 
-    const currentMtime = fs.statSync(configPath).mtimeMs;
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+    let currentMtime = configMtime(configPath);
+    if (currentMtime === null) {
+      // First run. Create the data directory, as the first-run save did: the
+      // audit and telemetry logs need it, and creating it moves a legacy
+      // ~/.codexcli into place, config.json with it. But write no config.json
+      // (#213) — a stored default would stop a later default change reaching
+      // this install. Every setting is its default.
+      try {
+        ensureDataDirectoryExists();
+      } catch (err) {
+        debug(`data directory not created: ${String(err)}`);
+      }
+      currentMtime = configMtime(configPath);
+      if (currentMtime === null) return { ...defaultConfig };
+    }
+    const stored = readStoredConfig(configPath);
+    if (stored === null) return { ...defaultConfig };
 
-    // Ensure all required fields exist (handles migrating from old config)
-    const result: Config = {
-      colors: typeof config.colors === 'boolean' ? config.colors : defaultConfig.colors,
-      theme: typeof config.theme === 'string' ? config.theme : defaultConfig.theme,
-      max_backups: typeof config.max_backups === 'number' ? config.max_backups : defaultConfig.max_backups,
-      import_max_bytes: typeof config.import_max_bytes === 'number' && config.import_max_bytes > 0
-        ? config.import_max_bytes
-        : defaultConfig.import_max_bytes,
-      bootstrap_max_response_bytes: resolveBudgetSetting(config.bootstrap_max_response_bytes),
-      bootstrap_gist_chars: typeof config.bootstrap_gist_chars === 'number' && Number.isInteger(config.bootstrap_gist_chars) && config.bootstrap_gist_chars > 0
-        ? config.bootstrap_gist_chars
-        : defaultConfig.bootstrap_gist_chars,
-    };
+    const raw = stored.raw;
+    if (isLegacyFile(raw)) {
+      const record = readMigrationRecord(configPath);
+      if (record !== null) noteOlderRewrite(configPath, stored.text, record);
+      dropShippedDefaults(raw, record?.stored ?? NOTHING);
+    }
 
+    const result = resolveConfig(raw);
     configCache = result;
     configCacheMtime = currentMtime;
 
@@ -123,90 +341,151 @@ export function loadConfig(): Config {
     // reason as the cached path above.
     return { ...result };
   } catch (error) {
-    // File doesn't exist — create with defaults
-    if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === 'ENOENT') {
-      saveConfig(defaultConfig);
-      return { ...defaultConfig };
+    // One line, once: every command reads the config, and the defaults serve.
+    const why = isUnparseable(error) ? describeUnparseable(error) : `could not be read (${error instanceof Error ? error.message : String(error)})`;
+    const warning = `Warning: ${configPath} ${why}; using the default settings.`;
+    if (warning !== lastReadWarning) {
+      lastReadWarning = warning;
+      console.error(warning);
     }
-    console.error('Error loading configuration:', error);
     return { ...defaultConfig };
   }
 }
 
-// Save configuration
-export function saveConfig(config: Config): void {
-  try {
-    ensureDataDirectoryExists();
-    const configPath = getConfigFilePath();
-    atomicWriteFileSync(configPath, JSON.stringify(config, null, 2));
-    const mtime = fs.statSync(configPath).mtimeMs;
-    configCache = { ...config };
-    configCacheMtime = mtime;
-  } catch (error) {
-    console.error('Error saving configuration:', error);
-  }
+/**
+ * Change settings as one transaction under the config lock: read the file
+ * as it stands, apply `change` to the effective settings, write the sparse
+ * result. A concurrent `config set` of another key is never lost, and an
+ * earlier loadConfig() snapshot is never written back. A file without the
+ * marker is cleaned in the same write, as a read cleans it, and the record's
+ * key list is updated before config.json. Nothing is written when nothing
+ * changes, and no file is created to hold nothing. A file that does not
+ * parse is refused, not replaced.
+ */
+function updateConfig(change: (config: Config) => void): void {
+  ensureDataDirectoryExists();
+  const configPath = getConfigFilePath();
+  withFileLock(configPath, () => {
+    let stored: StoredConfig | null;
+    try {
+      stored = readStoredConfig(configPath);
+    } catch (err) {
+      if (isUnparseable(err)) throw new ConfigUnreadableError(configPath, err);
+      throw err;
+    }
+    const record = readMigrationRecord(configPath);
+    const raw = stored?.raw ?? {};
+    const before = JSON.stringify(raw);
+    if (isLegacyFile(raw)) dropShippedDefaults(raw, record?.stored ?? NOTHING);
+    const config = resolveConfig(raw);
+    change(config);
+    const sparse = toSparse(config);
+    const keys = storedKeys(sparse);
+    const configChanged = stored === null ? keys.size > 0 : JSON.stringify(sparse) !== before;
+    // Record first (N2): a crash before config.json leaves the old file read
+    // against the new key list, which keeps its values for those keys.
+    if ((stored !== null || configChanged) && (record === null || !sameKeys(record.stored, keys))) {
+      writeMigrationRecord(configPath, { stored: keys });
+    }
+    if (configChanged) writeConfigFile(configPath, config);
+  }, STORE_LOCK_WAIT_MS);
 }
 
-// Get a specific configuration setting
+/** The settings a sparse config.json stores. */
+function storedKeys(sparse: RawConfig): ReadonlySet<string> {
+  return new Set(Object.keys(sparse).filter(k => k !== CONFIG_FORMAT_KEY));
+}
+
+function sameKeys(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...a].every(k => b.has(k));
+}
+
+// Save configuration: the sparse form of `config`, under the config lock.
+// Failures propagate — a write that did not happen must not report success.
+export function saveConfig(config: Config): void {
+  ensureDataDirectoryExists();
+  const configPath = getConfigFilePath();
+  withFileLock(configPath, () => {
+    writeMigrationRecord(configPath, { stored: storedKeys(toSparse(config)) });
+    writeConfigFile(configPath, config);
+  }, STORE_LOCK_WAIT_MS);
+}
+
+function isConfigKey(key: string): key is keyof Config {
+  return (VALID_CONFIG_KEYS as readonly string[]).includes(key);
+}
+
+/** A refused change: nothing was written. `code` is the envelope error code. */
+export type ConfigChangeResult = { ok: true } | { ok: false; code: 'INVALID_INPUT' | 'NOT_FOUND'; message: string };
+
+const unknownKey = (key: string): ConfigChangeResult =>
+  ({ ok: false, code: 'NOT_FOUND', message: `Unknown configuration key: ${key}` });
+const invalid = (message: string): ConfigChangeResult => ({ ok: false, code: 'INVALID_INPUT', message });
+
+// Get a specific configuration setting (its effective value)
 export function getConfigSetting(key: string): string | boolean | number | null {
   const config = loadConfig();
-  if ((VALID_CONFIG_KEYS as readonly string[]).includes(key)) {
-    return config[key as keyof Config];
+  if (isConfigKey(key)) {
+    return config[key];
   }
   console.error(`Unknown configuration key: ${key}`);
   return null;
 }
 
-// Set a specific configuration setting
-export function setConfigSetting(key: string, value: string | boolean): void {
-  const config = loadConfig();
+/**
+ * Set a configuration setting. A value equal to the default is not stored
+ * (#213): the setting follows the default, as after `config unset`. A
+ * rejected key or value writes nothing and says why (#273); the caller
+ * reports it. Write failures throw.
+ */
+export function setConfigSetting(key: string, value: string | boolean): ConfigChangeResult {
+  let next: Partial<Config>;
   if (key === 'colors') {
-    config.colors = typeof value === 'boolean' ? value : String(value).toLowerCase() === 'true' || value === '1';
-    saveConfig(config);
+    next = { colors: typeof value === 'boolean' ? value : String(value).toLowerCase() === 'true' || value === '1' };
   } else if (key === 'theme') {
     const val = String(value);
     if (!(VALID_THEMES as readonly string[]).includes(val)) {
-      console.error(`Invalid theme: '${val}'. Must be one of: ${VALID_THEMES.join(', ')}`);
-      return;
+      return invalid(`Invalid theme: '${val}'. Must be one of: ${VALID_THEMES.join(', ')}`);
     }
-    config.theme = val;
-    saveConfig(config);
+    next = { theme: val };
   } else if (key === 'max_backups') {
     const num = Number(value);
     if (!Number.isInteger(num) || num < 0) {
-      console.error(`Invalid max_backups: '${value}'. Must be a non-negative integer (0 to disable rotation).`);
-      return;
+      return invalid(`Invalid max_backups: '${value}'. Must be a non-negative integer (0 to disable rotation).`);
     }
-    config.max_backups = num;
-    saveConfig(config);
+    next = { max_backups: num };
   } else if (key === 'import_max_bytes') {
     const num = Number(value);
     if (!Number.isInteger(num) || num <= 0) {
-      console.error(`Invalid import_max_bytes: '${value}'. Must be a positive integer (bytes).`);
-      return;
+      return invalid(`Invalid import_max_bytes: '${value}'. Must be a positive integer (bytes).`);
     }
-    config.import_max_bytes = num;
-    saveConfig(config);
+    next = { import_max_bytes: num };
   } else if (key === 'bootstrap_max_response_bytes') {
     const num = Number(value);
     if (!Number.isInteger(num) || num <= 0) {
-      console.error(`Invalid bootstrap_max_response_bytes: '${value}'. Must be a positive integer (bytes).`);
-      return;
+      return invalid(`Invalid bootstrap_max_response_bytes: '${value}'. Must be a positive integer (bytes).`);
     }
-    if (LEGACY_PERSISTED_BUDGET_DEFAULTS.has(num)) {
-      console.error(`Note: ${num} is a former default that older versions wrote to config.json; it is treated as unset (effective: ${DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES}). Pick a neighbouring value to pin it.`);
-    }
-    config.bootstrap_max_response_bytes = num;
-    saveConfig(config);
+    next = { bootstrap_max_response_bytes: num };
   } else if (key === 'bootstrap_gist_chars') {
     const num = Number(value);
     if (!Number.isInteger(num) || num <= 0) {
-      console.error(`Invalid bootstrap_gist_chars: '${value}'. Must be a positive integer (characters).`);
-      return;
+      return invalid(`Invalid bootstrap_gist_chars: '${value}'. Must be a positive integer (characters).`);
     }
-    config.bootstrap_gist_chars = num;
-    saveConfig(config);
+    next = { bootstrap_gist_chars: num };
   } else {
-    console.error(`Unknown configuration key: ${key}`);
+    return unknownKey(key);
   }
+  updateConfig((config) => { Object.assign(config, next); });
+  return { ok: true };
+}
+
+/**
+ * Return a setting to its default by removing it from config.json (#213):
+ * it then follows the default, including later changes to it. An unknown
+ * key writes nothing. Write failures throw.
+ */
+export function unsetConfigSetting(key: string): ConfigChangeResult {
+  if (!isConfigKey(key)) return unknownKey(key);
+  updateConfig((config) => { Object.assign(config, { [key]: defaultConfig[key] }); });
+  return { ok: true };
 }

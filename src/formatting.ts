@@ -143,7 +143,7 @@ export function showHelp(): void {
   console.log('SUBCOMMANDS:');
   console.log(`  ${color.green('alias')}        set <name> <path>, remove <name>, list, rename <old> <new>`);
   console.log(`  ${color.green('confirm')}      set <key>, remove <key>, list`);
-  console.log(`  ${color.green('config')}       set, get, info, examples, completions <bash|zsh|install>`);
+  console.log(`  ${color.green('config')}       set, get, unset, info, examples, completions <bash|zsh|install>`);
   console.log(`  ${color.green('data')}         export <type>, import <type> <file>, reset <type>`);
   console.log();
   console.log(`  Use ${color.yellow('--help')} with any command for options (e.g. ${bin} set --help)`);
@@ -251,6 +251,7 @@ export function showExamples(): void {
   ex(`${b} ${g('config get')} ${c('theme')}`, '# Get a specific setting');
   ex(`${b} ${g('config set')} ${c('theme')} dark`, '# Change theme (default/dark/light)');
   ex(`${b} ${g('config set')} ${c('colors')} false`, '# Disable colored output');
+  ex(`${b} ${g('config unset')} ${c('colors')}`, '# Back to the default');
 
   section('SHELL COMPLETIONS:');
   ex(`${b} ${g('config completions install')}`, '# Auto-detect shell and install');

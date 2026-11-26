@@ -39,7 +39,7 @@ describe('MCP handshake size budget (#126)', () => {
   });
 
   it('registers the expected tool count', () => {
-    expect(registeredTools.length).toBe(19);
+    expect(registeredTools.length).toBe(20);
   });
 
   it('keeps every tool description under the per-tool cap', () => {

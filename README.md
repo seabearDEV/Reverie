@@ -71,7 +71,7 @@ Reverie is a command-line tool and AI agent knowledge base. It stores structured
 - **Shell Tab-Completion**: Full tab-completion for Bash and Zsh (commands, flags, keys, aliases)
 - **Staleness Detection**: Track when entries were last updated, find stale knowledge (`rvr stale`), inline `[untracked]` / `[Nd]` warnings on `get` and `context` output
 - **Schema Validation**: Check entries against recommended namespaces (`rvr lint`)
-- **MCP Server**: 19 tools for any MCP-compatible AI agent (Claude Code, Copilot, ChatGPT, etc.) via the Model Context Protocol
+- **MCP Server**: 20 tools for any MCP-compatible AI agent (Claude Code, Copilot, ChatGPT, etc.) via the Model Context Protocol
 - **Telemetry & Audit**: Track usage patterns with scope-aware telemetry (`rvr stats`) and full audit log with before/after diffs, hit/miss tracking, and per-entry metrics (`rvr audit --detailed`). Includes [net token savings with self-calibrating exploration cost estimates](docs/token-savings.md), miss-path tracking, and per-agent breakdown.
 - **Cross-Session Handoff**: `reverie_context` surfaces a top banner from `context.next_session` so the next session reads where things stand before any other work (auto-staled past 7 days)
 - **Project-Resolution Guardrail**: writes refuse with a structured `PROJECT_UNRESOLVED` error when no `.reverie/` resolves and no explicit scope is given — prevents project-shaped data from silently landing in the global store
@@ -556,6 +556,9 @@ rvr config get theme
 rvr config set theme dark
 rvr config set colors false
 
+# Return a setting to its default
+rvr config unset theme
+
 # Show version, stats, and storage paths
 rvr info
 
@@ -571,6 +574,10 @@ Available settings:
 | `theme`            | `default` / `dark` / `light` | UI theme                                                       |
 | `max_backups`      | integer (default: `10`)      | Number of auto-backups to keep (`0` to disable)                |
 | `import_max_bytes` | integer (default: `52428800` / 50 MB) | Reject import files larger than this (bytes) to prevent OOM |
+| `bootstrap_max_response_bytes` | integer (default: `28672` / 28 KB) | Size budget for `rvr context` / `reverie_context` before entries are demoted or dropped |
+| `bootstrap_gist_chars` | integer (default: `160`) | Longest gist on a bootstrap index line |
+
+`config.json` (in the data directory) stores only the settings you changed; every other setting is its current default, so a default that changes in a later release reaches you. Setting a value equal to the default stores nothing, the same as `rvr config unset`. `rvr config get` always reports the value in effect. Earlier releases wrote every default to the file on first run, so until this install's first config write, a value equal to a default any release shipped, or to today's default, counts as unset. Reading never rewrites `config.json`; the first `config set` or `config unset` stores the cleaned form, and every write lists the settings it stored in `config.format` beside it. If an older Reverie still running (an MCP server started before the upgrade, say) rewrites `config.json` whole, the settings in that list keep their values and any other setting it wrote at an old default follows the current one, with a one-line note; `rvr config unset <key>` returns a setting to the default. `config.format` belongs with `config.json`: copy or restore the two together. A write refuses a `config.json` that does not parse rather than replacing it.
 
 ### Project-Scoped Data
 
@@ -853,8 +860,8 @@ eval "$(rvr config completions bash)"
 | `rvr set <TAB>` | Flags + namespace prefixes (one level at a time) |
 | `rvr alias <TAB>` | Subcommands (`set`, `remove`, `list`, `rename`) |
 | `rvr confirm <TAB>` | Subcommands (`set`, `remove`, `list`) |
-| `rvr config <TAB>` | Subcommands (`set`, `get`, `info`, `examples`, `completions`) |
-| `rvr config set <TAB>` | Config keys (`colors`, `theme`, `max_backups`) |
+| `rvr config <TAB>` | Subcommands (`set`, `get`, `unset`, `info`, `examples`, `completions`) |
+| `rvr config set <TAB>` | Config keys (`colors`, `theme`, `max_backups`, …); `get` and `unset` too |
 | `rvr data <TAB>` | Subcommands (`export`, `import`, `reset`) |
 | `rvr data export <TAB>` | `entries`, `aliases`, `confirm`, `all` |
 
@@ -930,7 +937,7 @@ rvr --debug get server.production
 
 **Confirm subcommands:** `set <key>`, `remove <key>`, `list`
 
-**Config subcommands:** `set <key> <value>`, `get [key]`, `info`, `examples`, `llm-instructions [--surface <mcp\|cli>]`, `completions <bash\|zsh\|install>`
+**Config subcommands:** `set <key> <value>`, `get [key]`, `unset <key>`, `info`, `examples`, `llm-instructions [--surface <mcp\|cli>]`, `completions <bash\|zsh\|install>`
 
 **Data subcommands:** `export <type>`, `import <type> <file>`, `reset <type>`
 
@@ -1031,6 +1038,7 @@ claude mcp add reverie -- bun /absolute/path/to/dist/mcp-server.js
 | `reverie_run` | Execute a stored shell command by key (dry-run, interpolation, confirmation prompts) |
 | `reverie_config_get` | Get one or all configuration settings |
 | `reverie_config_set` | Set a configuration setting (colors, theme, max_backups) |
+| `reverie_config_unset` | Return a configuration setting to its default |
 | `reverie_export` | Export data and/or aliases as JSON text |
 | `reverie_import` | Import data and/or aliases from a JSON string (merge, replace, or preview) |
 | `reverie_reset` | Reset data and/or aliases to empty state |

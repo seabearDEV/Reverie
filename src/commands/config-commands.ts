@@ -1,5 +1,5 @@
 import { color, resetColorCache } from '../formatting';
-import { loadConfig, getConfigSetting, setConfigSetting } from '../config';
+import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from '../config';
 import { printError } from './helpers';
 import { debug } from '../utils/debug';
 import { getBinaryName } from '../utils/binaryName';
@@ -53,25 +53,74 @@ export function handleConfig(setting?: string, value?: string, options?: { list?
   }
 
   // If both setting and value provided, update the setting
-  setConfigSetting(setting, value);
+  const result = setConfigSetting(setting, value);
+  if (!result.ok) {
+    printError(result.message, result.code);
+    return undefined;
+  }
   resetColorCache();
   console.log(`Updated ${color.green(setting)} to: ${value}`);
   return { [setting]: value };
 }
 
+const isConfigKey = (setting: string): boolean => (VALID_CONFIG_KEYS as readonly string[]).includes(setting);
+
+/**
+ * A config write that failed: the lock was busy for the whole wait (#261), or
+ * config.json does not parse (#213). Its message is the whole story — one
+ * line, IO in both modes (#203: printError routes to the envelope in JSON mode).
+ */
+function printWriteFailure(error: unknown): void {
+  printError(error instanceof Error ? error.message : String(error), 'IO');
+}
+
 export function configSet(setting: string, value: string): { key: string; value: string; previous: unknown } | undefined {
   debug('configSet called', { setting, value });
+  if (!isConfigKey(setting)) {
+    printError(`Setting '${setting}' does not exist`, 'NOT_FOUND');
+    return undefined;
+  }
   try {
     const previous = getConfigSetting(setting);
-
-    setConfigSetting(setting, value);
+    // A rejected value writes nothing and fails the command (#273).
+    const result = setConfigSetting(setting, value);
+    if (!result.ok) {
+      printError(result.message, result.code);
+      return undefined;
+    }
     resetColorCache();
     console.log(`Changing ${setting} from ${previous} to ${value}`);
     console.log(`${setting} set to ${value}`);
     return { key: setting, value, previous };
   } catch (error) {
-    // One code in both modes (#203): printError routes to the envelope in JSON mode.
-    printError(`Error setting config ${setting}: ${String(error)}`, 'IO');
+    printWriteFailure(error);
+    return undefined;
+  }
+}
+
+/**
+ * `config unset <key>` (#213): remove the setting from config.json so it
+ * follows the default again, including later changes to the default.
+ */
+export function configUnset(setting: string): { key: string; value: unknown; previous: unknown } | undefined {
+  debug('configUnset called', { setting });
+  if (!isConfigKey(setting)) {
+    printError(`Setting '${setting}' does not exist`, 'NOT_FOUND');
+    return undefined;
+  }
+  try {
+    const previous = getConfigSetting(setting);
+    const result = unsetConfigSetting(setting);
+    if (!result.ok) {
+      printError(result.message, result.code);
+      return undefined;
+    }
+    resetColorCache();
+    const value = getConfigSetting(setting);
+    console.log(`${setting} reset to its default: ${String(value)} (was ${String(previous)})`);
+    return { key: setting, value, previous };
+  } catch (error) {
+    printWriteFailure(error);
     return undefined;
   }
 }

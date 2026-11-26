@@ -717,6 +717,16 @@ configCommand
     );
   });
 
+configCommand
+  .command('unset <key>')
+  .description('Return a configuration value to its default')
+  .action(async (key: string) => {
+    await withCliInstrumentation(
+      { tool: 'reverie_config_unset', key, scope: 'global', params: { key } },
+      () => commands.configUnset(key)
+    );
+  });
+
 // Config subcommands: info, examples, completions
 configCommand
   .command('info')

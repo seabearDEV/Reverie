@@ -303,7 +303,8 @@ vi.mock('../config', () => ({
   DEFAULT_BOOTSTRAP_MAX_RESPONSE_BYTES: 28 * 1024,
   loadConfig: vi.fn(() => ({ ...mockConfig })),
   getConfigSetting: vi.fn((key: string) => mockConfig[key] ?? null),
-  setConfigSetting: vi.fn((key: string, value: any) => { mockConfig[key] = value; }),
+  setConfigSetting: vi.fn((key: string, value: any) => { mockConfig[key] = value; return { ok: true }; }),
+  unsetConfigSetting: vi.fn((key: string) => { delete mockConfig[key]; return { ok: true }; }),
   VALID_CONFIG_KEYS: ['colors', 'theme'],
   VALID_THEMES: ['default', 'dark', 'light'],
 }));
@@ -325,7 +326,7 @@ vi.mock('../utils/telemetry', () => ({
   appendMissPath: vi.fn(() => Promise.resolve()),
   getSessionId: vi.fn(() => 'mock-session'),
   extractNamespace: vi.fn((key?: string) => key ? key.split('.')[0] : '*'),
-  keyIsEntryKey: vi.fn((tool: string) => tool !== 'reverie_config_get' && tool !== 'reverie_config_set'),
+  keyIsEntryKey: vi.fn((tool: string) => !['reverie_config_get', 'reverie_config_set', 'reverie_config_unset'].includes(tool)),
 }));
 
 vi.mock('../utils/audit', () => ({

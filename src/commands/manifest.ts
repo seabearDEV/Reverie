@@ -29,7 +29,7 @@ export interface Manifest {
 }
 
 /**
- * Static MCP-tool → CLI-command map. The 19 MCP tools and their CLI
+ * Static MCP-tool → CLI-command map. The 20 MCP tools and their CLI
  * equivalents (see arch.mcp / arch.cli). Lets an agent that knows one surface
  * translate to the other.
  */
@@ -50,6 +50,7 @@ export const MCP_CLI_MAP: Record<string, string> = {
   reverie_reset: 'data reset',
   reverie_config_get: 'config get',
   reverie_config_set: 'config set',
+  reverie_config_unset: 'config unset',
   reverie_stats: 'stats',
   reverie_audit: 'audit',
   reverie_stale: 'stale',
