@@ -32,6 +32,8 @@ describe('a write that cannot get the store lock (#261)', () => {
     ['set', ['set', '-G', 'k', 'v2']],
     ['rm', ['rm', '-G', 'k', '-f']],
     ['confirm set', ['confirm', 'set', '-G', 'k']],
+    ['rename', ['rename', '-G', 'k', 'k2']],
+    ['rename --set-alias', ['rename', '-G', 'k', 'k2', '--set-alias', 'k2a']],
     ['alias remove', ['alias', 'remove', '-G', 'al']],
   ])('%s: one line saying nothing was written, exit 1; --json says IO', (_name, args) => {
     const text = rvr(...args);
@@ -45,11 +47,14 @@ describe('a write that cannot get the store lock (#261)', () => {
     expect((JSON.parse(json.stdout) as { error: { code: string } }).error.code).toBe('IO');
   }, 30000);
 
-  it('reverie_set over MCP: an error result with the same message', () => {
+  it.each([
+    ['reverie_set', { key: 'k', value: 'v3', scope: 'global' }],
+    ['reverie_rename', { oldKey: 'k', newKey: 'k2', scope: 'global' }],
+  ])('%s over MCP: an error result with the same message', (tool, args) => {
     const lines = [
       { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } } },
       { jsonrpc: '2.0', method: 'notifications/initialized' },
-      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'reverie_set', arguments: { key: 'k', value: 'v3', scope: 'global' } } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: tool, arguments: args } },
     ].map(m => JSON.stringify(m)).join('\n') + '\n';
     const r = spawnSync('bun', ['dist/index.js', 'mcp-server'], { env: env(), input: lines, timeout: 15000 });
     const reply = r.stdout.toString().trim().split('\n').map(l => { try { return JSON.parse(l) as { id?: number; result?: { isError?: boolean; content: { text: string }[] } }; } catch { return {}; } })
@@ -59,7 +64,7 @@ describe('a write that cannot get the store lock (#261)', () => {
     // The code reaches the telemetry row, as on the CLI.
     const rows = fs.readFileSync(path.join(dataDir, 'telemetry.jsonl'), 'utf8').trim().split('\n')
       .map(l => JSON.parse(l) as { tool?: string; src?: string; errorCode?: string });
-    const row = rows.reverse().find(x => x.tool === 'reverie_set' && x.src === 'mcp');
+    const row = rows.reverse().find(x => x.tool === tool && x.src === 'mcp');
     expect(row?.errorCode).toBe('IO');
   }, 30000);
 });

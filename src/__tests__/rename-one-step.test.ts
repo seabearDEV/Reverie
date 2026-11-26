@@ -289,8 +289,10 @@ describe('#259: a lock held by another process at any step (race 2)', () => {
     expect(error).toBeUndefined();
     expect(process.exitCode).toBe(1);
     const said = (console.error as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n');
-    expect(said).toContain('Failed to rename entry');
+    // #261: the one-line refusal every write gives, not "Failed to rename entry".
     expect(said).toContain('Unable to acquire lock');
+    expect(said).toContain('nothing was written');
+    expect(said).not.toContain('Failed to');
     expect(entryKeys(onDisk())).toEqual(['g.x']);
   }, HELD_LOCK_TEST_MS);
 });
