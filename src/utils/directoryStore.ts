@@ -32,6 +32,7 @@ import { flattenObject, expandFlatKeys } from './objectPath';
 import { debug } from './debug';
 import { StoreUnreadableError, UnreadableFile, classifyUnparseable, keysCollide, nameCollisionError } from './unreadable';
 import { KeyCollisionError, collidesWithAny } from './keyCollision';
+import { toStoreWriteError } from './storeWriteError';
 
 // ── Test guard (#274) ──────────────────────────────────────────────────
 
@@ -468,6 +469,37 @@ function writeEpoch(dir: string, epoch: number): void {
 }
 
 /**
+ * Run a commit's steps with the epoch odd, and write it even again on every
+ * way out of them (#262): a refusal, a failed write, a failed delete or list
+ * write after the entries are in, an error from the caller's change. Writing
+ * the even value back at each `throw` missed every exit added after it, and
+ * a store left odd sends every reader through its retries to a snapshot it
+ * cannot trust, until the next write. Under the store lock. When the commit
+ * failed, a failure to write the even value is logged and the commit's own
+ * error is the one thrown. `committed` runs after the even value is written,
+ * only when the commit succeeded.
+ */
+function underOddEpoch(dir: string, commit: () => void, committed?: () => void): void {
+  const startEpoch = readEpoch(dir);
+  const inProgressEpoch = startEpoch + (startEpoch % 2 === 0 ? 1 : 2);
+  writeEpoch(dir, inProgressEpoch);
+  let failure: { err: unknown } | undefined;
+  try {
+    commit();
+  } catch (err) {
+    failure = { err };
+  }
+  try {
+    writeEpoch(dir, inProgressEpoch + 1);
+  } catch (err) {
+    if (!failure) throw err;
+    debug(`Could not write epoch ${inProgressEpoch + 1} to ${dir} after a failed commit: ${String(err)}`);
+  }
+  if (failure) throw failure.err;
+  committed?.();
+}
+
+/**
  * Git-ignore rules for per-clone store state, seeded to `<store>/.gitignore`
  * (#187). `.reverie/` is designed to be committed, but `_epoch.json` is a
  * local seqlock counter bumped on every write — committing it made every
@@ -538,6 +570,12 @@ function shallowEquals<T extends Record<string, unknown>>(a: T, b: T): boolean {
 }
 
 // ── The factory ────────────────────────────────────────────────────────
+
+/** How far a failed commit got (#271): whether `fn` threw, and whether a file may have changed. */
+interface CommitProgress {
+  changed: boolean;
+  fnFailure?: { err: unknown };
+}
 
 /**
  * Create a file-per-entry directory-backed ScopedStore.
@@ -890,47 +928,57 @@ export function createDirectoryStore(
    * re-entrant (a nested write waits for it and fails), and the epoch is odd
    * (a nested load spins in its seqlock retry). If `fn` throws, nothing is
    * written and the epoch goes back to even.
+   *
+   * A failure of the store's own file operations is a StoreWriteError
+   * (#271), naming the file; what `fn` throws is thrown as it is.
    */
   function update(fn: (current: UnifiedData) => UnifiedData | null): void {
+    const progress: CommitProgress = { changed: false };
+    try {
+      commitUpdate(fn, progress);
+    } catch (err) {
+      dirMtimeMs = -1;   // the caches may no longer match the directory: rescan
+      if (progress.fnFailure && progress.fnFailure.err === err) throw err;
+      throw toStoreWriteError(err, !progress.changed);
+    }
+  }
+
+  /** update()'s body. `progress` says whether `fn` threw and whether a file may have changed. */
+  function commitUpdate(fn: (current: UnifiedData) => UnifiedData | null, progress: CommitProgress): void {
     const dir = getDirPath();
     assertNotTestCheckout(dir);
     ensureDir();
     ensureStoreSeeds(dir);
 
-    withStoreLock(dir, () => {
-      // 0. Begin commit: bump epoch to the next odd value. Readers that
-      //    observe an odd epoch loop in their seqlock retry until we finish.
-      //    readEpoch() returns 0 if the file is missing, so the first save
-      //    on a fresh store transitions 0 → 1 → 2. Ahead of the scan, so a
-      //    reader that overlaps the scan retries.
-      const startEpoch = readEpoch(dir);
-      const inProgressEpoch = startEpoch + (startEpoch % 2 === 0 ? 1 : 2);
-      writeEpoch(dir, inProgressEpoch);
+    // 0. Begin commit: bump epoch to the next odd value. Readers that
+    //    observe an odd epoch loop in their seqlock retry until we finish.
+    //    readEpoch() returns 0 if the file is missing, so the first save
+    //    on a fresh store transitions 0 → 1 → 2. Ahead of the scan, so a
+    //    reader that overlaps the scan retries. Every way out of the steps
+    //    below writes the even value back (#262).
+    withStoreLock(dir, () => underOddEpoch(dir, () => {
+      // 1. The store as it stands, read under the lock. A full scan: the
+      //    directory-mtime fast skip trusts a timestamp, and on a
+      //    filesystem with coarse mtimes another process's write can
+      //    share one with our last scan. Sidecars re-read from disk for
+      //    the same reason (see rereadSidecar).
+      dirMtimeMs = -1;
+      scanAndSync();
+      aliasesCache = rereadSidecar<Record<string, string>>(path.join(dir, ALIASES_FILE), 'aliases');
+      confirmCache = rereadSidecar<Record<string, true>>(path.join(dir, CONFIRM_FILE), 'confirm');
 
+      // 2. The caller's change, decided from that state.
       let data: UnifiedData | null;
       try {
-        // 1. The store as it stands, read under the lock. A full scan: the
-        //    directory-mtime fast skip trusts a timestamp, and on a
-        //    filesystem with coarse mtimes another process's write can
-        //    share one with our last scan. Sidecars re-read from disk for
-        //    the same reason (see rereadSidecar).
-        dirMtimeMs = -1;
-        scanAndSync();
-        aliasesCache = rereadSidecar<Record<string, string>>(path.join(dir, ALIASES_FILE), 'aliases');
-        confirmCache = rereadSidecar<Record<string, true>>(path.join(dir, CONFIRM_FILE), 'confirm');
-
-        // 2. The caller's change, decided from that state.
         data = fn(snapshot());
       } catch (err) {
-        writeEpoch(dir, inProgressEpoch + 1);
+        progress.fnFailure = { err };
         throw err;
       }
 
-      if (data === null) {
-        writeEpoch(dir, inProgressEpoch + 1);
-        refreshDirToken(dir);
-        return;
-      }
+      // Nothing to write: the epoch goes back to even, and the scan above
+      // makes the directory token current.
+      if (data === null) return;
 
       // 3. Compute deltas, from the new entries flattened to leaves.
       const newFlat = flattenObject(data.entries);
@@ -959,8 +1007,7 @@ export function createDirectoryStore(
       //     loaded as {}, so any change to it looks like a rewrite from
       //     empty. Either write would discard both sides of a git conflict.
       //     Decided from a fresh read of each target, not from the scan.
-      //     All-or-nothing: checked before any delta is applied. The epoch
-      //     goes back to even first — nothing here has touched an entry.
+      //     All-or-nothing: checked before any delta is applied.
       const refused: UnreadableFile[] = [];
       for (const [key] of toWrite) {
         const broken = probeEntryFile(entryFilePath(dir, key), key);
@@ -974,10 +1021,7 @@ export function createDirectoryStore(
         const broken = readSidecar(confirmPath, 'confirm').unreadable;
         if (broken) refused.push(broken);
       }
-      if (refused.length > 0) {
-        writeEpoch(dir, inProgressEpoch + 1);
-        throw new StoreUnreadableError(refused, 'write');
-      }
+      if (refused.length > 0) throw new StoreUnreadableError(refused, 'write');
 
       // 3c. Nor a write to an ancestor or a descendant of an unreadable entry
       //     (#215). The store cannot see that entry, so `a.b.c` would land
@@ -987,10 +1031,7 @@ export function createDirectoryStore(
       //     collision from the file names and returns false.
       for (const [key] of toWrite) {
         for (const u of unreadableEntries.values()) {
-          if (u.file.key !== undefined && keysCollide(key, u.file.key)) {
-            writeEpoch(dir, inProgressEpoch + 1);
-            throw nameCollisionError(key, u.file);
-          }
+          if (u.file.key !== undefined && keysCollide(key, u.file.key)) throw nameCollisionError(key, u.file);
         }
       }
 
@@ -1002,10 +1043,7 @@ export function createDirectoryStore(
       for (const [key] of toWrite) {
         if (entryCache.has(key)) continue;
         const twin = foldTwin(dir, key, entryCache.keys());
-        if (twin !== undefined && !deleting.has(twin)) {
-          writeEpoch(dir, inProgressEpoch + 1);
-          throw new KeyCollisionError({ kind: 'fold', key, existing: [twin] });
-        }
+        if (twin !== undefined && !deleting.has(twin)) throw new KeyCollisionError({ kind: 'fold', key, existing: [twin] });
       }
 
       // 4. Apply deltas, every write before any delete (#259). A write can
@@ -1074,6 +1112,7 @@ export function createDirectoryStore(
       };
       let confirmTouched = false;
       let aliasesTouched = false;
+      progress.changed = true;   // from here a file may have changed, until the undo says otherwise
       try {
         if (confirmGains) {
           atomicWriteFileSync(confirmPath, serializeSidecar(unionConfirm));
@@ -1107,6 +1146,7 @@ export function createDirectoryStore(
         // one's bytes. Undone in write order, the earlier write was taken
         // back first and then rewritten from the later one's copy.
         let undoFailed = false;
+        let sidecarUndoFailed = false;
         for (let i = written.length - 1; i >= 0; i--) {
           const [key] = written[i];
           const prior = replaced[i];
@@ -1123,6 +1163,7 @@ export function createDirectoryStore(
             if (priorAliases !== undefined) atomicWriteFileSync(aliasPath, serializeSidecar(priorAliases));
             else fs.unlinkSync(aliasPath);
           } catch (undo) {
+            sidecarUndoFailed = true;
             debug(`Could not undo the alias map: ${String(undo)}`);
           }
         }
@@ -1130,11 +1171,12 @@ export function createDirectoryStore(
           try {
             atomicWriteFileSync(confirmPath, serializeSidecar(oldConfirm));
           } catch (undo) {
+            sidecarUndoFailed = true;
             debug(`Could not undo the confirmation list: ${String(undo)}`);
           }
         }
-        writeEpoch(dir, inProgressEpoch + 1);
-        dirMtimeMs = -1;   // the caches no longer match the directory: rescan
+        // Every file put back: the store is as it was (#271's message says so).
+        progress.changed = undoFailed || sidecarUndoFailed;
         throw err;
       }
       for (const [key, wrapper] of written) {
@@ -1146,6 +1188,12 @@ export function createDirectoryStore(
       // is not deleted: that would delete what was just written.
       const writtenFiles = toDelete.length > 0 ? new Set(written.map(([k]) => fileIdentity(entryFilePath(dir, k)))) : new Set<string | undefined>();
       writtenFiles.delete(undefined);
+      // #271: a file that cannot be deleted (immutable, no permission) was
+      // logged and skipped, and the command reported the entry removed. The
+      // rest are still deleted; then the commit fails, naming the first, and
+      // the list keeps any flag it would have lost after them (step 5): the
+      // entry is still there, and a flag too many gates nothing that is gone.
+      let deleteFailure: { err: unknown } | undefined;
       for (const key of toDelete) {
         const filePath = entryFilePath(dir, key);
         if (!writtenFiles.has(fileIdentity(filePath))) {
@@ -1154,10 +1202,18 @@ export function createDirectoryStore(
           } catch (err) {
             if (!isENOENT(err)) {
               debug(`Failed to delete entry file for ${key}: ${String(err)}`);
+              deleteFailure ??= { err };
+              continue;   // still on disk: it stays cached
             }
           }
         }
         entryCache.delete(key);
+      }
+      if (deleteFailure) {
+        // Neither sidecar cache can be trusted to match the disk now: re-read both.
+        aliasesCache = null;
+        confirmCache = null;
+        throw deleteFailure.err;
       }
 
       // 5. Sidecar caches; the final confirmation list when it lost flags.
@@ -1171,16 +1227,16 @@ export function createDirectoryStore(
         confirmCache = { data: { ...data.confirm }, mtimeMs: fs.statSync(confirmPath).mtimeMs };
       }
 
-      // 6. End commit: bump epoch to the next even value. Any reader that
-      //    snapshots the epoch from here on will see a stable, committed state.
-      writeEpoch(dir, inProgressEpoch + 1);
-
+      // 6. End commit: underOddEpoch bumps the epoch to the next even
+      //    value. Any reader that snapshots the epoch from then on will see
+      //    a stable, committed state.
+    }, () => {
       // 7. Refresh the dir-mtime fast-skip token. Our own writes bumped the
       //    dir mtime, and without this the next load() always pays a full
       //    rescan. Safe here: scanAndSync ran under this lock (step 1) and
-      //    every later mutation was ours.
+      //    every later mutation was ours, the even epoch included.
       refreshDirToken(dir);
-    });
+    }));
   }
 
   /**
@@ -1301,6 +1357,17 @@ export function createDirectoryStore(
    * the way (#224). It used to restructure there, silently removing them.
    */
   function setOne(key: string, value: CodexValue, updated: number): boolean {
+    const progress: CommitProgress = { changed: false };
+    try {
+      return writeOne(key, value, updated, progress);
+    } catch (err) {
+      // #271: a file operation the filesystem refused, named in one line.
+      throw toStoreWriteError(err, !progress.changed);
+    }
+  }
+
+  /** setOne()'s body. `progress.changed`: the entry file was written. */
+  function writeOne(key: string, value: CodexValue, updated: number, progress: CommitProgress): boolean {
     if (!isValidEntryKey(key)) {
       throw new Error(`Invalid store key: ${JSON.stringify(key)}`);
     }
@@ -1381,16 +1448,16 @@ export function createDirectoryStore(
 
       // 0. Begin commit: bump epoch odd. Mirrors save()'s seqlock contract so
       //    concurrent readers see the in-progress state and retry their scan.
-      const startEpoch = readEpoch(dir);
-      const inProgressEpoch = startEpoch + (startEpoch % 2 === 0 ? 1 : 2);
-      writeEpoch(dir, inProgressEpoch);
-
-      try {
+      //    6. End commit: underOddEpoch bumps it even on every way out, so a
+      //    partially-failed write still leaves the seqlock in a stable state
+      //    for readers (#262).
+      underOddEpoch(dir, () => {
         const wrapper: EntryWrapper = {
           value,
           meta: { created: existingCreated ?? updated, updated },
         };
         atomicWriteFileSync(filePath, serializeEntryWrapper(wrapper));
+        progress.changed = true;
 
         // Refresh the per-entry cache so a subsequent load() doesn't re-read
         // a file we just wrote ourselves.
@@ -1403,11 +1470,7 @@ export function createDirectoryStore(
         } catch (err) {
           debug(`setOne(${key}) post-write stat failed: ${String(err)}`);
         }
-      } finally {
-        // 6. End commit: bump epoch even. In a `finally` so a partially-failed
-        //    write still leaves the seqlock in a stable state for readers.
-        writeEpoch(dir, inProgressEpoch + 1);
-      }
+      });
 
       if (cacheWasCurrent) {
         try {

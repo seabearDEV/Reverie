@@ -2,6 +2,7 @@ import { color } from './formatting';
 import { getNestedValue, setNestedValue, removeNestedValue, flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 import { KeyCollisionError, assertKeyWritable, findCollidingPairs } from './utils/keyCollision';
 import { LockTimeoutError } from './utils/fileLock';
+import { StoreWriteError, isStoreIoError } from './utils/storeWriteError';
 import { CodexData, CodexValue } from './types';
 import { debug } from './utils/debug';
 import { Scope, loadEntries, saveEntries, updateEntries, updateStore, loadEntriesMerged, findProjectFile, getEntryFast, setEntryFast } from './store';
@@ -61,7 +62,8 @@ export function handleError(message: string, error: unknown, context?: string): 
 
   // #261: another process held the store lock for the whole wait. Nothing
   // was written, and the message says so and what to do: one line, IO.
-  if (error instanceof LockTimeoutError) {
+  // #271: so does a write the filesystem refused, naming the file and why.
+  if (isStoreIoError(error)) {
     if (isJsonMode()) {
       failJson('IO', errorText);
     } else {
@@ -239,6 +241,9 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
     // A writer held the store lock for the whole wait: the slow path would
     // wait on the same lock again and double the time to the same refusal.
     if (err instanceof LockTimeoutError) throw err;
+    // #271: a file the filesystem would not write. The slow path writes the
+    // same file, and fails the same way.
+    if (err instanceof StoreWriteError) throw err;
     debug(`setValue fast-path failed, falling through: ${String(err)}`);
   }
   updateEntries((entries, meta) => {
