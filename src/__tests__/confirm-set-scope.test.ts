@@ -282,6 +282,38 @@ describe('where a confirmation flag is listed (#255, #256, #257)', () => {
       expect(projectFlags()).toEqual([]);
     });
 
+    it.each([
+      ['no lock file', false],
+      ['a stale lock left there', true],
+    ])('a data directory that cannot be written, so neither can the global lock (%s): the project list, with the warning', (_name, staleLock) => {
+      // The lock file sits beside the store directory: a read-only data
+      // directory takes the lock with it. A stale one there cannot be
+      // cleared, and waiting for it ended in a lock timeout, nothing written.
+      expect(rvrIn('outside', 'set', '-G', 'ops.deploy', touch('deploy')).status).toBe(0);
+      if (staleLock) {
+        const lock = path.join(dataDir, 'store.lock');
+        fs.writeFileSync(lock, '99999');
+        const old = new Date(Date.now() - 60_000);
+        fs.utimesSync(lock, old, old);
+      }
+      readOnly([dataDir], () => {
+        const r = rvr('confirm', 'set', 'ops.deploy');
+        noStack(r.stdout + r.stderr);
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain('The global store cannot be written, so the flag is in this project\'s list');
+        expect(projectFlags()).toEqual(['ops.deploy']);
+        const run = rvr('run', 'ops.deploy');
+        expect(run.status).toBe(1);
+        expect(run.stderr).toContain(REFUSAL);
+        // With -G: refused in one line, nothing written.
+        const viaG = rvr('confirm', 'set', '-G', 'ops.deploy');
+        expect(viaG.status).toBe(1);
+        noStack(viaG.stdout + viaG.stderr);
+      });
+      expect(ran('deploy')).toBe(false);
+      expect(globalFlags()).toEqual([]);
+    }, SLOW_TEST_MS);
+
     it.skipIf(process.platform !== 'darwin')('a global confirmation list that cannot be replaced (chflags uchg): the project list, with the warning', () => {
       expect(rvrIn('outside', 'set', '-G', 'ops.deploy', 'true').status).toBe(0);
       expect(rvrIn('outside', 'set', '-G', 'g.other', 'true').status).toBe(0);

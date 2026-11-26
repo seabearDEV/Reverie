@@ -1,4 +1,7 @@
+import fs from 'fs';
+import path from 'path';
 import { debug } from './utils/debug';
+import { getGlobalStoreDirPath } from './utils/paths';
 import { Scope, loadConfirmMap, saveConfirmMap, updateConfirmMap, loadConfirmMapMerged, updateUnderBothLocks, inspectBothStores, findProjectFile, type LockedStore, type UnifiedData } from './store';
 import { resolveScopeForWrite } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
@@ -111,15 +114,22 @@ export function setConfirm(key: string, scope?: Scope  ): FlagSet | false {
     // The last attempt writes the global list whatever it finds: a flag
     // there gates the entry in every project, wherever it is by then.
     const target = attempt >= 2 ? 'global' : plan.result.scope;
+    // The global store cannot be written: the flag of an entry the project
+    // asked to flag goes in its own list, said so by the caller. Asked for
+    // with -G, or an unreadable list (STORE_UNREADABLE), it fails as before.
+    const fallback = target === 'global' && requested === 'project' && plan.hasProject;
     let outcome: FlagSet | false | 'replan';
-    try {
-      outcome = writeFlag(key, requested, target);
-    } catch (err) {
-      // The global store cannot be written: the flag of an entry the project
-      // asked to flag goes in its own list, said so by the caller. Asked for
-      // with -G, or an unreadable list (STORE_UNREADABLE), it fails as before.
-      if (target !== 'global' || requested !== 'project' || !isUnwritable(err)) throw err;
+    if (fallback && !globalLockDirWritable()) {
+      // Its lock cannot be had at all — nor a stale one cleared — so the
+      // global write would only wait the full lock timeout and fail.
       outcome = writeFlag(key, requested, 'project', true);
+    } else {
+      try {
+        outcome = writeFlag(key, requested, target);
+      } catch (err) {
+        if (!fallback || !isUnwritable(err)) throw err;
+        outcome = writeFlag(key, requested, 'project', true);
+      }
     }
     if (outcome !== 'replan') return done(key, outcome);
   }
@@ -128,6 +138,29 @@ export function setConfirm(key: string, scope?: Scope  ): FlagSet | false {
 function done(key: string, result: FlagSet | false): FlagSet | false {
   if (result) debug(`Confirm set for key: "${key}" as "${result.key}" (${result.scope}${result.moved ? `, ${result.moved}` : ''})`);
   return result;
+}
+
+/**
+ * Can this process take the global store's lock? The lock file sits beside
+ * the store directory (`<store>.lock`), so where that directory cannot be
+ * written neither can the lock, and a stale one left there cannot be cleared:
+ * the write waits out the lock timeout and fails as if another process held
+ * it. A directory not made yet is made by the write.
+ */
+function globalLockDirWritable(): boolean {
+  let lockDir: string;
+  try {
+    lockDir = path.dirname(path.resolve(getGlobalStoreDirPath()));
+  } catch {
+    return true;   // no global store to ask about: let the write say what is wrong
+  }
+  if (!fs.existsSync(lockDir)) return true;
+  try {
+    fs.accessSync(lockDir, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** A write refused by the filesystem for want of permission: a read-only directory or file. */
@@ -169,8 +202,9 @@ function writeFlag(key: string, requested: 'project' | 'global', target: 'projec
 }
 
 /**
- * Which list the flag of `key` goes in, under which name, and whether it is
- * listed there already; undefined when `key` names no entry in either store.
+ * Which list the flag of `key` goes in, under which name, whether it is
+ * listed there already, and whether there is a project store to fall back
+ * to; undefined when `key` names no entry in either store.
  * See setConfirm for the rules.
  */
 function planFlag(
@@ -178,7 +212,7 @@ function planFlag(
   requested: 'project' | 'global',
   project: LockedStore | undefined,
   global: LockedStore | undefined,
-): { result: FlagSet; listed: boolean } | undefined {
+): { result: FlagSet; listed: boolean; hasProject: boolean } | undefined {
   const inProject = project ? howNamed(project, key) : 'no';
   const inGlobal = global ? howNamed(global, key) : 'no';
   if (inProject === 'no' && inGlobal === 'no') return undefined;
@@ -198,6 +232,7 @@ function planFlag(
   return {
     result: { key: spelling, scope, ...(moved ? { moved } : {}) },
     listed: target?.data.confirm[spelling] === true,
+    hasProject: project !== undefined,
   };
 }
 
