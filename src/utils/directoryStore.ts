@@ -1138,7 +1138,6 @@ export function createDirectoryStore(
       };
       let confirmTouched = false;
       let aliasesTouched = false;
-      progress.changed = true;   // from here a file may have changed, until the undo says otherwise
       try {
         if (confirmGains) {
           atomicWriteFileSync(confirmPath, serializeSidecar(unionConfirm));
@@ -1205,6 +1204,13 @@ export function createDirectoryStore(
         progress.changed = undoFailed || sidecarUndoFailed;
         throw err;
       }
+      // #271: from here the message may not say "Nothing was written" —
+      // unless this commit changed nothing yet, and then a failed delete
+      // leaves the store as it was. A sidecar written where there was none,
+      // with nothing in it, changes nothing: a missing one reads as empty.
+      if (written.length > 0 || confirmTouched
+        || (aliasesTouched && !shallowEquals(priorAliases ?? {}, data.aliases))
+        || (finalConfirmUndoable && !shallowEquals(oldConfirm, data.confirm))) progress.changed = true;
       for (const [key, wrapper] of written) {
         entryCache.set(key, { wrapper, mtimeMs: fs.statSync(entryFilePath(dir, key)).mtimeMs });
         unreadableEntries.delete(key);
@@ -1225,6 +1231,7 @@ export function createDirectoryStore(
         if (!writtenFiles.has(fileIdentity(filePath))) {
           try {
             fs.unlinkSync(filePath);
+            progress.changed = true;
           } catch (err) {
             if (!isENOENT(err)) {
               debug(`Failed to delete entry file for ${key}: ${String(err)}`);

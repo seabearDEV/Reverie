@@ -80,10 +80,29 @@ describe('a commit that fails partway leaves the epoch even (#262)', () => {
 
     expect(err).toBeInstanceOf(StoreWriteError);
     expect((err as Error).message).toMatch(/^Cannot remove .*a\.json: /);
-    expect((err as Error).message).not.toContain('Nothing was written');
+    // Nothing else was to change, and the list was left as it was: the
+    // store is as it was, and the message says so.
+    expect((err as Error).message).toMatch(/\. Nothing was written\.$/);
     expect(epochOf(dir) % 2).toBe(0);
     expect(JSON.parse(fs.readFileSync(path.join(dir, '_confirm.json'), 'utf8'))).toEqual({ a: true });
     expect(store.load().confirm).toEqual({ a: true });
+  });
+
+  it('a delete that fails after a write went through: no "Nothing was written"', () => {
+    const dir = path.join(tmpRoot, 'store');
+    const store = makeStore(dir);
+    store.save({ entries: { a: '1', k: 'v' }, aliases: {}, confirm: {} });
+
+    const err = caught(() => store.update(current => {
+      fs.rmSync(path.join(dir, 'a.json'));
+      fs.mkdirSync(path.join(dir, 'a.json'));
+      fs.writeFileSync(path.join(dir, 'a.json', 'x'), '');
+      return { ...current, entries: { k: 'v2' } };
+    }));
+
+    expect((err as Error).message).toMatch(/^Cannot remove .*a\.json: /);
+    expect((err as Error).message).not.toContain('Nothing was written');
+    expect(store.load().entries.k).toBe('v2');
   });
 
   it('a key the store cannot name as a file, found after the change is made', () => {
@@ -203,7 +222,7 @@ describe('a store write the filesystem refuses, on every surface (#271)', () => 
       expect(r.status).toBe(1);
       expect(r.stdout).not.toContain('removed successfully');
       expect(r.stderr.trim().split('\n')).toHaveLength(1);
-      expect(r.stderr).toMatch(/Cannot remove .*k\.json: operation not permitted.*\(EPERM\)/);
+      expect(r.stderr).toMatch(/Cannot remove .*k\.json: operation not permitted.*\(EPERM\)\. Nothing was written\./);
       expect(lastRow('telemetry.jsonl', 'reverie_remove')?.errorCode).toBe('IO');
     } finally {
       spawnSync('chflags', ['nouchg', file]);
