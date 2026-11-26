@@ -90,6 +90,37 @@ describe('CLI Integration Tests', () => {
     expect(status).toBe(1);
     expect(stderr).toContain('Project resolution failed');
     expect(stderr).toContain('RVR_NO_PROJECT');
-    expect(stderr).toContain('--scope global');
+    // The hint names the real flag; --scope is not an option (#249).
+    expect(stderr).toContain('-G / --global (CLI)');
+    expect(stderr).not.toContain('--scope global');
+    // The refusal is its own message, not "Failed to set entry::" before it.
+    expect(stderr).not.toContain('Failed to set entry');
+  });
+
+  // #249: the confirm and alias verbs reach the refusal through the CLI
+  // wrapper, which re-threw it in text mode — a Bun source excerpt and a
+  // stack instead of the message.
+  it.each([
+    ['confirm set', 'confirm set project.gated'],
+    ['confirm remove', 'confirm remove project.gated'],
+    ['alias set', 'alias set pg project.gated'],
+    ['alias remove', 'alias remove pg'],
+  ])('%s outside a project prints the refusal, not a stack trace (#249)', (_name, args) => {
+    run('set --force project.gated "v"');
+    // run() puts --global after the group name; alias takes -G on the leaf.
+    execSync('bun dist/index.js alias set -G pg project.gated', execOpts);
+    let stderr = '';
+    let status: number | null = null;
+    try {
+      execSync(`bun dist/index.js ${args}`, { ...execOpts, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err: unknown) {
+      const e = err as { stderr?: Buffer; status?: number };
+      stderr = e.stderr?.toString() ?? '';
+      status = e.status ?? null;
+    }
+    expect(status).toBe(1);
+    expect(stderr).toContain('Project resolution failed');
+    expect(stderr).not.toContain('ProjectResolutionError');
+    expect(stderr).not.toMatch(/^\s+at /m);
   });
 });

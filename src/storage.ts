@@ -48,6 +48,16 @@ export function handleError(message: string, error: unknown, context?: string): 
     return;
   }
 
+  // #99: a refused auto-scope write explains itself in full — the resolver's
+  // steps and the choices. Prefixing "Failed to set entry:" only buries it
+  // (and printed a doubled colon). JSON mode keeps its envelope below.
+  if (error instanceof ProjectResolutionError && !isJsonMode()) {
+    recordErrorCode('PROJECT_UNRESOLVED');
+    console.error(`${color.red('✗ ')}${errorText}`);
+    process.exitCode = 1;
+    return;
+  }
+
   // #216 / #224: a refused collision says what is in the way and what to do.
   // It is a request to change, not a fault: INVALID_INPUT, no "Failed to…".
   if (error instanceof KeyCollisionError) {
@@ -234,7 +244,7 @@ export function removeValue(key: string, scope?: Scope  ): boolean {
   // Auto collapses to 'project' when resolution succeeds, throws when it
   // fails (#99). The pre-#99 project-then-global fallthrough is deliberately
   // dropped so a misconfigured workspace cannot silently delete from global.
-  // Users who need to remove a global entry must pass --scope global / scope:'global'.
+  // Users who need to remove a global entry must pass -G (CLI) / scope:'global' (MCP).
   const effectiveScope = resolveScopeForWrite(scope);
   const data = loadEntries(effectiveScope);
   const removed = removeNestedValue(data, key);
