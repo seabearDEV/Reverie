@@ -514,7 +514,7 @@ rvr set cmd.home 'ls /Users/$(user)'
 Exec interpolation supports:
 
 - **Recursion**: stored commands can contain `${key}` or `$(key)` references that resolve before execution
-- **Caching**: an entry's command is only executed once per run, however often it is referenced
+- **Caching**: in one `rvr run`, an entry's command is executed once, however often it is referenced; `reverie_run` with `chain: true` executes it once per chain member
 - **Circular detection**: `$(a)` → `$(b)` → `$(a)` throws an error
 - **Timeout**: commands are killed after 10 seconds
 - **Cross-type references**: `${key}` values can contain `$(key)` and vice versa

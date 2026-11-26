@@ -90,7 +90,8 @@ export function computeImportSections(
  * entries), of one this file brings, or of one in the other store — under
  * that spelling, another case, or a spelling the filesystem opens its file
  * under. An alias the store already has, with the same target, adds nothing
- * and passes. Throws the refusal (KeyCollisionError, INVALID_INPUT).
+ * and passes (a file imported back into the store it came from). Throws the
+ * refusal (KeyCollisionError, INVALID_INPUT).
  *
  * computeImportSections runs it under the store lock; a preview runs it on
  * the store as it stands, so a preview does not show an import that the
