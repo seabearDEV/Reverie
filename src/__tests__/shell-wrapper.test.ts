@@ -211,6 +211,46 @@ describe.each(SHELLS)('under %s', (sh) => {
     });
   });
 
+  // An argument of the user's took the appended --source: `--password-file`
+  // with no value as its path, `--` turned it into a key (a clone can ship an
+  // entry named `--source`). The binary then ran the command itself, and the
+  // wrapper evaluated its output — here, a README's text.
+  describe('an argument that would take --source', () => {
+    const pwned = () => path.join(project, 'PWNED');
+    beforeAll(() => { assertDistHonorsDataDir(); });
+    beforeEach(() => {
+      const shim = path.join(binDir, 'rvr');
+      fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${path.resolve('dist/index.js')}" "$@"\n`);
+      fs.chmodSync(shim, 0o755);
+      fs.writeFileSync(path.join(project, 'README.txt'), 'touch PWNED\n');
+      const store = path.join(project, '.reverie');
+      fs.writeFileSync(path.join(store, 'showreadme.json'), JSON.stringify({ value: 'cat README.txt' }));
+      fs.writeFileSync(path.join(store, '--source.json'), JSON.stringify({ value: 'cat README.txt' }));
+    });
+
+    it.each([
+      ['rvr run showreadme --password-file'],
+      ['rvr run showreadme --'],
+    ])('control: the old wrapper evaluates the output of `%s`', (line) => {
+      inShell(sh, OLD_WRAPPER, line);
+      expect(fs.existsSync(pwned())).toBe(true);
+    }, SLOW_TEST_MS);
+
+    it('`rvr run <key> --password-file` (no value): refused, nothing evaluated', () => {
+      const r = inShell(sh, NEW_WRAPPER, 'rvr run showreadme --password-file');
+      expect(r.status).not.toBe(0);
+      expect(fs.existsSync(pwned())).toBe(false);
+    }, SLOW_TEST_MS);
+
+    it('`rvr run <key> --`: still source mode; the command is evaluated, not its output', () => {
+      const r = inShell(sh, NEW_WRAPPER, 'rvr run showreadme --');
+      expect(r.status).toBe(0);
+      // `cat README.txt` ran in this shell and printed the text; nothing ran it.
+      expect(r.stdout).toContain('touch PWNED');
+      expect(fs.existsSync(pwned())).toBe(false);
+    }, SLOW_TEST_MS);
+  });
+
   describe('the wrapper alone, against a binary that prints a payload for --source', () => {
     const argLog = () => path.join(root, 'args.log');
     const hostile = () => path.join(project, 'HOSTILE');
@@ -235,6 +275,23 @@ describe.each(SHELLS)('under %s', (sh) => {
     it('control: the old wrapper evaluates a --json run', () => {
       inShell(sh, OLD_WRAPPER, 'rvr run k --json');
       expect(fs.existsSync(hostile())).toBe(true);
+    });
+
+    it.each([
+      ['rvr run k --password-file', 'run --source k --password-file'],
+      ['rvr run k --', 'run --source k --'],
+      ['rvr --debug r k -y', '--debug r --source k -y'],
+    ])('`%s`: --source goes right after the verb', (line, expected) => {
+      inShell(sh, NEW_WRAPPER, line);
+      expect(fs.readFileSync(argLog(), 'utf8')).toBe(`${expected}\n`);
+    });
+
+    it('nothing to evaluate (a declined confirmation) fails, so && stops', () => {
+      // The binary prints "Aborted." to stderr and exits 0 with nothing on stdout.
+      fs.writeFileSync(path.join(binDir, 'rvr'), '#!/bin/sh\necho Aborted. >&2\nexit 0\n');
+      const r = inShell(sh, NEW_WRAPPER, `rvr run deploy && touch '${path.join(root, 'notified')}'; echo "status=$?"`);
+      expect(r.stdout).toContain('status=1');
+      expect(fs.existsSync(path.join(root, 'notified'))).toBe(false);
     });
 
     it.each([

@@ -652,16 +652,22 @@ export function shellWrapperMarker(bin: string): string {
 }
 
 /**
- * The `run` wrapper: a shell function that runs `<bin> run … --source` and
+ * The `run` wrapper: a shell function that runs `<bin> run --source …` and
  * evals what it prints, so a stored `cd`/`export`/`alias` acts on the user's
  * shell. Bash and zsh read the same text.
  *
- * #281: it evals only a run whose stdout is the command. `--json` (or
- * RVR_OUTPUT=json) and `--dry` pass straight through to the binary: their
- * output is an envelope or a preview, never code, and the old wrapper evaled
- * the envelope, which quotes store file names a cloned repository chose. The
- * binary never emits an envelope with --source either, for wrappers installed
- * before this one.
+ * #281: it evals only a run whose stdout is the command.
+ *   - `--json` (or RVR_OUTPUT=json) and `--dry` pass straight through to the
+ *     binary: their output is an envelope or a preview, never code. The old
+ *     wrapper evaled the envelope, which quotes store file names a cloned
+ *     repository chose. The binary never emits an envelope with --source
+ *     either, for wrappers installed before this one.
+ *   - `--source` goes right after the verb, ahead of the user's arguments.
+ *     Appended after them, an argument could take it: `--password-file` with
+ *     no value took it as its path, and after `--` it was a key. The binary
+ *     then ran the command itself, and what it printed was evaled.
+ *   - No command to eval (a declined confirmation) returns 1, as the first
+ *     wrapper did, so `rvr run deploy && rvr run notify` stops there.
  */
 export function generateShellWrapper(bin: string = getBinaryName()): string {
   // Same hyphen-handling as generateZshScript: zsh/bash allow `-` in command and
@@ -670,7 +676,8 @@ export function generateShellWrapper(bin: string = getBinaryName()): string {
   return `${shellWrapperMarker(bin)} v${SHELL_WRAPPER_VERSION} — eval "${bin} run" in the current shell so cd/export/alias work
 # --json, RVR_OUTPUT=json and --dry go straight to ${bin}: what they print is never evaluated.
 ${bin}() {
-  local subcmd="" has_help=false pass=false
+  local subcmd="" has_help=false pass=false arg
+  local -a __${binVar}_args
   for arg in "$@"; do
     if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
       has_help=true
@@ -678,19 +685,21 @@ ${bin}() {
       pass=true
     elif [[ "$arg" != -* && -z "$subcmd" ]]; then
       subcmd="$arg"
+      __${binVar}_args+=("$arg" --source)
+      continue
     fi
+    __${binVar}_args+=("$arg")
   done
   if [[ "\${RVR_OUTPUT:-}" == "json" ]]; then
     pass=true
   fi
   if [[ "$has_help" == false && "$pass" == false && ("$subcmd" == "run" || "$subcmd" == "r") ]]; then
     local __${binVar}_cmd __${binVar}_exit
-    __${binVar}_cmd="$(command ${bin} "$@" --source)"
+    __${binVar}_cmd="$(command ${bin} "\${__${binVar}_args[@]}")"
     __${binVar}_exit=$?
     [[ $__${binVar}_exit -ne 0 ]] && return $__${binVar}_exit
-    if [[ -n "$__${binVar}_cmd" ]]; then
-      eval "$__${binVar}_cmd"
-    fi
+    [[ -n "$__${binVar}_cmd" ]] || return 1
+    eval "$__${binVar}_cmd"
   else
     command ${bin} "$@"
   fi
