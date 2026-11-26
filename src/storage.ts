@@ -59,6 +59,19 @@ export function handleError(message: string, error: unknown, context?: string): 
     return;
   }
 
+  // #261: another process held the store lock for the whole wait. Nothing
+  // was written, and the message says so and what to do: one line, IO.
+  if (error instanceof LockTimeoutError) {
+    if (isJsonMode()) {
+      failJson('IO', errorText);
+    } else {
+      recordErrorCode('IO');
+      console.error(`${color.red('✗ ')}${errorText}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   // #216 / #224: a refused collision says what is in the way and what to do.
   // It is a request to change, not a fault: INVALID_INPUT, no "Failed to…".
   if (error instanceof KeyCollisionError) {

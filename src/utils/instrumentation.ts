@@ -11,6 +11,7 @@ import { findProjectFile } from '../store';
 import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './responseMeasure';
 import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
+import { LockTimeoutError } from './fileLock';
 import { color } from '../formatting';
 import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, takeWriteRefused, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
 import { isJsonMode, failJson, emitEnvelope, addWarning, hasWarning, setResult, hasResult, hasError, takeSignals, takeErrorCode, serializeEnvelope, alreadyEmitted } from './output';
@@ -275,6 +276,7 @@ export async function withCliInstrumentation<T>(
     errorMsg = String(err);
     thrownCode = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
       : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
+      : err instanceof LockTimeoutError ? 'IO'
       : 'RUNTIME';
     if (err instanceof ProjectResolutionError) {
       refusedReason = 'project_unresolved';
@@ -292,11 +294,13 @@ export async function withCliInstrumentation<T>(
     if (jsonMode) {
       const code = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
         : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
+        : err instanceof LockTimeoutError ? 'IO'
         : 'RUNTIME';
       failJson(code, err instanceof Error ? err.message : String(err));
-    } else if (err instanceof StoreUnreadableError || err instanceof ProjectResolutionError) {
+    } else if (err instanceof StoreUnreadableError || err instanceof ProjectResolutionError || err instanceof LockTimeoutError) {
       // An expected, self-explaining failure: its message, not a stack trace
-      // (#249: confirm and alias set/remove reach here outside a project).
+      // (#249: confirm and alias set/remove reach here outside a project;
+      // #261: a store lock another process held for the whole wait).
       originalConsoleError.call(console, `${color.red('✗ ')}${err.message}`);
       process.exitCode = 1;
     } else {

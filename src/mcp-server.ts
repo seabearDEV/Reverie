@@ -49,6 +49,7 @@ import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/a
 import { formatStatsReport } from "./commands/statsReport";
 import type { ErrorCode } from "./utils/output";
 import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
+import { LockTimeoutError } from "./utils/fileLock";
 import type { CodexValue } from "./types";
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapListed, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, readForWrite, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
 import { getEffectiveInstructions } from "./llm-instructions";
@@ -369,6 +370,9 @@ server.tool = ((...args: any[]) => {
         result = storeUnreadableErrorResponse(err);
         if (err.attempted === 'write') refusedReason = 'store_unreadable';
         for (const f of err.files) unreadableNamed.add(f.path);
+      } else if (err instanceof LockTimeoutError) {
+        // #261: the store was busy for the whole wait; nothing was written.
+        result = errorResponse(err.message, 'IO');
       } else {
         throw err;
       }
@@ -542,7 +546,7 @@ server.tool(
 
       return textResponse(lines.join('\n'));
     } catch (err) {
-      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       // #216 / #224: the refusal is complete on its own.
       if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error setting entry: ${String(err)}`);
@@ -697,7 +701,7 @@ server.tool(
       }
       return textResponse(Object.keys(flat).join("\n"));
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error retrieving entry: ${String(err)}`);
     }
   }
@@ -755,7 +759,7 @@ server.tool(
         ? `Removed: ${resolvedKey}\nConfirmation flags kept (a flag gates its name in every project): ${kept.join(', ')}`
         : `Removed: ${resolvedKey}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error removing entry: ${String(err)}`);
     }
   }
@@ -816,7 +820,7 @@ server.tool(
 
       return textResponse(`Copied: ${resolvedSource} -> ${dest}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       // #216 / #224: the refusal is complete on its own.
       if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error copying entry: ${String(err)}`);
@@ -946,7 +950,7 @@ server.tool(
 
       return textResponse(`Renamed: ${resolvedOld} -> ${newKey}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       // #216 / #224: the refusal is complete on its own.
       if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error renaming entry: ${String(err)}`);
@@ -1019,7 +1023,7 @@ server.tool(
       }
       return textResponse(results.join("\n"));
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error searching: ${String(err)}`);
     }
   }
@@ -1040,7 +1044,7 @@ server.tool(
       setAlias(alias, key, scope);
       return textResponse(`Alias set: ${alias} -> ${key}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error setting alias: ${String(err)}`);
     }
   }
@@ -1060,7 +1064,7 @@ server.tool(
       }
       return textResponse(`Alias removed: ${alias}`);
     } catch (err) {
-      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error removing alias: ${String(err)}`);
     }
   }
@@ -1082,7 +1086,7 @@ server.tool(
       const lines = entries.map(([a, t]) => `${a} -> ${t}`);
       return textResponse(lines.join("\n"));
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error listing aliases: ${String(err)}`);
     }
   }
@@ -1107,7 +1111,7 @@ function runGated(
   } catch (err) {
     // #215: a `${key}` naming an unreadable entry is not an interpolation
     // error. Let the wrapper render it, with its code.
-    if (err instanceof StoreUnreadableError) throw err;
+    if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
     return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
   }
 
@@ -1157,7 +1161,7 @@ function runGated(
   try {
     execCommand = rawValues.map((cv) => interpolateExec(cv)).join(' && ');
   } catch (err) {
-    if (err instanceof StoreUnreadableError) throw err; // #215, as above
+    if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err; // #215, as above
     return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
   }
 
@@ -1260,7 +1264,7 @@ server.tool(
       }
       return textResponse(`${key}: ${value}`);
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error getting config: ${String(err)}`);
     }
   }
@@ -1286,7 +1290,7 @@ server.tool(
       resetColorCache();
       return textResponse(`Config set: ${key} = ${value}`);
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error setting config: ${String(err)}`);
     }
   }
@@ -1323,7 +1327,7 @@ server.tool(
       });
       return textResponse(JSON.stringify(wrapped, null, indent));
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error exporting: ${String(err)}`);
     }
   }
@@ -1553,7 +1557,7 @@ server.tool(
         `${warningPrefix}${TYPE_LABELS[type]} ${merge ? "merged" : "imported"} successfully.`
       );
     } catch (err) {
-      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       // #216 / #224: the refusal is complete on its own.
       if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error importing: ${String(err)}`);
@@ -1593,7 +1597,7 @@ server.tool(
         `${TYPE_LABELS[type]} reset to empty state.`
       );
     } catch (err) {
-      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error resetting: ${String(err)}`);
     }
   }
@@ -1720,7 +1724,7 @@ server.tool(
 
       return textResponse(lines.join("\n"));
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error loading context: ${String(err)}`);
     }
   }
@@ -1761,7 +1765,7 @@ server.tool(
       });
       return textResponse(`${stale.length} entries not updated in ${threshold}+ days:\n${lines.join('\n')}`);
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error checking staleness: ${String(err)}`);
     }
   }
@@ -1787,7 +1791,7 @@ server.tool(
       const lines = formatStatsReport(stats, { detailed: Boolean(detailed) });
       return textResponse(lines.join('\n'));
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error computing stats: ${String(err)}`);
     }
   }
@@ -1852,7 +1856,7 @@ server.tool(
 
       return textResponse(lines.join('\n'));
     } catch (err) {
-      if (err instanceof StoreUnreadableError) throw err;
+      if (err instanceof StoreUnreadableError || err instanceof LockTimeoutError) throw err;
       return errorResponse(`Error querying audit log: ${String(err)}`);
     }
   }
