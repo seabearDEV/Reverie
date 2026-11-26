@@ -1,7 +1,8 @@
-# GitHub Security Advisory — source record (DRAFT)
+# GitHub Security Advisory — source record (PUBLISHED)
 
-> DRAFT GHSA-cchh-h245-wgr7 (not published). Publish only on the owner's decision; the GHSA form,
-> once published, is canonical and this file becomes its internal source record.
+> PUBLISHED 2026-11-26 as **GHSA-cchh-h245-wgr7**:
+> https://github.com/seabearDEV/reverie/security/advisories/GHSA-cchh-h245-wgr7
+> This file is the internal source record; the advisory above is canonical.
 > Scoped as a GENERAL advisory (ecosystem `other`, name `reverie`), like
 > GHSA-hf25-j9h5-5vq5: `@seabear/reverie` is never published to npm
 > (`project.distributionChannels`). Tracking issue: #158. Fix: #160.
