@@ -179,9 +179,7 @@ vi.mock('../confirm', () => ({
   setConfirm: vi.fn((key: string) => { mockConfirmKeys[key] = true; }),
   removeConfirm: vi.fn((key: string) => { delete mockConfirmKeys[key]; }),
   gatedAmong: vi.fn((keys: string[]) => new Set(keys.filter(k => mockConfirmKeys[k] === true))),
-  moveConfirm: vi.fn((gated: [string, string][]) => {
-    for (const [, to] of gated) mockConfirmKeys[to] = true;
-  }),
+  gatedByFlags: vi.fn((keys: string[], flagged: string[]) => new Set(keys.filter(k => flagged.includes(k)))),
   loadConfirmKeys: vi.fn(() => ({ ...mockConfirmKeys })),
   saveConfirmKeys: vi.fn((c: any) => {
     Object.keys(mockConfirmKeys).forEach(k => delete mockConfirmKeys[k]);
@@ -256,8 +254,31 @@ vi.mock('../store', () => {
     updateAll: vi.fn((fn: (c: { entries: any; aliases: Record<string, string>; confirm: Record<string, true> }) => any) => {
       saveAll(fn({ entries: structuredClone(mockData), aliases: { ...mockAliases }, confirm: { ...mockConfirmKeys } }));
     }),
+    // #259: the two-store transaction, over this mock's one store.
+    updateUnderBothLocks: vi.fn((_scope: string, fn: (target: any, other: any) => any) => {
+      const data = { entries: structuredClone(mockData), aliases: { ...mockAliases }, confirm: { ...mockConfirmKeys }, _meta: { ...mockMetaData } };
+      const keysOf = (o: any, pre = ''): string[] => Object.entries(o).flatMap(([k, v]) => (v !== null && typeof v === 'object' ? keysOf(v, `${pre}${k}.`) : [`${pre}${k}`]));
+      const next = fn({ scope: 'global', dir: '/mock/store', data, keys: keysOf(data.entries), unreadable: [] }, undefined);
+      if (next === null) return;
+      const replace = (into: Record<string, any>, from: Record<string, any>) => {
+        Object.keys(into).forEach(k => delete into[k]);
+        Object.assign(into, from);
+      };
+      replace(mockData, next.entries);
+      replace(mockAliases, next.aliases);
+      replace(mockConfirmKeys, next.confirm);
+      replace(mockMetaData, next._meta ?? {});
+    }),
   };
 });
+
+// Which file a key opens is the filesystem's answer, and fs is mocked here.
+vi.mock('../utils/entryIdentity', () => ({
+  entriesOpenedBy: vi.fn(() => new Map()),
+  keysOpeningSameEntry: vi.fn(() => []),
+  opensEntryFile: vi.fn(() => false),
+  storedSpellingOf: vi.fn(() => undefined),
+}));
 
 vi.mock('../formatting', () => ({
   formatTree: vi.fn(() => 'tree-output'),
@@ -338,6 +359,7 @@ function resetMocks() {
 
 // Import crypto for test data
 import { encryptValue, decryptValue } from '../utils/crypto';
+import { registerUnreadableSource } from '../utils/unreadable';
 
 // Import the module which triggers tool registrations
 beforeAll(async () => {
@@ -469,10 +491,17 @@ describe('MCP Server Tools', () => {
     });
   });
 
+  // The writes now resolve their scope themselves (#259), and these mocks
+  // have no project: a default-scope write would be refused, as it is for
+  // real outside a project. So the renames name the global store — whose
+  // pre-flight scans the store module registered when the real storage was
+  // loaded above. This mocked store has no files to scan.
   describe('reverie_rename', () => {
+    beforeEach(() => { registerUnreadableSource('global', () => []); });
+
     it('renames an entry key', async () => {
       Object.assign(mockData, { old: { key: 'value' } });
-      const result = await toolHandlers['reverie_rename']({ oldKey: 'old.key', newKey: 'new.key' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'old.key', newKey: 'new.key', scope: 'global' });
       expect(result.content[0].text).toContain('Renamed: old.key -> new.key');
       expect(mockData.new?.key).toBe('value');
       expect(mockData.old?.key).toBeUndefined();
@@ -494,7 +523,7 @@ describe('MCP Server Tools', () => {
     it('re-points aliases from old key to new key', async () => {
       Object.assign(mockData, { old: 'value' });
       Object.assign(mockAliases, { shortcut: 'old' });
-      const result = await toolHandlers['reverie_rename']({ oldKey: 'old', newKey: 'new' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'old', newKey: 'new', scope: 'global' });
       expect(result.content[0].text).toContain('Renamed: old -> new');
       expect(mockAliases.shortcut).toBe('new');
     });
@@ -504,7 +533,7 @@ describe('MCP Server Tools', () => {
       // of that name in another project (confirm.ts).
       Object.assign(mockData, { old: 'echo dangerous' });
       Object.assign(mockConfirmKeys, { old: true as const });
-      const result = await toolHandlers['reverie_rename']({ oldKey: 'old', newKey: 'new' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'old', newKey: 'new', scope: 'global' });
       expect(result.content[0].text).toContain('Renamed: old -> new');
       expect(mockConfirmKeys.new).toBe(true);
       expect(mockConfirmKeys.old).toBe(true);
@@ -512,7 +541,7 @@ describe('MCP Server Tools', () => {
 
     it('gives an unflagged entry no flag under its new key', async () => {
       Object.assign(mockData, { plain: 'echo fine' });
-      await toolHandlers['reverie_rename']({ oldKey: 'plain', newKey: 'renamed' });
+      await toolHandlers['reverie_rename']({ oldKey: 'plain', newKey: 'renamed', scope: 'global' });
       expect(mockConfirmKeys.renamed).toBeUndefined();
     });
 
@@ -540,7 +569,7 @@ describe('MCP Server Tools', () => {
     it('resolves alias before renaming entry', async () => {
       Object.assign(mockData, { actual: { key: 'value' } });
       Object.assign(mockAliases, { shortcut: 'actual.key' });
-      const result = await toolHandlers['reverie_rename']({ oldKey: 'shortcut', newKey: 'renamed.key' });
+      const result = await toolHandlers['reverie_rename']({ oldKey: 'shortcut', newKey: 'renamed.key', scope: 'global' });
       expect(result.content[0].text).toContain('Renamed: actual.key -> renamed.key');
     });
   });

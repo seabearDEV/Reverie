@@ -95,7 +95,20 @@ vi.mock('../store', () => {
     if (next !== null) saveConfirmMap(next);
   });
   const updateAll = vi.fn((fn: (c: ReturnType<typeof current>) => Parameters<typeof saveAll>[0]) => { saveAll(fn(current())); });
+  // #259: the two-store transaction, over this mock's one store; each
+  // section it changes shows up as its save* call.
+  type Sections = ReturnType<typeof current>;
+  const updateUnderBothLocks = vi.fn((_scope: string, fn: (target: unknown, other: unknown) => Sections | null) => {
+    const before = current();
+    const keysOf = (o: Record<string, unknown>, pre = ''): string[] => Object.entries(o).flatMap(([k, v]) => (v !== null && typeof v === 'object' ? keysOf(v as Record<string, unknown>, `${pre}${k}.`) : [`${pre}${k}`]));
+    const next = fn({ scope: 'global', dir: '/mock/store', data: { ...current(), _meta: {} }, keys: keysOf(before.entries), unreadable: [] }, undefined);
+    if (next === null) return;
+    if (JSON.stringify(next.entries) !== JSON.stringify(before.entries)) saveEntries(next.entries);
+    if (JSON.stringify(next.aliases) !== JSON.stringify(before.aliases)) saveAliasMap(next.aliases);
+    if (JSON.stringify(next.confirm) !== JSON.stringify(before.confirm)) saveConfirmMap(next.confirm);
+  });
   return {
+    updateUnderBothLocks,
     loadEntries:        vi.fn(()  => clone(storeState.entries)),
     saveEntries,
     updateEntries,
@@ -134,6 +147,16 @@ vi.mock('../store', () => {
     getEntryFast: vi.fn(() => undefined),
   };
 });
+
+// Which file a key opens is the filesystem's answer, and fs is mocked here:
+// its statSync answers every path with the same object, so every key would
+// "open" every other key's file.
+vi.mock('../utils/entryIdentity', () => ({
+  entriesOpenedBy: vi.fn(() => new Map()),
+  keysOpeningSameEntry: vi.fn(() => []),
+  opensEntryFile: vi.fn(() => false),
+  storedSpellingOf: vi.fn(() => undefined),
+}));
 
 // Mock readline for TTY confirmation prompts
 vi.mock('readline', () => {

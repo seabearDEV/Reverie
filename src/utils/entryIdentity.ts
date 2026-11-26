@@ -95,3 +95,31 @@ export function entriesOpenedBy(keys: Iterable<string>, candidates: Iterable<str
 export function keysOpeningSameEntry(key: string, candidates: Iterable<string>): string[] {
   return entriesOpenedBy([key], candidates).get(key) ?? [];
 }
+
+/**
+ * Does `key` open an entry file in the store directory `dir` — its own, or
+ * one stored under a spelling the filesystem folds it onto? An entry whose
+ * file does not parse counts: the file is there.
+ */
+export function opensEntryFile(dir: string, key: string): boolean {
+  return entryFileId(dir, key) !== undefined;
+}
+
+/**
+ * The stored key whose entry file `key` opens in `dir`, when `key` is not
+ * itself among `storedKeys`: the name the entry has, for a command handed
+ * another spelling of it (#247). Undefined when `key` is stored under exactly
+ * that name, or opens no file there.
+ *
+ * Asked of the filesystem, as everything here is: a stat of `key`'s path,
+ * then of each stored key's until one is the same file. Only runs that far
+ * when `key` opens a file it is not stored as. A caller asking for many keys
+ * passes a Set: a rename asks once per moved entry.
+ */
+export function storedSpellingOf(dir: string, key: string, storedKeys: ReadonlySet<string> | readonly string[]): string | undefined {
+  if ('has' in storedKeys ? storedKeys.has(key) : storedKeys.includes(key)) return undefined;
+  const id = entryFileId(dir, key);
+  if (id === undefined) return undefined;
+  for (const other of storedKeys) if (entryFileId(dir, other) === id) return other;
+  return undefined;
+}

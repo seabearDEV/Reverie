@@ -125,3 +125,31 @@ describe('withFileLock', () => {
     });
   });
 });
+
+describe('a stale lock this process cannot remove (#259 review)', () => {
+  // Its directory is not writable, so the unlink fails. The wait backs off
+  // as for any held lock; it used to retry in a tight loop for the whole wait.
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  it.skipIf(isRoot)('backs off instead of spinning, then times out', () => {
+    const lockPath = testFile + '.lock';
+    fs.writeFileSync(lockPath, '99999');
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lockPath, old, old);
+    fs.chmodSync(tmpDir, 0o555);
+    const realOpen = fs.openSync.bind(fs);
+    let attempts = 0;
+    const spy = vi.spyOn(fs, 'openSync').mockImplementation(((p: fs.PathLike, ...rest: unknown[]) => {
+      if (String(p) === lockPath) attempts++;
+      return (realOpen as (...args: unknown[]) => number)(p, ...rest);
+    }) as typeof fs.openSync);
+    try {
+      expect(() => withFileLock(testFile, () => 'ran', 300)).toThrow(LockTimeoutError);
+    } finally {
+      spy.mockRestore();
+      fs.chmodSync(tmpDir, 0o755);
+    }
+    // About 300ms of 8–16ms sleeps: a few dozen attempts, not thousands.
+    expect(attempts).toBeGreaterThan(1);
+    expect(attempts).toBeLessThan(100);
+  });
+});

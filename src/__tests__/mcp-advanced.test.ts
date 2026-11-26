@@ -166,9 +166,7 @@ vi.mock('../confirm', () => ({
   setConfirm: vi.fn((key: string) => { mockConfirmKeys[key] = true; }),
   removeConfirm: vi.fn((key: string) => { delete mockConfirmKeys[key]; }),
   gatedAmong: vi.fn((keys: string[]) => new Set(keys.filter(k => mockConfirmKeys[k] === true))),
-  moveConfirm: vi.fn((gated: [string, string][]) => {
-    for (const [, to] of gated) mockConfirmKeys[to] = true;
-  }),
+  gatedByFlags: vi.fn((keys: string[], flagged: string[]) => new Set(keys.filter(k => flagged.includes(k)))),
   loadConfirmKeys: vi.fn(() => ({ ...mockConfirmKeys })),
   saveConfirmKeys: vi.fn((c: any) => {
     Object.keys(mockConfirmKeys).forEach(k => delete mockConfirmKeys[k]);
@@ -250,8 +248,31 @@ vi.mock('../store', () => {
     updateAll: vi.fn((fn: (c: { entries: any; aliases: Record<string, string>; confirm: Record<string, true> }) => any) => {
       saveAll(fn({ entries: structuredClone(mockData), aliases: { ...mockAliases }, confirm: { ...mockConfirmKeys } }));
     }),
+    // #259: the two-store transaction, over this mock's one store.
+    updateUnderBothLocks: vi.fn((_scope: string, fn: (target: any, other: any) => any) => {
+      const data = { entries: structuredClone(mockData), aliases: { ...mockAliases }, confirm: { ...mockConfirmKeys }, _meta: { ...mockMetaData } };
+      const keysOf = (o: any, pre = ''): string[] => Object.entries(o).flatMap(([k, v]) => (v !== null && typeof v === 'object' ? keysOf(v, `${pre}${k}.`) : [`${pre}${k}`]));
+      const next = fn({ scope: 'global', dir: '/mock/store', data, keys: keysOf(data.entries), unreadable: [] }, undefined);
+      if (next === null) return;
+      const replace = (into: Record<string, any>, from: Record<string, any>) => {
+        Object.keys(into).forEach(k => delete into[k]);
+        Object.assign(into, from);
+      };
+      replace(mockData, next.entries);
+      replace(mockAliases, next.aliases);
+      replace(mockConfirmKeys, next.confirm);
+      replace(mockMetaData, next._meta ?? {});
+    }),
   };
 });
+
+// Which file a key opens is the filesystem's answer, and fs is mocked here.
+vi.mock('../utils/entryIdentity', () => ({
+  entriesOpenedBy: vi.fn(() => new Map()),
+  keysOpeningSameEntry: vi.fn(() => []),
+  opensEntryFile: vi.fn(() => false),
+  storedSpellingOf: vi.fn(() => undefined),
+}));
 
 vi.mock('../formatting', () => {
   // bun:test (#112): include every named export the SUT or its transitive

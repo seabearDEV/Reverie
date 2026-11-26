@@ -1,9 +1,9 @@
 import { debug } from './utils/debug';
-import { Scope, loadConfirmMap, saveConfirmMap, updateConfirmMap, loadConfirmMapMerged } from './store';
+import { Scope, loadConfirmMap, saveConfirmMap, updateConfirmMap, loadConfirmMapMerged, updateUnderBothLocks, type LockedStore } from './store';
 import { resolveScopeForWrite } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
-import { entriesOpenedBy, keysOpeningSameEntry } from './utils/entryIdentity';
-import { removeFlatKeysUnder } from './utils/objectPath';
+import { entriesOpenedBy, keysOpeningSameEntry, opensEntryFile } from './utils/entryIdentity';
+import { flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 
 
 export function loadConfirmKeys(scope?: Scope  ): Record<string, true> {
@@ -36,7 +36,7 @@ export function saveConfirmKeys(data: Record<string, true>, scope?: Scope  ): vo
 // two namespaces, and a store written on a case-sensitive volume can hold two
 // entries that differ only by case, each with its own flag.
 //
-// A rename drops nothing at all (moveConfirm). A flag gates by name, and the
+// A rename drops nothing at all (rename.ts). A flag gates by name, and the
 // global list is read in every project, so the flag on a renamed key may be
 // what gates another project's entry of the same name — which the rename
 // cannot see. It adds the flag under the new key and leaves the old one.
@@ -53,11 +53,39 @@ function gatingAmong(key: string, flagged: string[]): string[] {
   return [...byName, ...byFile];
 }
 
-// Mark a key as requiring confirmation
-export function setConfirm(key: string, scope?: Scope  ): void {
+/**
+ * Flag `key` in the list `scope` writes, if it still names an entry. False,
+ * with nothing written, when it does not.
+ *
+ * The callers look the key up first, for the message (confirmTargetProblem),
+ * but that look is outside any lock. A rename committed in between moved the
+ * entry, and the flag then landed on the old name with the new one unflagged
+ * — both commands reporting success (#259). So it is asked again here, under
+ * the locks of both stores (the entry may be in either, whichever list is
+ * written), by the rule `confirm set` applies: see namesEntry.
+ */
+export function setConfirm(key: string, scope?: Scope  ): boolean {
   const effectiveScope = resolveScopeForWrite(scope);
-  updateConfirmMap(keys => ({ ...keys, [key]: true }), effectiveScope);
-  debug(`Confirm set for key: "${key}"`);
+  let named = false;
+  updateUnderBothLocks(effectiveScope, (target, other) => {
+    named = namesEntry(key, other ? [target, other] : [target]);
+    if (!named || target.data.confirm[key] === true) return null;
+    return { ...target.data, confirm: { ...target.data.confirm, [key]: true } };
+  });
+  if (named) debug(`Confirm set for key: "${key}"`);
+  return named;
+}
+
+/**
+ * Does `key` name an entry in one of `stores`, as `confirm set` decides it
+ * (confirmTargetProblem): stored under that name, case aside, or stored under
+ * a name whose file `key` opens. An entry whose file does not parse is still
+ * an entry — its file is there. A namespace is not.
+ */
+function namesEntry(key: string, stores: LockedStore[]): boolean {
+  const lower = key.toLowerCase();
+  return stores.some(store => opensEntryFile(store.dir, key)
+    || Object.keys(flattenObject(store.data.entries)).some(k => k.toLowerCase() === lower));
 }
 
 // Remove confirmation requirement from a key
@@ -97,7 +125,16 @@ export function hasConfirm(key: string): boolean {
  */
 export function gatedAmong(keys: readonly string[]): Set<string> {
   const merged = loadConfirmMapMerged();
-  const flagged = Object.keys(merged).filter(k => merged[k] === true);
+  return gatedByFlags(keys, Object.keys(merged).filter(k => merged[k] === true));
+}
+
+/**
+ * gatedAmong against a given list of flagged keys, reading no store: for a
+ * transaction that holds the lists as they stand under its locks (a rename,
+ * #259). Asks the filesystem which files the keys open, so it has to run
+ * before the transaction moves any of them.
+ */
+export function gatedByFlags(keys: readonly string[], flagged: readonly string[]): Set<string> {
   const gated = new Set<string>();
   if (flagged.length === 0) return gated;
   const byName = new Set(flagged.map(k => k.toLowerCase()));
@@ -124,35 +161,6 @@ export function flagsGating(key: string): { key: string; scope: 'project' | 'glo
   if (holders.length === 0) return [];
   const global = loadConfirmMap('global');
   return holders.map(k => ({ key: k, scope: global[k] === true ? 'global' as const : 'project' as const }));
-}
-
-/**
- * Carry confirmation flags across a rename: flag each new key.
- *
- * `gated` is what the rename moved and the gate was asking about, old key to
- * new key, one pair per entry. The caller works that out before anything
- * moves — which entries it is about to move, and gatedAmong for them — so
- * nothing here guesses from the shape of a key. Only the flag on the renamed
- * key itself used to move, so renaming a namespace left its entries' flags
- * behind and the renamed commands ran unconfirmed.
- *
- * Nothing is dropped. The old name keeps its flag: see "A rename drops
- * nothing at all" above. `rvr confirm remove` clears it when it is stale.
- */
-export function moveConfirm(gated: readonly (readonly [from: string, to: string])[], scope?: Scope  ): void {
-  if (gated.length === 0) return;
-  const effectiveScope = resolveScopeForWrite(scope);
-  const flagEach = (keys: Record<string, true>): Record<string, true> | null => {
-    const missing = gated.filter(([, to]) => keys[to] !== true);
-    if (missing.length === 0) return null;
-    const next = { ...keys };
-    for (const [, to] of missing) next[to] = true;
-    return next;
-  };
-  // Every new key already flagged: nothing to write.
-  if (flagEach(loadConfirmMap(effectiveScope)) === null) return;
-  if (!changeConfirmList(effectiveScope, flagEach)) return;
-  debug(`Confirm carried to ${gated.length} renamed entr${gated.length === 1 ? 'y' : 'ies'} (${effectiveScope})`);
 }
 
 /**

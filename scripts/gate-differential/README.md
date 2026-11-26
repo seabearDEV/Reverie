@@ -10,7 +10,7 @@ Unit tests and mutation checks did not find the violations of that rule in #234.
 
 Each trial builds two identical worlds, one per build: two projects (`p1`, `p2`), a directory outside any project, and one shared global store. It runs the same random sequence of `set`, `confirm set`, `confirm remove`, `rename`, `remove`, `copy` and `alias set` commands in both, from random directories, with and without `-G`. The keys differ by case and by Unicode form on purpose.
 
-Afterwards `probe.mjs` evaluates the `run` gate with each build's own modules, for every key, from each of the three directories, in the default scope and with `-G`. A **hit** is a key the old build reports `GATED` and the new one does not. The harness also compares the entry files of the two worlds.
+Afterwards `probe.mjs` evaluates the `run` gate with each build's own modules, for every key a sequence can produce — each namespace of the mix with each leaf name, since renaming or copying a namespace carries its leaf names into another, and the alias — from each of the three directories, in the default scope and with `-G`. A **hit** is a key the old build reports `GATED` and the new one does not. The harness also compares the entry files of the two worlds.
 
 ## Running it
 

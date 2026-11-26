@@ -8,7 +8,7 @@
  */
 import {
   useTempGlobalStore, onDisk, seed, entryKeys, interleave, survived,
-  bEntry, bAlias, bMixed,
+  bEntry, bAlias, bMixed, type BWrite,
 } from './helpers/interleave';
 
 type ToolHandler = (params: Record<string, unknown>) => Promise<{ isError?: boolean; content: { text: string }[] }>;
@@ -56,6 +56,37 @@ describe('#254 over MCP: a write by another process survives', () => {
     expect(entryKeys(d)).toEqual(expect.arrayContaining(['moved.a', 'moved.b']));
     expect(entryKeys(d).filter(k => k.startsWith('src.'))).toEqual([]);
     expect(d.aliases.sa).toBe('moved.a');
+  });
+
+  // #259: the same transaction as `rvr rename` (rename-one-step.test.ts).
+  it('reverie_rename: a flag set on the old key after the call read the store gates the new key', async () => {
+    seed({ entries: { g: { x: 'true' } } });
+    let flagged = false;
+    const bFlagOld: BWrite = (b, n) => {
+      if (n === 0 || flagged) return bEntry(b, n);
+      flagged = true;
+      const d = b.load();
+      d.confirm['g.x'] = true;
+      b.save(d);
+      return 'g.x';
+    };
+    await interleave(() => call('reverie_rename', { oldKey: 'g.x', newKey: 'h.x', scope: 'global' }), bFlagOld);
+    expect(flagged).toBe(true);
+    const d = onDisk();
+    expect(entryKeys(d)).toContain('h.x');
+    expect(d.confirm['h.x']).toBe(true);
+  });
+
+  it('reverie_rename: an entry written under the old namespace meanwhile is moved or kept, never lost', async () => {
+    seed({ entries: { ren: { a: '1', b: '2' } } });
+    const bIntoOld: BWrite = (b, n) => {
+      const key = `ren.k${n}`;
+      if (!b.setOne(key, `v${n}`, Date.now())) throw new Error(`setOne(${key}) declined`);
+      return key;
+    };
+    const written = await interleave(() => call('reverie_rename', { oldKey: 'ren', newKey: 'moved', scope: 'global' }), bIntoOld);
+    const keys = entryKeys(onDisk());
+    for (const k of written) expect(keys.includes(k) || keys.includes(k.replace(/^ren\./, 'moved.')), k).toBe(true);
   });
 
   it('reverie_remove of an alias keeps the aliases set meanwhile', async () => {
