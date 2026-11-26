@@ -11,6 +11,7 @@ import { computeImportSections } from '../utils/importSections';
 import { maskEncryptedValues } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { createAutoBackup } from '../utils/autoBackup';
+import { assertNotTestCheckout } from '../utils/directoryStore';
 import { findProjectFile, clearProjectFileCache, updateAll, getEffectiveScope } from '../store';
 import { wrapExport, tryUnwrapImport } from '../utils/envelope';
 import { version as pkgVersion } from '../../package.json';
@@ -551,6 +552,7 @@ export function handleProjectFile(options: {
     // findProjectFile may return either a `.reverie/` directory (v1.0.0-beta.1+)
     // or a legacy `.codexcli.json` single-file (pre-v1.10). rmSync handles both
     // uniformly with `recursive: true`.
+    assertNotTestCheckout(projectPath);   // #274: never the checkout's own store under test
     fs.rmSync(projectPath, { recursive: true, force: true });
     clearProjectFileCache();
     printSuccess(`Removed: ${projectPath}`);
@@ -559,6 +561,9 @@ export function handleProjectFile(options: {
 
   const cwd = process.cwd();
   const target = path.join(cwd, '.reverie');
+  // #274: under the test suite, nothing init writes — the store, its
+  // entries, CLAUDE.md, AGENTS.md — may land in the checkout.
+  if (!options.dryRun) assertNotTestCheckout(target);
 
   // Single stat call to determine the target's state.
   let targetStat: ReturnType<typeof fs.statSync> | null = null;

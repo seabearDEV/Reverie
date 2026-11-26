@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDataDirectory, findProjectStoreDir } from './paths';
 import { debug } from './debug';
+import { assertNotTestCheckout } from './directoryStore';
 import { getConfigSetting } from '../config';
 import type { Scope } from '../store';
 
@@ -41,6 +42,7 @@ function backupProjectStore(label: string): string | null {
 
   const projectRoot = path.dirname(projectStoreDir);
   const backupDir = path.join(projectRoot, '.reverie.backups');
+  assertNotTestCheckout(backupDir);   // #274: before the store, which refuses too, is reached
 
   if (!fs.existsSync(backupDir)) {
     fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
@@ -59,6 +61,7 @@ function backupProjectStore(label: string): string | null {
 function backupGlobalStore(label: string): string | null {
   const dataDir = getDataDirectory();
   const backupDir = path.join(dataDir, '.backups');
+  assertNotTestCheckout(backupDir);   // #274
 
   if (!fs.existsSync(backupDir)) {
     fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });

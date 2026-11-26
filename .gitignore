@@ -164,4 +164,5 @@ audit.jsonl
 # inside it so the store stays clean and the hand-edit-warning contract
 # holds. Per-machine rollback history — not meant to be committed.
 .codexcli.backups/
+.reverie.backups/
 

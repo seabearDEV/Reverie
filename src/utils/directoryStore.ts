@@ -73,11 +73,16 @@ export function testCheckoutRefusal(dir: string): string | undefined {
   const root = process.env[TEST_CHECKOUT_ENV];
   if (!root) return undefined;
   if (!isInside(path.resolve(dir), path.resolve(root)) && !isInside(canonicalPath(dir), canonicalPath(root))) return undefined;
-  return `Refusing to write the store at ${dir}: it is inside the checkout under test (${root}), and RVR_TEST is set. `
+  return `Refusing to write ${dir}: it is inside the checkout under test (${root}), and RVR_TEST is set. `
     + 'A test that needs a project store makes one in a temp directory (#274).';
 }
 
-function assertNotTestCheckout(dir: string): void {
+/**
+ * Throw testCheckoutRefusal's refusal, if any. Also for the writes beside the
+ * store that are not the store's own: `init` creating or removing
+ * `.reverie/`, and the backups an import or a reset makes first.
+ */
+export function assertNotTestCheckout(dir: string): void {
   const refusal = testCheckoutRefusal(dir);
   if (refusal !== undefined) throw new Error(refusal);
 }
