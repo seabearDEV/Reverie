@@ -164,12 +164,26 @@ const TYPE_LABELS = { all: "Entries, aliases, and confirm keys", entries: "Entri
 // Tokens are one-time-use and expire after 5 minutes.
 import crypto from 'crypto';
 const CONFIRM_TOKEN_TTL = 5 * 60 * 1000;
-const pendingConfirmations = new Map<string, { key: string; command: string; expires: number }>();
+const pendingConfirmations = new Map<string, { key: string; command: string; fingerprint: string; expires: number }>();
+
+/**
+ * #243: what a confirm_token approves — the previewed command, and the stored
+ * value of every key the run reaches through `${key}` or `$(key)` (aliases
+ * resolved). A `$(key)` shows in the preview as written, so the preview text
+ * alone would not change when the command it names does. The token is
+ * redeemed only while this is unchanged.
+ */
+function runFingerprint(command: string, rawValues: string[]): string {
+  const reached = new Set<string>();
+  for (const cv of rawValues) for (const k of collectReferencedKeys(cv)) reached.add(k);
+  const values = [...reached].sort().map((k) => [k, getValue(k) ?? null]);
+  return crypto.createHash('sha256').update(JSON.stringify([command, rawValues, values])).digest('hex');
+}
 
 // --- Miss-path tracker for observed exploration cost ---
 const missTracker = new MissWindowTracker();
 
-function createConfirmToken(key: string, command: string): string {
+function createConfirmToken(key: string, command: string, fingerprint: string): string {
   // Sweep expired tokens — abandoned previews (token issued, never passed
   // back) would otherwise accumulate for the life of the server. The map
   // stays tiny, so a full sweep per create is fine.
@@ -178,17 +192,18 @@ function createConfirmToken(key: string, command: string): string {
     if (now > entry.expires) pendingConfirmations.delete(t);
   }
   const token = crypto.randomBytes(8).toString('hex');
-  pendingConfirmations.set(token, { key, command, expires: now + CONFIRM_TOKEN_TTL });
+  pendingConfirmations.set(token, { key, command, fingerprint, expires: now + CONFIRM_TOKEN_TTL });
   return token;
 }
 
+/** The approved fingerprint, or null when the token is unknown, used, expired or for another key. */
 function consumeConfirmToken(token: string, key: string): string | null {
   const entry = pendingConfirmations.get(token);
   if (!entry) return null;
   pendingConfirmations.delete(token);
   if (Date.now() > entry.expires) return null;
   if (entry.key !== key) return null;
-  return entry.command;
+  return entry.fingerprint;
 }
 
 const llmInstructions = getEffectiveInstructions();
@@ -1099,17 +1114,23 @@ function runGated(
   if (opts.dry) return textResponse(`$ ${command}`);
 
   if (needsConfirm && !opts.force) {
+    const fingerprint = runFingerprint(command, rawValues);
+    const prompt = () =>
+      `⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call reverie_run again with confirm_token: "${createConfirmToken(key, command, fingerprint)}"`;
     if (opts.confirm_token) {
-      const validated = consumeConfirmToken(opts.confirm_token, key);
-      if (!validated) {
+      const approved = consumeConfirmToken(opts.confirm_token, key);
+      if (!approved) {
         return errorResponse(`Invalid or expired confirm_token for '${key}'.`);
+      }
+      // #243: the token approves what was previewed. If the key now runs
+      // something else — its value, an alias's target, or a key it reaches
+      // changed — refuse, and preview what it would run now.
+      if (approved !== fingerprint) {
+        return errorResponse(`The command for '${key}' changed after that confirm_token was issued, so it was not run.\n${prompt()}`);
       }
       // Token valid — fall through to execution
     } else {
-      const token = createConfirmToken(key, command);
-      return textResponse(
-        `⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call reverie_run again with confirm_token: "${token}"`
-      );
+      return textResponse(prompt());
     }
   }
 

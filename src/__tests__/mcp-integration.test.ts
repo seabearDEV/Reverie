@@ -423,6 +423,81 @@ describe('MCP Integration (real I/O)', () => {
         callMcpTool('reverie_remove', { key: 'jobs' });
       }
     });
+
+    // #243: a confirm_token approves what its preview showed. It was bound to
+    // the key argument only, so whatever the key ran when the token came back
+    // is what ran — another alias target, a new value, a changed command it
+    // reaches. One server process: the token lives in its memory. Entries
+    // and flags are set up before it starts — `flag()` rewrites the list in
+    // place, which a running server's directory-mtime cache does not see.
+    describe('a confirm_token runs only what was previewed (#243)', () => {
+      const tokenOf = (r: ToolResult) => /confirm_token: "([0-9a-f]+)"/.exec(text(r))?.[1];
+
+      it('an alias re-pointed after the preview: refused, nothing runs, and the new preview carries a token that works', async () => {
+        callMcpTool('reverie_set', { key: 'cmd.a', value: `touch ${marker('a')}` });
+        callMcpTool('reverie_set', { key: 'cmd.b', value: `touch ${marker('b')}` });
+        callMcpTool('reverie_alias_set', { alias: 'go', key: 'cmd.a' });
+        flag('cmd.a', 'cmd.b');
+        await withMcpSession(async (call) => {
+          const first = await call('reverie_run', { key: 'go' });
+          expect(text(first)).toContain(`touch ${marker('a')}`);
+          const token = tokenOf(first);
+          expect(token).toBeDefined();
+          await call('reverie_alias_set', { alias: 'go', key: 'cmd.b' });
+          const redeemed = await call('reverie_run', { key: 'go', confirm_token: token });
+          expect(redeemed.isError).toBe(true);
+          expect(text(redeemed)).toContain('changed after that confirm_token was issued');
+          expect(text(redeemed)).toContain(`touch ${marker('b')}`);
+          expect(fs.existsSync(marker('a'))).toBe(false);
+          expect(fs.existsSync(marker('b'))).toBe(false);
+          // The fresh token approves the fresh preview.
+          const again = await call('reverie_run', { key: 'go', confirm_token: tokenOf(redeemed) });
+          expect(again.isError).toBeFalsy();
+          expect(fs.existsSync(marker('b'))).toBe(true);
+        });
+      });
+
+      it('the value changed after the preview: refused, nothing runs', async () => {
+        callMcpTool('reverie_set', { key: 'cmd.v', value: `touch ${marker('old')}` });
+        flag('cmd.v');
+        await withMcpSession(async (call) => {
+          const token = tokenOf(await call('reverie_run', { key: 'cmd.v' }));
+          await call('reverie_set', { key: 'cmd.v', value: `touch ${marker('new')}` });
+          const redeemed = await call('reverie_run', { key: 'cmd.v', confirm_token: token });
+          expect(redeemed.isError).toBe(true);
+          expect(fs.existsSync(marker('old'))).toBe(false);
+          expect(fs.existsSync(marker('new'))).toBe(false);
+        });
+      });
+
+      it('a command reached through $(key) changed after the preview, though the preview text did not: refused', async () => {
+        callMcpTool('reverie_set', { key: 'cmd.inner', value: 'echo one' });
+        callMcpTool('reverie_set', { key: 'cmd.outer', value: `touch ${marker('outer')} && echo $(cmd.inner)` });
+        flag('cmd.outer');
+        await withMcpSession(async (call) => {
+          const first = await call('reverie_run', { key: 'cmd.outer' });
+          await call('reverie_set', { key: 'cmd.inner', value: `touch ${marker('inner')}; echo two` });
+          const redeemed = await call('reverie_run', { key: 'cmd.outer', confirm_token: tokenOf(first) });
+          expect(text(redeemed)).toContain('changed after that confirm_token was issued');
+          expect(fs.existsSync(marker('outer'))).toBe(false);
+          expect(fs.existsSync(marker('inner'))).toBe(false);
+        });
+      });
+
+      it('nothing changed: the token runs the command (no false positive)', async () => {
+        callMcpTool('reverie_set', { key: 'cmd.same', value: `touch ${marker('same')}` });
+        flag('cmd.same');
+        await withMcpSession(async (call) => {
+          const first = await call('reverie_run', { key: 'cmd.same' });
+          expect(fs.existsSync(marker('same'))).toBe(false);
+          const token = tokenOf(first);
+          expect(token).toBeDefined();
+          const redeemed = await call('reverie_run', { key: 'cmd.same', confirm_token: token });
+          expect(redeemed.isError).toBeFalsy();
+          expect(fs.existsSync(marker('same'))).toBe(true);
+        });
+      });
+    });
   });
 
   describe('reverie_copy', () => {
