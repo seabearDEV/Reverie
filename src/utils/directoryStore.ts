@@ -20,7 +20,12 @@ import path from 'path';
 import { CodexData, CodexValue } from '../types';
 import type { ScopedStore, UnifiedData } from '../store';
 import { atomicWriteFileSync } from './atomicWrite';
-import { withFileLock } from './fileLock';
+import { STORE_LOCK_WAIT_MS, withFileLock } from './fileLock';
+
+/** A store write's lock: it may wait for other writers' transactions (#254). */
+function withStoreLock<T>(dir: string, fn: () => T): T {
+  return withFileLock(getStoreLockKey(dir), fn, STORE_LOCK_WAIT_MS);
+}
 import { flattenObject, expandFlatKeys } from './objectPath';
 import { debug } from './debug';
 import { StoreUnreadableError, UnreadableFile, classifyUnparseable, keysCollide, nameCollisionError } from './unreadable';
@@ -812,7 +817,7 @@ export function createDirectoryStore(
     ensureDir();
     ensureStoreSeeds(dir);
 
-    withFileLock(getStoreLockKey(dir), () => {
+    withStoreLock(dir, () => {
       // 0. Begin commit: bump epoch to the next odd value. Readers that
       //    observe an odd epoch loop in their seqlock retry until we finish.
       //    readEpoch() returns 0 if the file is missing, so the first save
@@ -1052,7 +1057,7 @@ export function createDirectoryStore(
     ensureDir();
     ensureStoreSeeds(dir);
 
-    return withFileLock(getStoreLockKey(dir), () => {
+    return withStoreLock(dir, () => {
       // Whether the dir-mtime fast-skip token is current right now. Unlike
       // save(), this path never scans, so we may only refresh the token after
       // writing if it was already valid — refreshing a stale token would make
@@ -1213,6 +1218,14 @@ export function migrateFileToDirectory(
   oldFilePath: string,
   newDirPath: string
 ): DirectoryMigrationResult {
+  // Every process asks this at startup, reads included. With the directory
+  // in place and no old file there is nothing to migrate — the locked path
+  // would answer the same — so don't wait on a lock another writer holds.
+  if (!fs.existsSync(oldFilePath)) {
+    try {
+      if (fs.statSync(newDirPath).isDirectory()) return { status: 'already-present', entryCount: 0 };
+    } catch { /* no directory yet: take the lock and look again */ }
+  }
   return withFileLock(getStoreLockKey(newDirPath), () =>
     migrateFileToDirectoryLocked(oldFilePath, newDirPath)
   );

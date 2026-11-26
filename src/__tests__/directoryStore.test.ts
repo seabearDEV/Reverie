@@ -312,6 +312,21 @@ describe('migrateFileToDirectory', () => {
     expect(result.status).toBe('already-present');
   });
 
+  // #254: every process runs this at startup, reads included. With nothing
+  // to migrate it must not wait on the store lock a writer holds.
+  it('answers already-present without the lock when there is nothing to migrate', () => {
+    const oldFile = path.join(tmpRoot, 'data.json');
+    const newDir = path.join(tmpRoot, 'store');
+    fs.mkdirSync(newDir);
+    const lock = getStoreLockKey(newDir) + '.lock';
+    fs.writeFileSync(lock, String(process.pid));
+    try {
+      expect(migrateFileToDirectory(oldFile, newDir).status).toBe('already-present');
+    } finally {
+      fs.rmSync(lock, { force: true });
+    }
+  });
+
   it('cleans up lingering old file when new directory already exists', () => {
     const oldFile = path.join(tmpRoot, 'data.json');
     const newDir = path.join(tmpRoot, 'store');

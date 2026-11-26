@@ -9,7 +9,23 @@ const LOCK_STALE_MS = 10_000; // Consider lock stale after 10 seconds
  * each. The old budget — five doubling retries, 31ms — failed about one in
  * sixty of twelve concurrent `rvr confirm set`s.
  */
-const LOCK_WAIT_MS = 1_000;
+/**
+ * How long a caller waits for a busy lock before giving up. The default is
+ * main's old budget (five backoff steps, about 31ms): session bookkeeping and
+ * the startup migration check skip their work rather than stall a command.
+ * Store writes pass STORE_LOCK_WAIT_MS (#254): a store transaction holds the
+ * lock across read, change and write, and parallel writers queue behind it.
+ */
+const DEFAULT_LOCK_WAIT_MS = 31;
+export const STORE_LOCK_WAIT_MS = 1_000;
+
+/** Another process held the lock for the whole wait. */
+export class LockTimeoutError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'LockTimeoutError';
+  }
+}
 /** Longest single sleep between attempts: past it, the backoff stops doubling. */
 const LOCK_BACKOFF_CAP_MS = 16;
 // Reusable buffer for Atomics.wait()-based sleep (avoids per-call allocation)
@@ -21,9 +37,9 @@ const _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
  * LOCK_WAIT_MS, then throws. Automatically breaks stale locks (older than
  * LOCK_STALE_MS).
  */
-function acquireLock(filePath: string): void {
+function acquireLock(filePath: string, waitMs: number): void {
   const lockPath = filePath + '.lock';
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + waitMs;
 
   for (let attempt = 0; ; attempt++) {
     try {
@@ -60,7 +76,7 @@ function acquireLock(filePath: string): void {
           continue;
         }
 
-        throw new Error(`Unable to acquire lock on ${filePath} after ${LOCK_WAIT_MS}ms.`, { cause: err });
+        throw new LockTimeoutError(`Unable to acquire lock on ${filePath} after ${waitMs}ms.`, { cause: err });
       }
       throw err;
     }
@@ -98,10 +114,10 @@ function releaseLock(filePath: string): void {
  * Production code should never set `RVR_DISABLE_LOCKING`. There are no
  * known production environments where lock acquisition is expected to fail.
  */
-export function withFileLock<T>(filePath: string, fn: () => T): T {
+export function withFileLock<T>(filePath: string, fn: () => T, waitMs: number = DEFAULT_LOCK_WAIT_MS): T {
   let locked = false;
   try {
-    acquireLock(filePath);
+    acquireLock(filePath, waitMs);
     locked = true;
   } catch (err) {
     if (process.env.RVR_DISABLE_LOCKING === '1') {

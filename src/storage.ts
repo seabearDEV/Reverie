@@ -1,6 +1,7 @@
 import { color } from './formatting';
 import { getNestedValue, setNestedValue, removeNestedValue, flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 import { KeyCollisionError, assertKeyWritable, findCollidingPairs } from './utils/keyCollision';
+import { LockTimeoutError } from './utils/fileLock';
 import { CodexData, CodexValue } from './types';
 import { debug } from './utils/debug';
 import { Scope, loadEntries, saveEntries, updateEntries, loadEntriesMerged, findProjectFile, getEntryFast, setEntryFast } from './store';
@@ -222,6 +223,9 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
     if (err instanceof StoreUnreadableError) throw err;
     // #246: so does a write that would land in another entry's file.
     if (err instanceof KeyCollisionError) throw err;
+    // A writer held the store lock for the whole wait: the slow path would
+    // wait on the same lock again and double the time to the same refusal.
+    if (err instanceof LockTimeoutError) throw err;
     debug(`setValue fast-path failed, falling through: ${String(err)}`);
   }
   updateEntries((entries, meta) => {
