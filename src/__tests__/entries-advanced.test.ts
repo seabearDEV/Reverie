@@ -320,6 +320,54 @@ describe('entries advanced', () => {
       expect(r.status).not.toBe(0);
       expect(fs.existsSync(marker)).toBe(false);
     });
+
+    // #242: a command's output is data. It printed `$(gated)` and the outer
+    // pass ran it as an exec reference, past the gate; it printed shell
+    // syntax and the shell ran it; it supplied the key of a `$(…)` that the
+    // gate's collect pass could not see without running anything.
+    it('a command printing an exec reference does not run the gated command (#242)', () => {
+      const marker = path.join(tmpDir, 'pwned-rescan');
+      rvr(['set', '--global', '--force', 'out.gated', `touch ${marker}`, '--confirm']);
+      rvr(['set', '--global', '--force', 'out.emit', "printf '\\044(out.gated)'"]);
+      rvr(['set', '--global', '--force', 'out.mid', '$(out.emit)']);
+      rvr(['set', '--global', '--force', 'out.top', '${out.mid}']);
+      const r = rvr(['run', 'out.top']);
+      expect(r.status).not.toBe(0);
+      expect(fs.existsSync(marker)).toBe(false);
+    });
+
+    it.each([
+      ['command substitution', "printf '\\044(touch %s)'"],
+      ['a separator', "printf 'x; touch %s'"],
+      ['a newline', "printf 'x\\ntouch %s'"],
+    ])('output holding %s is refused, not run (#242)', (name, printer) => {
+      const marker = path.join(tmpDir, `pwned-splice-${name.replace(/\W/g, '')}`);
+      rvr(['set', '--global', '--force', 'out.emits', printer.replace('%s', marker)]);
+      rvr(['set', '--global', '--force', 'out.wrap', 'echo $(out.emits)']);
+      const r = rvr(['--json', 'run', 'out.wrap']);
+      expect(r.status).not.toBe(0);
+      expect(JSON.parse(r.stdout).error.message).toContain('printed shell syntax');
+      expect(fs.existsSync(marker)).toBe(false);
+    });
+
+    it('a $(…) whose key a command printed is refused, not run (#242)', () => {
+      const marker = path.join(tmpDir, 'pwned-dynamic');
+      rvr(['set', '--global', '--force', 'dyn.gated', `touch ${marker}`, '--confirm']);
+      rvr(['set', '--global', '--force', 'dyn.name', 'echo dyn.gated']);
+      rvr(['set', '--global', '--force', 'dyn.mid', '$(dyn.name)']);
+      rvr(['set', '--global', '--force', 'dyn.top', '$(${dyn.mid})']);
+      const r = rvr(['run', 'dyn.top']);
+      expect(r.status).not.toBe(0);
+      expect(fs.existsSync(marker)).toBe(false);
+    });
+
+    it('plain output is still pasted and splits into arguments (#242, no false-positive)', () => {
+      rvr(['set', '--global', '--force', 'out.words', 'echo a b']);
+      rvr(['set', '--global', '--force', 'out.use', 'printf "%s|" $(out.words)']);
+      const r = rvr(['--json', 'run', 'out.use']);
+      expect(r.status).toBe(0);
+      expect(JSON.parse(r.stdout).result.stdout).toBe('a|b|');
+    });
   });
 
   // ── _meta staleness ────────────────────────────────────────────────

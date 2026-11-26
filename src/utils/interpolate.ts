@@ -263,6 +263,12 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
 }
 
 /**
+ * Characters the shell treats as syntax (#242, owner rule 2026-11-25). Exec
+ * output holding any of them is refused rather than pasted into a command.
+ */
+const SHELL_SYNTAX = /[`$;&|<>()'"\\#\n]/;
+
+/**
  * Resolve a `$(key)` exec reference: look up stored command, interpolate it,
  * execute via shell, and return trimmed stdout. Results are cached per pass.
  *
@@ -320,12 +326,9 @@ function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCa
 
   // Execute
   const shell = process.env.SHELL ?? '/bin/sh';
+  let stdout: string;
   try {
-    const stdout = execSync(command, { encoding: 'utf-8', shell, timeout: 10000 });
-    // Trim trailing newline (shell commands typically append one)
-    const result = stdout.replace(/\n$/, '');
-    execCache.set(resolvedKey, result);
-    return result;
+    stdout = execSync(command, { encoding: 'utf-8', shell, timeout: 10000 });
   } catch (err: unknown) {
     const code = (err && typeof err === 'object' && 'status' in err) ? Number((err as { status: number }).status) : 1;
     // No `cause` on purpose: the ExecSyncError carries the child's stdout/stderr
@@ -335,6 +338,21 @@ function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCa
     // eslint-disable-next-line preserve-caught-error
     throw new Error(`Exec interpolation failed: "${ref}" exited with code ${code}`);
   }
+  // Trailing newlines go, as the shell's own $(...) drops them.
+  const result = stdout.replace(/\n+$/, '');
+  // #242: the output is pasted into a command that the shell then evaluates,
+  // so output holding shell syntax would run as code — whoever controls what
+  // the command prints (a file it reads, git metadata, the network) would
+  // choose what runs. Refuse it; nothing has executed past this command yet.
+  // Plain output (words, paths, versions) passes and still splits into
+  // arguments. The output itself stays out of the message, as above.
+  const syntax = SHELL_SYNTAX.exec(result);
+  if (syntax) {
+    const shown = syntax[0] === '\n' ? 'a newline' : `'${syntax[0]}'`;
+    throw new Error(`Exec interpolation refused: "${ref}" printed shell syntax (${shown}); pasted into the command, its output would run as code`);
+  }
+  execCache.set(resolvedKey, result);
+  return result;
 }
 
 /**
@@ -373,6 +391,11 @@ export function interpolate(
   // Phase 1: resolve ${key} references (brace-aware to support nested ${} in defaults)
   // Backslash escape: \${...} emits literal ${...}, \$(...) emits literal $(...)
   let result = value;
+  // #242: where phase 1 put a referenced value into `result`. That text is
+  // already fully interpolated — its own exec refs ran, its escapes were
+  // consumed — so phase 2 must not scan it again: re-scanning ran a command's
+  // output, and an escaped \$(key), as exec references.
+  const substituted: [number, number][] = [];
   if (result.includes('${')) {
     let out = '';
     let i = 0;
@@ -409,14 +432,18 @@ export function interpolate(
           if (ref === '') {
             out += '${}';
           } else if (tolerated === undefined) {
+            const start = out.length;
             out += resolveRef(ref, maxDepth, seen, execCache, allowExec, visited, noExec);
+            substituted.push([start, out.length]);
           } else {
             // A read (interpolateForRead): a reference that does not resolve
             // is kept as written and the scan goes on, so that a `:?` or a
             // cycle after it — here or further down the chain — still throws.
             const before = tolerated.length;
             try {
+              const start = out.length;
               out += resolveRef(ref, maxDepth, seen, execCache, allowExec, visited, noExec, tolerated);
+              substituted.push([start, out.length]);
             } catch (err) {
               if (!fallsBackOnRead(err)) throw err;
               tolerated.push({ err, nested: seen.size > 0 });
@@ -449,7 +476,15 @@ export function interpolate(
   if (result.includes('$(')) {
     let out = '';
     let i = 0;
+    let span = 0;
     while (i < result.length) {
+      // #242: text a ${key} put here is copied as it is, never scanned again.
+      while (span < substituted.length && substituted[span][1] <= i) span++;
+      if (span < substituted.length && substituted[span][0] <= i) {
+        out += result.slice(i, substituted[span][1]);
+        i = substituted[span][1];
+        continue;
+      }
       // Escaped exec ref: \$(...) → literal $(...)
       if (result[i] === '\\' && result[i + 1] === '$' && result[i + 2] === '(') {
         const close = result.indexOf(')', i + 3);
@@ -466,6 +501,13 @@ export function interpolate(
         const close = result.indexOf(')', i + 2);
         if (close !== -1) {
           if (allowExec || noExec) {
+            // #242: a key that a ${key} supplied — `$(${name})` — may come from
+            // a command's output, which the gate's collect pass cannot know
+            // without running it. Refuse it on the paths that run commands.
+            // An empty span counts: in collect mode a nested exec yields ''.
+            if (substituted.some(([s, e]) => s <= close && e >= i + 2)) {
+              throw new Error(`Exec interpolation refused: "${result.slice(i, close + 1)}" takes its key from a \${…} reference; write the key itself`);
+            }
             // noExec (#158): enter the ref to enumerate keys for the confirm
             // gate, but resolveExecRef skips execSync in that mode.
             const ref = result.slice(i + 2, close);
