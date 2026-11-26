@@ -17,6 +17,7 @@ import { DEFAULT_LLM_INSTRUCTIONS, CLI_LLM_INSTRUCTIONS, getEffectiveInstruction
 import { withCliInstrumentation } from './utils/instrumentation';
 import { readStdin, readStdinWithin, stdinFirstByteWaitMs } from './utils/stdin';
 import { configureOutput, resolveJsonMode, isJsonMode, emitEnvelope, alreadyEmitted, setResult, recordErrorCode, addWarning } from './utils/output';
+import { enterSourceOutput } from './utils/sourceOutput';
 
 // Early-exit handler for shell tab-completion (must run before Commander parses args)
 const completionFlagIndex = process.argv.indexOf('--get-completions');
@@ -59,8 +60,21 @@ reverie.hook('preAction', (_thisCommand, actionCommand) => {
   for (let c: typeof actionCommand | null = actionCommand; c?.parent; c = c.parent) {
     names.unshift(c.name());
   }
-  const json = resolveJsonMode(actionCommand.optsWithGlobals().json as boolean | undefined);
-  configureOutput({ json, command: names.join(' ') });
+  const opts = actionCommand.optsWithGlobals();
+  const json = resolveJsonMode(opts.json as boolean | undefined);
+  // #281: `run --source` writes the command for the shell wrapper, which
+  // evals all of stdout. JSON mode put the envelope there instead, quoting
+  // store file names, and the wrapper ran it. So --source never emits an
+  // envelope, and nothing but the command reaches stdout — from here on,
+  // everything else goes to stderr. (`get` has a --source of its own.)
+  const sourceRun = actionCommand.name() === 'run' && opts.source === true;
+  if (sourceRun) {
+    enterSourceOutput();
+    if (json) {
+      process.stderr.write(`warning: --source prints the command for the shell wrapper to run, so JSON output (--json, RVR_OUTPUT=json) is off. To get JSON through the wrapper, update it: ${getBinaryName()} config completions install\n`);
+    }
+  }
+  configureOutput({ json: json && !sourceRun, command: names.join(' ') });
 });
 
 // Set command
@@ -992,11 +1006,14 @@ async function handleFirstRun(): Promise<void> {
 
   // Skip the banner for `mcp-server` — its stdout is JSON-RPC framing,
   // and a chatty stderr write is fine (clients log it but don't parse it).
+  // And the install prompt for `run --source`: the shell wrapper evals its
+  // stdout (#281).
   const isMcpServer = process.argv.includes('mcp-server');
+  const isSource = process.argv.includes('--source');
   const bin = getBinaryName();
   process.stderr.write(`\nWelcome to Reverie! Run \`${bin} config examples\` to see usage patterns.\n`);
 
-  if (isMcpServer || !process.stdin.isTTY) {
+  if (isMcpServer || isSource || !process.stdin.isTTY) {
     process.stderr.write('\n');
     return;
   }

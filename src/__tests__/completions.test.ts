@@ -1,5 +1,5 @@
 import * as fs from 'fs';
-import { getCompletions, generateBashScript, generateZshScript, installCompletions, CompletionItem } from '../completions';
+import { getCompletions, generateBashScript, generateZshScript, generateShellWrapper, installCompletions, replaceShellWrapper, CompletionItem } from '../completions';
 import { clearStoreCaches } from '../store';
 import { clearConfigCache } from '../config';
 
@@ -752,7 +752,7 @@ describe('Completions', () => {
     it('skips if completions, shell wrapper, and history exclusion already installed', () => {
       process.env.SHELL = '/bin/zsh';
       (fs.existsSync as Mock).mockReturnValue(true);
-      (fs.readFileSync as Mock).mockReturnValue('eval "$(rvr config completions zsh)"\n# Reverie shell wrapper (rvr)\n_rvr_history_filter');
+      (fs.readFileSync as Mock).mockReturnValue('eval "$(rvr config completions zsh)"\n# Reverie shell wrapper (rvr) v2 — eval\n_rvr_history_filter');
 
       installCompletions();
 
@@ -784,7 +784,7 @@ describe('Completions', () => {
       process.env.SHELL = '/bin/zsh';
       (fs.existsSync as Mock).mockReturnValue(true);
       (fs.readFileSync as Mock).mockReturnValue(
-        'eval "$(rvr config completions zsh)"\n# Reverie shell wrapper (rvr)\nrvr() {\n}\n_rvr_history_filter'
+        `eval "$(rvr config completions zsh)"\n${generateShellWrapper('rvr')}_rvr_history_filter`
       );
 
       installCompletions();
@@ -794,6 +794,127 @@ describe('Completions', () => {
         call.some((arg: unknown) => typeof arg === 'string' && arg.includes('Shell wrapper already installed'))
       );
       expect(showedAlready).toBe(true);
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+    });
+
+    // #281: the wrapper installed before evaled `--json` output. Running the
+    // install again replaces it in place, and leaves the rest of the file be.
+    describe('an older wrapper (#281)', () => {
+      const OLD = [
+        '# Reverie shell wrapper (rvr) — eval "rvr run" in the current shell so cd/export/alias work',
+        'rvr() {',
+        '  local subcmd="" has_help=false',
+        '  for arg in "$@"; do',
+        '    if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then',
+        '      has_help=true',
+        '    elif [[ "$arg" != -* && -z "$subcmd" ]]; then',
+        '      subcmd="$arg"',
+        '    fi',
+        '  done',
+        '  if [[ "$has_help" == false && ("$subcmd" == "run" || "$subcmd" == "r") ]]; then',
+        '    local __rvr_cmd __rvr_exit',
+        '    __rvr_cmd="$(command rvr "$@" --source)"',
+        '    __rvr_exit=$?',
+        '    [[ $__rvr_exit -ne 0 ]] && return $__rvr_exit',
+        '    [[ -n "$__rvr_cmd" ]] && eval "$__rvr_cmd"',
+        '  else',
+        '    command rvr "$@"',
+        '  fi',
+        '}',
+        '',
+      ].join('\n');
+      const before = '# my zshrc\neval "$(rvr config completions zsh)"\n\n';
+      const after = '\n# Reverie - exclude from shell history\n_rvr_history_filter() { true }\nalias ll="ls -l"\n';
+
+      it('is replaced in place by the current one', () => {
+        process.env.SHELL = '/bin/zsh';
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.readFileSync as Mock).mockReturnValue(before + OLD + after);
+
+        installCompletions();
+
+        const write = (fs.writeFileSync as Mock).mock.calls.find((call: unknown[]) => String(call[0]).endsWith('.zshrc'));
+        expect(write).toBeDefined();
+        expect(write[1]).toBe(before + generateShellWrapper('rvr') + after);
+        expect(fs.appendFileSync).not.toHaveBeenCalled();
+        expect(consoleSpy.mock.calls.some((call: unknown[]) => String(call[0]).includes('Shell wrapper updated'))).toBe(true);
+      });
+
+      it('replaceShellWrapper: one function left, and the eval guarded', () => {
+        const updated = replaceShellWrapper(before + OLD + after, 'rvr', generateShellWrapper('rvr'))!;
+        expect(updated.match(/^rvr\(\) \{$/gm)).toHaveLength(1);
+        expect(updated).toContain('# Reverie shell wrapper (rvr) v2 ');
+        expect(updated).not.toContain('[[ -n "$__rvr_cmd" ]] && eval');
+        expect(updated).toContain('"$arg" == "--json"');
+        expect(updated.startsWith(before)).toBe(true);
+        expect(updated.endsWith(after)).toBe(true);
+      });
+
+      it('one edited out of shape is left alone, and the install says what to do', () => {
+        process.env.SHELL = '/bin/zsh';
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.readFileSync as Mock).mockReturnValue(`${before}# Reverie shell wrapper (rvr) — mine now\nfunction rvr { command rvr "$@"; }\n${after}`);
+
+        installCompletions();
+
+        expect((fs.writeFileSync as Mock).mock.calls.some((call: unknown[]) => String(call[0]).endsWith('.zshrc'))).toBe(false);
+        expect(fs.appendFileSync).not.toHaveBeenCalled();
+        expect(consoleErrorSpy.mock.calls.some((call: unknown[]) => String(call[0]).includes('older shell wrapper'))).toBe(true);
+      });
+
+      // Only a block exactly as a release wrote it is replaced. A closing line
+      // edited by hand made the old search run on to the next lone `}`.
+      it.each([
+        ['} # end rvr wrapper'],
+        ['  }'],
+        ['};'],
+      ])('a closing line edited to `%s`: not replaced, so the code after it survives', (closing) => {
+        const edited = OLD.replace(/\n\}\n$/, `\n${closing}\n`);
+        const rc = `${before}${edited}myfunc() {\n  echo "my precious function"\n}\nexport AFTER=1\n`;
+        expect(replaceShellWrapper(rc, 'rvr', generateShellWrapper('rvr'))).toBeUndefined();
+      });
+
+      it('a line added inside it: not replaced', () => {
+        const edited = OLD.replace('  local subcmd=""', '  echo hi\n  local subcmd=""');
+        expect(replaceShellWrapper(before + edited + after, 'rvr', generateShellWrapper('rvr'))).toBeUndefined();
+      });
+
+      it('as the last line of the file, with no newline after it: replaced', () => {
+        expect(replaceShellWrapper(before + OLD.slice(0, -1), 'rvr', generateShellWrapper('rvr'))).toBe(before + generateShellWrapper('rvr'));
+      });
+
+      it('both texts shipped for a hyphenated binary are replaced: before #111 and after', () => {
+        const pre111 = OLD.replace(/rvr/g, 'rvr-dev');
+        const post111 = pre111.replace(/__rvr-dev_/g, '__rvr_dev_');
+        expect(post111).toContain('__rvr_dev_cmd');
+        expect(post111).toContain('command rvr-dev "$@" --source');
+        for (const old of [pre111, post111]) {
+          expect(replaceShellWrapper(before + old + after, 'rvr-dev', generateShellWrapper('rvr-dev'))).toBe(before + generateShellWrapper('rvr-dev') + after);
+        }
+      });
+
+      it('an rc it cannot write: one line, the wrapper saved in the data dir, and the install goes on', () => {
+        process.env.SHELL = '/bin/zsh';
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.readFileSync as Mock).mockReturnValue(before + OLD + after);
+        (fs.writeFileSync as Mock).mockImplementation((p: string) => {
+          if (String(p).endsWith('.zshrc')) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        });
+
+        expect(() => installCompletions()).not.toThrow();
+
+        const lines = consoleErrorSpy.mock.calls.map((call: unknown[]) => String(call[0]));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain('could not update the shell wrapper');
+        expect(lines[0]).toContain('(EACCES)');
+        expect(lines[0]).toContain('/mock/shell-wrapper.sh');
+        expect((fs.writeFileSync as Mock).mock.calls.some((call: unknown[]) => call[0] === '/mock/shell-wrapper.sh' && call[1] === generateShellWrapper('rvr'))).toBe(true);
+        expect(consoleSpy.mock.calls.some((call: unknown[]) => String(call[0]).includes('History exclusion'))).toBe(true);
+      });
+
+      it('another binary\'s wrapper is not this one', () => {
+        expect(replaceShellWrapper(OLD.replace(/rvr/g, 'rvr-dev'), 'rvr', generateShellWrapper('rvr'))).toBeUndefined();
+      });
     });
 
   });

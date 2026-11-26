@@ -47,11 +47,22 @@ describe('a commit that fails partway leaves the epoch even (#262)', () => {
 
     // The commit removes `a` and the flag of `k`. The list loses a flag, so
     // it is written last, after the delete — and a directory is in its place.
-    const err = caught(() => store.update(current => {
-      fs.rmSync(path.join(dir, '_confirm.json'));
-      fs.mkdirSync(path.join(dir, '_confirm.json'));
-      return { ...current, entries: { k: 'v' }, confirm: {} };
-    }));
+    // It appears during the delete: one there before the commit's writes is
+    // refused up front as unreadable (#283), and nothing is deleted.
+    const unlink = fs.unlinkSync.bind(fs);
+    const spy = vi.spyOn(fs, 'unlinkSync').mockImplementation(((p: fs.PathLike) => {
+      unlink(p);
+      if (String(p) === path.join(dir, 'a.json')) {
+        fs.rmSync(path.join(dir, '_confirm.json'));
+        fs.mkdirSync(path.join(dir, '_confirm.json'));
+      }
+    }) as typeof fs.unlinkSync);
+    let err: unknown;
+    try {
+      err = caught(() => store.update(current => ({ ...current, entries: { k: 'v' }, confirm: {} })));
+    } finally {
+      spy.mockRestore();
+    }
 
     expect(epochOf(dir) % 2).toBe(0);
     expect(epochOf(dir)).toBeGreaterThan(before);
