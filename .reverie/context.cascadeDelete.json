@@ -1,7 +1,7 @@
 {
-  "value": "removeEntry cascades: when an entry is removed, removeAliasesForKey and removeConfirmForKey are called automatically (src/commands/entries.ts:630-634). Removes any alias pointing to the key OR any of its children, and any confirm metadata for the same. Practical impact: don't write defensive alias/confirm cleanup after a remove — already handled. Discovered when post-test cleanup tried to alias_remove an alias whose target had just been removed and got \"not found\".",
+  "value": "Removing an entry (CLI removeEntry, MCP reverie_remove) cascades ALIASES that point at the key or its children — not confirmation flags. Since #244 (2026-11-25) a removal leaves flags listed and warns: a flag gates its name in every project, so dropping it could ungate another project's entry. Clear one with `rvr confirm remove`. Since #267, `rm ns.k` also deletes the hidden `ns.k.sub` of an entry+namespace pair. A namespace rm whose delete fails exits 1 (IO) and skips the alias cascade (#277). Don't write defensive alias cleanup after a remove.",
   "meta": {
     "created": 1775757928074,
-    "updated": 1775757928074
+    "updated": 1795726085487
   }
 }

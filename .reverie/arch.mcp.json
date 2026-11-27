@@ -1,7 +1,7 @@
 {
-  "value": "19 tools via @modelcontextprotocol/sdk. All tools accept optional scope param. Telemetry + audit auto-logged per call.",
+  "value": "20 tools via @modelcontextprotocol/sdk (reverie_config_unset added by #275). All tools accept optional scope param; config tools record scope global. Telemetry + audit auto-logged per call. Tool descriptions total under 3000 bytes, enforced by handshake-size.test.ts. No MCP tool sets a confirmation flag — flags are CLI-only by design.",
   "meta": {
     "created": 1775497222452,
-    "updated": 1775497222452
+    "updated": 1795726085355
   }
 }
