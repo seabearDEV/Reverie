@@ -133,6 +133,22 @@ function lookUp(map: AliasMap, name: string): string {
   return Object.hasOwn(map, name) ? map[name] : name;
 }
 
+/**
+ * `name` looked up as aliasesSeen's map would answer it, without building
+ * that map: in the default view the project's alias wins, then the
+ * global one. Both maps are read, the global one first, as building the
+ * layered map read them.
+ */
+function lookUpSeen(view: NameView, ctx: NameContext, name: string): string {
+  const { maps } = plan(ctx);
+  if (maps === 'global') return lookUp(view.globalAliases, name);
+  if (maps === 'project') return lookUp(view.projectAliases, name);
+  if (!view.hasProjectStore) return lookUp(view.globalAliases, name);
+  const global = view.globalAliases;
+  const project = view.projectAliases;
+  return Object.hasOwn(project, name) ? project[name] : lookUp(global, name);
+}
+
 function dropColon(name: string): string {
   return name.replace(/:$/, '');
 }
@@ -169,7 +185,7 @@ export function gateNamesOf(written: string, key: string, globalAliases?: AliasM
 export function resolveName(view: NameView, ctx: NameContext, written: string, onLookup?: OnAliasLookup): Resolution {
   const name = dropColon(written);
   const { maps, scope } = plan(ctx);
-  const key = lookUp(aliasesSeen(view, ctx), name);
+  const key = lookUpSeen(view, ctx, name);
   if (key !== name) onLookup?.(name, key);
   // Project aliases were in play unless the lookup was global-only. That
   // holds outside a project too, where the default view is the global map

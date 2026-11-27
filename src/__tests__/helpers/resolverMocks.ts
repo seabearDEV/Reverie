@@ -1,50 +1,54 @@
 /**
- * The alias module's resolver wrappers, over a test's resolveKey mock. A
- * suite that mocks '../alias' with a resolveKey of its own gets the names a
- * reference resolves to, and the gate names, composed from that mock as
- * interpolate.ts composed them before the resolver (#280: a global entry's
- * references read the global aliases; #279: as written, the target, and the
- * global target when project aliases took part).
+ * The alias module's resolver wrappers, for suites that mock '../alias'
+ * with a resolveKey of their own. They run the real resolver
+ * (utils/nameResolver) over a view the suite's resolveKey describes, so a
+ * mocked suite tests the resolver's own composition — the key, the scope,
+ * and the gate names (#279: as written, the target, and the global target
+ * when project aliases took part) — not a copy of it.
  */
+import { type NameContext, type NameView, resolveName } from '../../utils/nameResolver';
+
 type ResolveKey = (key: string, scope?: string) => string;
 
-export function referenceOver(resolveKey: ResolveKey, written: string, from: 'project' | 'global') {
-  const key = from === 'global' ? resolveKey(written, 'global') : resolveKey(written);
-  const name = written.replace(/:$/, '');
+/**
+ * An alias map whose aliases are what `lookup` answers: a name is an alias
+ * when its answer differs from it. Each name is asked once per map.
+ */
+function mapOver(lookup: (name: string) => string): Record<string, string> {
+  const answers = new Map<string, string>();
+  const answer = (name: string): string => {
+    if (!answers.has(name)) answers.set(name, lookup(name));
+    return answers.get(name)!;
+  };
+  return new Proxy({} as Record<string, string>, {
+    getOwnPropertyDescriptor: (_target, k) =>
+      typeof k === 'string' && answer(k) !== k ? { value: answer(k), enumerable: true, configurable: true, writable: true } : undefined,
+    get: (_target, k) => (typeof k === 'string' ? answer(k) : undefined),
+  });
+}
+
+/**
+ * The view a suite's resolveKey describes: a project store whose map
+ * answers as resolveKey(name) does, and a global map that answers as
+ * resolveKey(name, 'global') does.
+ */
+export function viewOver(resolveKey: ResolveKey): NameView {
   return {
-    name,
-    key,
-    scope: from === 'global' ? 'global' as const : 'auto' as const,
-    get gateNames() {
-      const names = new Set([name, key]);
-      if (from !== 'global') names.add(resolveKey(name, 'global'));
-      return [...names];
-    },
+    hasProjectStore: true,
+    unusedProject: undefined,
+    projectAliases: mapOver(name => resolveKey(name)),
+    globalAliases: mapOver(name => resolveKey(name, 'global')),
   };
 }
 
+/** resolveNameNow over a suite's resolveKey: the real resolver, over viewOver's view. */
+export function resolutionOver(resolveKey: ResolveKey, ctx: NameContext, written: string) {
+  return resolveName(viewOver(resolveKey), ctx, written);
+}
 
-type Context = { kind: 'typed'; scope: string } | { kind: 'reference'; from: 'project' | 'global' };
-
-/**
- * resolveNameNow over a resolveKey mock: a typed name resolves as
- * resolveKey(name, scope) did, and its gate names are composed as
- * gateNamesFor composed them.
- */
-export function resolutionOver(resolveKey: ResolveKey, ctx: Context, written: string) {
-  if (ctx.kind === 'reference') return referenceOver(resolveKey, written, ctx.from);
-  const key = resolveKey(written, ctx.scope);
-  const name = written.replace(/:$/, '');
-  return {
-    name,
-    key,
-    scope: ctx.scope,
-    get gateNames() {
-      const names = new Set([name, key]);
-      if (ctx.scope !== 'global') names.add(resolveKey(name, 'global'));
-      return [...names];
-    },
-  };
+/** resolveReferenceName over a suite's resolveKey. */
+export function referenceOver(resolveKey: ResolveKey, written: string, from: 'project' | 'global') {
+  return resolutionOver(resolveKey, { kind: 'reference', from }, written);
 }
 
 /**
