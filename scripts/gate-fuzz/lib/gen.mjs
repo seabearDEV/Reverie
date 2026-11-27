@@ -147,21 +147,27 @@ export function generateWorld(seed, index) {
     if (r.chance(0.5)) put(r.pick(['project', 'global']), 'tp', [r.pick(['${d1}', '$(d1)']), ...(r.chance(0.5) ? [r.pick(['$(fl)', '${fl}', ref('tp')])] : [])]);
   }
 
-  // The #289 shape: an exec ref walked shallow first and deep later, then a flagged command.
+  // The #289 shape: an exec ref walked shallow first and deep later, then a
+  // flagged command. As in the issue's reproduction, the d links are ${…}:
+  // a $(d…) link would run x's output as a command. Half the time the
+  // reproduction's order (${s} ${d1} $(fl)); otherwise any order, most of
+  // which a correct and a broken build both handle the same way.
   if (r.chance(0.3)) {
     const home = r.pick(['project', 'project', 'global']);
     const flStore = r.pick(['project', 'global']);
+    const flName = r.chance(0.8) ? 'fl' : 'fl2';
     const K = r.int(3, 6), M = r.int(5, 9);
-    put(home, 'tp', [r.pick(['${s}', '$(s)']), r.pick(['${d1}', '$(d1)']), r.pick(['$(fl)', '${fl}', '$(fl2)'])]);
+    const order = r.chance(0.5) ? ['${s}', '${d1}', `$(${flName})`] : [r.pick(['${s}', '$(s)']), r.pick(['${d1}', '$(d1)']), r.pick([`$(${flName})`, `\${${flName}}`])];
+    put(home, 'tp', order);
     put(home, 's', ['$(x)']);
     put(home, 'x', ['${y1}']);
     for (let i = 1; i < K; i++) stores[home].entries[`y${i}`] = `\${y${i + 1}}`;
     stores[home].entries[`y${K}`] = 'yw';
-    for (let i = 1; i < M; i++) stores[home].entries[`d${i}`] = r.chance(0.85) ? `\${d${i + 1}}` : `$(d${i + 1})`;
+    for (let i = 1; i < M; i++) stores[home].entries[`d${i}`] = `\${d${i + 1}}`;
     stores[home].entries[`d${M}`] = '$(x)';
-    put(flStore, r.chance(0.8) ? 'fl' : 'fl2', []);
+    put(flStore, flName, []);
     if (r.chance(0.3)) put(otherStore(home), 'd1', [ref('d1')]);   // the #280 variant: a same-named entry in the other store
-    stores[r.pick(['project', 'global'])].confirm.fl = true;
+    stores[r.pick(['project', 'global'])].confirm[flName] = true;
   }
 
   // A walk that stops after a command already ran (#289's fail-closed rule), on

@@ -220,6 +220,7 @@ async function main() {
     // One world, every invocation printed: for replaying a reported violation.
     if (o.world !== undefined || o.replay) {
       const spec = o.replay ? JSON.parse(fs.readFileSync(o.replay, 'utf8')) : generateWorld(o.seed, o.world);
+      if (o.inv !== undefined && !(Number.isInteger(o.inv) && o.inv >= 0 && o.inv < spec.invocations.length)) throw new Error(`--inv ${o.inv}: this world has invocations 0..${spec.invocations.length - 1}`);
       const rec = await doWorld(o, spec, work);
       for (const r of rec.records) {
         const tag = r.violations.length ? `  <-- ${r.violations.map(v => v.rule).join(', ')}` : '';
