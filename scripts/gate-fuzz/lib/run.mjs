@@ -124,6 +124,8 @@ export function tally(stats, records, spec) {
     if (/printed shell syntax/.test(msg)) bump('exec output refused');
     if (/takes its key from/.test(msg)) bump('$(${…}) refused');
     if (res.kind === 'ran' && res.markers.length) bump('ran something');
+    const approved = inv.surface === 'cli' ? inv.yes : res.approved;
+    if (!approved && inv.kind !== 'write' && !isRead(inv) && res.markers.length) bump('unapproved runs that ran');
     if (res.kind === 'ask' && inv.surface === 'mcp' && res.code === 'REQUIRES_CONFIRMATION') bump('mcp asks');
     if (inv.surface === 'mcp' && res.approved) bump('mcp approved by token/force');
     if (inv.surface === 'cli' && inv.chain) bump(`cli chain:${res.kind}`);

@@ -53,12 +53,14 @@ export function makeRng(seed, index) {
   return r;
 }
 
-// No key is the name of a real program: a chain entry's value runs as a command when it is run plainly.
+// No key is the name of a program in /usr/bin or /bin (children get PATH=/usr/bin:/bin): a
+// chain entry's value runs as a command when it is run plainly.
 const BASE_KEYS = ['a', 'b', 'c', 'tp', 'fl', 'fl2', 'sx', 'x', 'n.x', 'n.y', 'ch', 'ch2'];
 const VARIANTS = ['A', 'B', 'Fl', 'FL', 'Sx', `${LONG_S}x`, 'N.x', 'n', 'missing', 'q'];
 const DEEP = Array.from({ length: 13 }, (_, i) => `d${i + 1}`);
 const NAME_POOL = [...BASE_KEYS, ...VARIANTS, 'd1', 'd5', 'y1', 's'];
 const IRREGULAR = ['dir', 'symlink', 'dangling', 'garbage', 'array', 'null', 'empty'];
+const MISSING = ['nope', 'nope2'];   // names no store ever holds
 
 /** Other spellings of a key: case, and ſ for s (APFS folds both onto the stored file; a case-sensitive volume folds neither). */
 function variantsOf(key) {
@@ -96,10 +98,15 @@ export function generateWorld(seed, index) {
       [0.35, () => r.pick(NAME_POOL)],
     ])();
   };
+  const flaggedNames = () => [...new Set(['project', 'global'].flatMap(s => Object.keys(stores[s].confirm).filter(k => stores[s].confirm[k] === true)))];
   const ref = fromKey => {
     const N = refName(fromKey), M = refName(fromKey);
+    // A :- body is walked only when its key is missing: aim most :- keys at
+    // names no store holds, and many bodies at a flagged name.
+    const D = r.chance(0.6) ? r.pick(MISSING) : N;
+    const B = flaggedNames().length && r.chance(0.5) ? r.pick(flaggedNames()) : M;
     return r.weighted([
-      [5, `\${${N}}`], [5, `$(${N})`], [2, `\${${N}:-dflt}`], [2, `\${${N}:-$(${M})}`], [2, `\${${N}:-\${${M}}}`],
+      [5, `\${${N}}`], [5, `$(${N})`], [2, `\${${D}:-dflt}`], [3, `\${${D}:-$(${B})}`], [3, `\${${D}:-\${${B}}}`],
       [0.4, `\${${N}:?RVQREQ}`], [0.3, `$(\${${N}})`], [0.3, `\${ ${N} }`], [0.3, `$( ${N} )`],
     ]);
   };
@@ -129,6 +136,13 @@ export function generateWorld(seed, index) {
       stores[store].confirm[name] = true;
     }
     if (r.chance(0.08)) stores[store].confirm[r.pick(NAME_POOL)] = r.pick([false, 'yes', 1, null]);
+  }
+  // #241's shape: one list holds a value that is not `true` under a name the
+  // other list flags. The other list's flag must still gate.
+  if (r.chance(0.35)) {
+    const store = r.pick(['project', 'global']);
+    const theirs = Object.keys(stores[otherStore(store)].confirm).filter(k => stores[otherStore(store)].confirm[k] === true);
+    if (theirs.length) stores[store].confirm[r.pick(theirs)] = r.pick([false, 'yes', 1, null, 'true']);
   }
 
   // 3. Plain entries with references.
@@ -182,14 +196,17 @@ export function generateWorld(seed, index) {
       put(home, `wd${L}`, r.chance(0.5) ? ['$(wz)'] : []);
       put(home, 'wz', []);
     }
-    const tail = { missing: '${wnope}', required: '${wnope:?RVQREQ}', cycle: '${wc}', refused: '$(${wb})', depth: '${wd1}' }[err];
-    put(home, 'wc', [tail]);
-    put(home, 'wa', r.chance(0.7) ? ['$(wb)', '$(wc)'] : ['$(wb)', '${wc}']);
+    const tail = { missing: '${wnope}', required: '${wnope:?RVQREQ}', cycle: '${wq}', refused: '$(${wb})', depth: '${wd1}' }[err];
+    put(home, 'wq', [tail]);
+    put(home, 'wa', r.chance(0.7) ? ['$(wb)', '$(wq)'] : ['$(wb)', '${wq}']);
     if (r.chance(0.3)) stores[r.pick(['project', 'global'])].confirm.wz = true;
   }
 
-  // Chain entries: space-separated members, some of them a:b pairs.
-  // A global chain runs global members only, so members come mostly from the chain's own store.
+  // Chain entries: space-separated members, some of them a:b pairs. A global
+  // chain runs global members only, so members come from the chain's own
+  // store. Most chains list only members that resolve and hold no reference
+  // (so the run gets as far as the gate); the rest draw from anything.
+  const clean = store => Object.entries(stores[store].entries).filter(([k, v]) => !k.startsWith('ch') && !/\$[{(]/.test(v)).map(([k]) => k);
   const member = store => r.weighted([
     [plan[store].size ? 6 : 0, () => r.pick([...plan[store]])],
     [1, () => r.pick(present().length ? present() : NAME_POOL)],
@@ -199,9 +216,39 @@ export function generateWorld(seed, index) {
   for (const key of ['ch', 'ch2']) {
     for (const store of ['project', 'global']) {
       if (!r.chance(0.55)) continue;
-      stores[store].entries[key] = Array.from({ length: r.int(1, 4) }, () => (r.chance(0.2) ? `${member(store)}:${member(store)}` : member(store))).join(' ');
+      const good = r.chance(0.65);
+      if (good) for (const k of ['cm1', 'cm2']) if (!(k in stores[store].entries)) put(store, k, []);
+      const pickOne = () => (good ? r.pick(clean(store)) : member(store));
+      stores[store].entries[key] = Array.from({ length: r.int(1, 3) }, () => (r.chance(0.2) ? `${pickOne()}:${pickOne()}` : pickOne())).join(' ');
     }
   }
+  // A flag on a chain entry itself (the chain half of #279): it gates the run.
+  const chains = ['project', 'global'].flatMap(st => ['ch', 'ch2'].filter(k => k in stores[st].entries).map(k => [st, k]));
+  if (chains.length && r.chance(0.4)) stores[r.pick(['project', 'global'])].confirm[r.pick(chains)[1]] = true;
+  // A chain member named after a flag the user set globally, which the
+  // project aliases to its own command (#279, chain member).
+  if (r.chance(0.2)) {
+    const N = r.pick(['fl', 'al2']);
+    if (!('cm1' in stores.project.entries)) put('project', 'cm1', []);
+    stores.project.aliases[N] = 'cm1';
+    if (!(N in stores.global.entries)) put('global', N, []);
+    stores.global.confirm[N] = true;
+    stores.project.entries.ch2 = r.chance(0.5) ? N : `${N} cm1`;
+  }
+  // One alias name in both maps: the project's points at a plain project
+  // entry, the global one at a flagged global entry. The global target is
+  // looked up too, so the run asks (#279, the global alias target).
+  if (r.chance(0.2)) {
+    const N = r.pick(['al1', 'al3']);
+    if (!('cm2' in stores.project.entries)) put('project', 'cm2', []);
+    if (!('gfl' in stores.global.entries)) put('global', 'gfl', []);
+    stores.project.aliases[N] = 'cm2';
+    stores.global.aliases[N] = 'gfl';
+    stores.global.confirm.gfl = true;
+  }
+  // The canary: a plain global entry an approved run must always run. If its
+  // marker is missing, the fuzzer cannot see what runs, and says so.
+  put('global', 'canary', []);
 
   // Irregular sidecars: a directory, a symlink (to a valid map), dangling, unparseable, an array, null, empty.
   for (const store of ['project', 'global']) {
@@ -252,6 +299,11 @@ function generateInvocations(r, spec) {
       if (cwd === 'proj' || r.chance(0.2)) mcp(cwd, { key: typedName(cwd === 'proj' ? 'project' : 'global'), scope: 'project' });
     }
     for (const N of ['tp', 'd1', 'wa'].filter(k => k in P.entries || k in G.entries)) { cli(cwd, [N]); asks.push(mcp(cwd, { key: N })); }
+    for (const N of ['al1', 'al3'].filter(k => cwd === 'proj' && P.aliases[k] && !P.aliases.$irregular && G.aliases[k])) {
+      cli(cwd, [N]);
+      asks.push(mcp(cwd, { key: N }));
+      mcp(cwd, { key: N, scope: 'project' });
+    }
     for (const C of ['ch', 'ch2', typedName(auto)]) {
       cli(cwd, [C], { chain: true });
       cli(cwd, [C], { chain: true, global: true });
@@ -282,6 +334,9 @@ function generateInvocations(r, spec) {
     inv.push({ surface: 'mcp', cwd, tool: 'reverie_run', args: { key: r.pick(names), dry: true } });
     inv.push({ surface: 'mcp', cwd, tool: 'reverie_get', args: { key: r.pick(names) } });
   }
+  // The canary: approved, so it must run (and log its marker) on any build.
+  inv.push({ surface: 'cli', cwd: 'out', kind: 'run', keys: ['canary'], global: false, chain: false, yes: true, mode: 'json', canary: true });
+  inv.push({ surface: 'mcp', cwd: 'out', tool: 'reverie_run', args: { key: 'canary', force: true }, canary: true });
   generateWrites(r, spec, inv);
   return inv;
 }

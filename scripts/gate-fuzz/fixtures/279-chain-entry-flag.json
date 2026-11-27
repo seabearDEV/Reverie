@@ -1,0 +1,77 @@
+{
+  "about": "A flagged chain entry lists unflagged members: the chain entry's own flag gates the run, on the CLI (--chain) and over MCP (chain: true) (#279).",
+  "stores": {
+    "project": {
+      "entries": {
+        "pch": "b",
+        "b": "echo RVM2x >> \"$RLOG\""
+      },
+      "confirm": {
+        "pch": true
+      }
+    },
+    "global": {
+      "entries": {
+        "ch": "a",
+        "a": "echo RVM1x >> \"$RLOG\""
+      },
+      "confirm": {
+        "ch": true
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "global",
+      "a"
+    ],
+    "2": [
+      "project",
+      "b"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "out",
+      "kind": "run",
+      "keys": [
+        "ch"
+      ],
+      "global": false,
+      "chain": true,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "pch"
+      ],
+      "global": false,
+      "chain": true,
+      "yes": false,
+      "mode": "plain"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "out",
+      "tool": "reverie_run",
+      "args": {
+        "key": "ch",
+        "chain": true
+      }
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "pch",
+        "chain": true
+      }
+    }
+  ]
+}

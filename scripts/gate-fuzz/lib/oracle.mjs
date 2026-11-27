@@ -25,6 +25,10 @@
 //                      entry's reference)
 //   R7 exec-on-read    a --dry, `get`, MCP dry or reverie_get ran anything
 //   R8 store           the stores changed, an odd epoch or a lock was left
+// For the canary, an approved run of a plain global entry in every world:
+//   R0 canary          its marker is not in the log: the fuzzer cannot see what
+//                      runs (a build that runs nothing, a scrubbed $RLOG), so
+//                      no other rule could fire
 // For the writes that follow the runs:
 //   R8 store           a refused or failed write changed the stores; an odd
 //                      epoch or a lock was left
@@ -79,6 +83,10 @@ export function judge(root, spec, inv, res, store = []) {
     return v;
   }
   const approved = inv.surface === 'cli' ? inv.yes : res.approved;
+  if (inv.canary) {
+    const n = Object.keys(spec.markers).find(k => spec.markers[k][0] === 'global' && spec.markers[k][1] === 'canary');
+    if (!res.markers.includes(Number(n))) add('R0-canary', `the approved canary run did not log its marker (${res.kind} ${res.code}): nothing this build runs is visible to the fuzzer`);
+  }
   const top = topLevel(w, modelInvocation(inv));
   const r = top.ok ? reach(w, top.roots) : { names: new Set(), errors: [], entries: new Map() };
 
