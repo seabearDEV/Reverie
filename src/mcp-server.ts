@@ -39,7 +39,7 @@ import {
 import { fileURLToPath } from "url";
 import { findProjectFile, hasProjectStore, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope, assertProjectScope } from "./store";
 import { hasConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
-import { renameKey, RenameRefusal, globalAliasLeftNote } from "./rename";
+import { renameKey, RenameRefusal, renameNotes } from "./rename";
 import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections, assertImportedAliasesFree } from "./utils/importSections";
 import { assertAliasNameFreeNow, otherStoreEntryKeys } from "./utils/aliasNames";
@@ -930,8 +930,8 @@ server.tool(
       // confirmation list in either store (#245).
       const renamed = renameKey(resolvedOld, newKey, scope, alias);
 
-      // #260: a global alias of what moved was left alone; say so.
-      const notes = renamed.globalAliasesLeft.map(([a, target]) => `\nnote: ${globalAliasLeftNote(a, target, renamed.sourceStore)}`).join('');
+      // #260: a global alias of what moved was left alone, or an alias hides the new key; say so.
+      const notes = renameNotes(renamed, newKey, 'scope: "global"').map(n => `\nnote: ${n}`).join('');
       return textResponse(`Renamed: ${resolvedOld} -> ${newKey}${notes}`);
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;

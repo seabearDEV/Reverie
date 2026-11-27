@@ -103,14 +103,43 @@ describe('#260: an alias command changes only the aliases of the store it writes
       expect(rvr('rename', 'pk3', 'pk4').stdout).toContain("The global alias 'gp' still points at 'pk3'");
     }, SLOW_TEST_MS);
 
-    it('CLI: one alias name in both stores pointing at the key: the project\'s moves, the global one stays and is named', () => {
+    it('CLI: one alias name in both stores pointing at the key: the project\'s moves, the global one stays and is named as shadowed here', () => {
       write(projectAliasFile(), { pa: 'pk' });
       write(globalAliasFile(), { pa: 'pk' });
       const env1 = json('rename', 'pk', 'pk2');
       expect(env1.ok).toBe(true);
       expect(projectAliases()).toEqual({ pa: 'pk2' });
       expect(globalAliases()).toEqual({ pa: 'pk' });
-      expect(env1.warnings?.map(w => w.message)).toEqual([expect.stringContaining("The global alias 'pa' still points at 'pk'")]);
+      expect(env1.warnings?.map(w => w.message)).toEqual([
+        "The global alias 'pa' still points at 'pk'. In this project the project's alias 'pa' (-> pk2) is read instead; a rename without a scope re-points only this project's aliases.",
+      ]);
+    }, SLOW_TEST_MS);
+
+    it('CLI: with a global entry of the key, the note says the global alias reaches it here now', () => {
+      expect(rvr('set', '-G', 'pk', 'global pk').status).toBe(0);
+      write(globalAliasFile(), { gp: 'pk' });
+      const env1 = json('rename', 'pk', 'pk2');
+      expect(env1.ok).toBe(true);
+      expect(env1.warnings?.map(w => w.message)).toEqual([
+        "The global alias 'gp' still points at 'pk', and in this project it now reaches the global entry 'pk': a rename without a scope re-points only this project's aliases.",
+      ]);
+      expect(rvr('get', 'gp', '-p').stdout.trim()).toBe('global pk');
+    }, SLOW_TEST_MS);
+
+    it('CLI: a rename onto an alias\'s name says the new key is hidden behind that alias (not refused)', () => {
+      write(globalAliasFile(), { a: 'gk' });
+      const env1 = json('rename', 'pk', 'a');
+      expect(env1.ok).toBe(true);
+      expect(env1.warnings?.map(w => w.message)).toEqual([
+        "'a' is also the name of the global alias 'a' (-> gk), and an alias is looked up before an entry, so 'a' still means 'gk'. To reach the renamed entry by its name, rename or remove that alias (pass -G), or give the entry an alias of its own.",
+      ]);
+      expect(rvr('get', 'a', '-p').stdout.trim()).toBe('global value');
+      // A project alias of the name hides it the same way, and needs no -G.
+      write(projectAliasFile(), { b: 'gk' });
+      expect(rvr('set', 'pz', 'project z').status).toBe(0);
+      expect(json('rename', 'pz', 'b').warnings?.map(w => w.message)).toEqual([
+        "'b' is also the name of the project alias 'b' (-> gk), and an alias is looked up before an entry, so 'b' still means 'gk'. To reach the renamed entry by its name, rename or remove that alias, or give the entry an alias of its own.",
+      ]);
     }, SLOW_TEST_MS);
 
     it('CLI: a global entry renamed in the default scope is copied, and its global aliases are left alone', () => {
@@ -213,6 +242,12 @@ describe('#260: an alias command changes only the aliases of the store it writes
       expect(g.content[0].text).toBe('Renamed: gk -> gk2');
       expect(globalAliases()).toEqual({ ga: 'gk2', dup: 'gk2', gp: 'pk' });
       expect(projectAliases()).toEqual({ pa: 'pk2', dup: 'pk2' });
+    }, SLOW_TEST_MS);
+
+    it('rule 1: a rename onto an alias\'s name says the new key is hidden behind it', async () => {
+      write(globalAliasFile(), { a: 'gk' });
+      const res = await mcp.call('reverie_rename', { oldKey: 'pk', newKey: 'a' });
+      expect(res.content[0].text).toBe("Renamed: pk -> a\nnote: 'a' is also the name of the global alias 'a' (-> gk), and an alias is looked up before an entry, so 'a' still means 'gk'. To reach the renamed entry by its name, rename or remove that alias (pass scope: \"global\"), or give the entry an alias of its own.");
     }, SLOW_TEST_MS);
 
     for (const [tool, nameArg, extra] of [['reverie_remove', 'key', { is_alias: true }], ['reverie_alias_remove', 'alias', {}]] as const) {
