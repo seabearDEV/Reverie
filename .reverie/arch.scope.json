@@ -1,7 +1,7 @@
 {
-  "value": "Three scopes: project, global, auto. Auto uses project if .reverie/ (or legacy .codexcli.json) exists. Single-key lookups fall through project -> global.",
+  "value": "Three scopes: project, global, auto. Auto uses project if .reverie/ (or legacy .codexcli.json) exists. Single-key lookups fall through project -> global. STORE OF ORIGIN (#292, owner decision for #280): a reference resolves in the store of the entry that holds it — a global entry's dollar-brace and dollar-paren refs, and the aliases they name, read only the global store; a project entry's read project, then global. Every read path follows it (run, get, find, lint, set's warning, MCP get/set); getValueWithStore reports which store a value came from. With -G a typed name resolves through the GLOBAL aliases only (#284), on every command that takes a key; MCP scope \"global\" and `run -G` already did. Without -G, project aliases apply and writes land in the project store.",
   "meta": {
     "created": 1775617721418,
-    "updated": 1778164658306
+    "updated": 1795738159428
   }
 }

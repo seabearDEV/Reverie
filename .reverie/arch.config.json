@@ -1,0 +1,7 @@
+{
+  "value": "Config (#213/#275, 2026-11-26): config.json is SPARSE — only settings that differ from the current default, plus a `_format: 2` marker. Reads never write config.json: old shipped defaults (closed list SHIPPED_DEFAULTS, from git history; tags v1.0.0/v1.1.0 are codexcli, not Reverie) are dropped in memory, and the first `config set`/`unset` stores the cleaned file. config.format, beside it, lists the keys the last new-version write stored and is written FIRST; when an older Reverie rewrites config.json (marker gone), an old default is kept only for a listed key — a choice survives, old defaults don't return. Writes are a locked read-change-write and refuse a file that doesn't parse (IO). `config set` fails INVALID_INPUT/NOT_FOUND on a rejected value or unknown key (#273). Copy config.format with config.json when restoring settings.",
+  "meta": {
+    "created": 1795726085400,
+    "updated": 1795726085400
+  }
+}

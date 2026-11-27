@@ -1,7 +1,7 @@
 {
-  "value": "Alias always wins in resolveKey — no way to bypass and access an entry with the same name as an alias. Known limitation.",
+  "value": "An alias wins in resolveKey: a name that is both an alias and an entry resolves to the alias target. Since #292 (#279) no write can create that pair — alias set/rename, set -a, rename --set-alias, MCP and import all refuse an alias named after an existing entry in either store (INVALID_INPUT, case and filesystem folding included) — and `run` gates the name as typed as well as every alias target, so a pair cannot carry a run past a flag. Pairs stored by 1.3.0 still resolve to the alias. Still open (#291): an entry can be created under an existing alias's name, and importing a 1.3.0 export that holds such a pair after `data reset` is refused.",
   "meta": {
     "created": 1775356765156,
-    "updated": 1775356765156
+    "updated": 1795738159386
   }
 }
