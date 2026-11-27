@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { createAutoBackup } from '../utils/autoBackup';
+import { ProjectResolutionError } from '../projectResolution';
 
 let tmpDir: string;
 let projectStoreDir: string | null;
@@ -166,10 +167,17 @@ describe('createAutoBackup — project scope', () => {
     expect(fs.existsSync(path.join(tmpDir, '.backups'))).toBe(false);
   });
 
-  it('returns null when project scope requested but no project store exists', () => {
+  // #296: it returned null ("nothing to back up") and the caller went on to
+  // reset or replace the global store, with no backup of it anywhere.
+  it('refuses project scope when there is no project store, and backs up nothing', () => {
     projectStoreDir = null;
-    const result = createAutoBackup('pre-reset', 'project');
-    expect(result).toBeNull();
+    let thrown: unknown;
+    try { createAutoBackup('pre-reset', 'project'); } catch (err) { thrown = err; }
+    expect(thrown).toBeInstanceOf(ProjectResolutionError);
+    expect((thrown as ProjectResolutionError).code).toBe('PROJECT_UNRESOLVED');
+    expect((thrown as ProjectResolutionError).requested).toBe('project');
+    expect(fs.existsSync(path.join(tmpDir, '.backups'))).toBe(false);
+    expect(fs.existsSync(path.join(projectRoot, '.reverie.backups'))).toBe(false);
   });
 
   it('auto-resolves to project when scope is omitted and project store exists', () => {

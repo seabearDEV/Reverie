@@ -13,7 +13,8 @@ import { maskEncryptedValues } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { createAutoBackup } from '../utils/autoBackup';
 import { assertNotTestCheckout } from '../utils/directoryStore';
-import { findProjectFile, clearProjectFileCache, updateAll, getEffectiveScope } from '../store';
+import { findProjectFile, clearProjectFileCache, updateAll, getEffectiveScope, assertProjectScope } from '../store';
+import { ProjectResolutionError } from '../projectResolution';
 import { wrapExport, tryUnwrapImport } from '../utils/envelope';
 import { version as pkgVersion } from '../../package.json';
 import { getConfigSetting } from '../config';
@@ -40,9 +41,18 @@ import { getTelemetryPath, getMissPathsPath } from '../utils/telemetry';
 import { scanCodebase, ScaffoldEntry } from './scan';
 import { generateClaudeMd, generateAgentsMd } from './claude-md';
 
+/**
+ * The scope -G / -P name. `-P` with no project refuses here, first — before
+ * a prompt, a backup or a read (#296): it used to fall back to the global
+ * store, so `data reset -P` outside a project emptied the global store with
+ * no backup, and `export -P` exported it labeled "project".
+ */
 function resolveScope(options: { global?: boolean | undefined, project?: boolean | undefined }): Scope | undefined {
   if (options.global) return 'global';
-  if (options.project) return 'project';
+  if (options.project) {
+    assertProjectScope('project');
+    return 'project';
+  }
   return undefined;
 }
 
@@ -330,6 +340,7 @@ export async function importData(type: string, file: string, options: ImportOpti
       try {
         createAutoBackup('pre-import', scope);
       } catch (err) {
+        if (err instanceof ProjectResolutionError) throw err;   // #296: a refusal, not a failed backup
         printError(`Aborting: auto-backup failed (${err instanceof Error ? err.message : String(err)}). No changes were made.`, 'IO');
         return;
       }
@@ -430,6 +441,7 @@ export async function resetData(type: string, options: ResetOptions): Promise<vo
     try {
       createAutoBackup('pre-reset', scope);
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;   // #296: a refusal, not a failed backup
       printError(`Aborting: auto-backup failed (${err instanceof Error ? err.message : String(err)}). No changes were made.`);
       return;
     }
