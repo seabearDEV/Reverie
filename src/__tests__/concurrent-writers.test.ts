@@ -187,11 +187,11 @@ describe('#254: a write by another process survives', () => {
   });
 
   describe('the default scope in a project', () => {
-    it('a rename re-points aliases in the project map as it stands, over the global layer', async () => {
-      // In the default scope the rename reads the alias view that layers the
-      // project map over the global one, and writes that view to the
-      // project — global aliases included. Kept as main has it; only the
-      // project layer is read again under the project store's lock.
+    it('a rename re-points the project\'s aliases in its map as it stands, and leaves the global ones', async () => {
+      // In the default scope the rename re-points the aliases of the project
+      // map, read under the project store's lock. #260: it used to write the
+      // view that layers the project map over the global one to the project,
+      // copying every global alias there; a global alias is now left alone.
       const projectDir = path.join(tmp.root, 'proj', '.reverie');
       fs.mkdirSync(projectDir, { recursive: true });
       const saved = { noProject: process.env.RVR_NO_PROJECT, project: process.env.RVR_PROJECT };
@@ -207,7 +207,9 @@ describe('#254: a write by another process survives', () => {
         const bNames = await interleave(() => renameEntry('ops.deploy', 'ops.ship'), bAlias, projectDir);
         const project = onDisk(projectDir);
         for (const n of bNames) expect(project.aliases[n]).toBeDefined();
-        expect(project.aliases).toMatchObject({ ga: 'ops.ship', pa: 'ops.ship', other: 'g.k' });
+        expect(project.aliases).toMatchObject({ pa: 'ops.ship' });
+        expect(project.aliases).not.toHaveProperty('ga');
+        expect(project.aliases).not.toHaveProperty('other');
         expect(entryKeys(project)).toEqual(expect.arrayContaining(['ops.ship']));
         expect(onDisk().aliases).toEqual({ ga: 'ops.deploy', other: 'g.k' });
       } finally {

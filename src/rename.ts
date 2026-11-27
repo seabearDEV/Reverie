@@ -33,7 +33,7 @@ import { StoreUnreadableError } from './utils/unreadable';
 import { storedSpellingOf } from './utils/entryIdentity';
 import { isValidEntryKey } from './utils/directoryStore';
 import { assertAliasNamesFree } from './utils/aliasNames';
-import { aliasWriteBase, defaultScopeInProject, repointAliases, typedContext, withAlias } from './utils/nameResolver';
+import { aliasesPointingAt, defaultScopeInProject, repointAliases, typedContext, withAlias } from './utils/nameResolver';
 
 /** A rename that cannot go ahead as asked. Nothing was written. */
 export class RenameRefusal extends Error {
@@ -51,6 +51,14 @@ export interface RenameResult {
   moved: [from: string, to: string][];
   /** Of those, the ones a flag gated: each is now flagged under its new key as well. */
   flagged: [from: string, to: string][];
+  /**
+   * #260: in the default scope inside a project, the global aliases that
+   * point at the source or a key under it, as [alias, target]. The rename
+   * re-points the project's aliases only; these still point where they did.
+   */
+  globalAliasesLeft: [alias: string, target: string][];
+  /** The store the source was found in: a default-scope rename of a global entry copies it into the project. */
+  sourceStore: 'project' | 'global';
 }
 
 /**
@@ -61,8 +69,9 @@ export interface RenameResult {
  * Lookups are main's (#99): in the default scope inside a project, the
  * source and the "already exists" check fall through to the global store,
  * as every read by key does. A global entry renamed that way is copied into
- * the project and stays where it was, and the aliases are re-pointed in the
- * view that layers the project map over the global one.
+ * the project and stays where it was. The aliases re-pointed are the
+ * written store's own (#260): a global alias that points at the source is
+ * left alone, and returned in globalAliasesLeft.
  *
  * The source must be named as it is stored (#247). A key maps to its file,
  * and a filesystem that folds names opens an entry's file for another
@@ -85,7 +94,7 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
   const writeScope = resolveScopeForWrite(scope);
   const ctx = typedContext(scope);
   const fallsThrough = defaultScopeInProject(ctx, writeScope);
-  let result: RenameResult = { moved: [], flagged: [] };
+  let result: RenameResult = { moved: [], flagged: [], globalAliasesLeft: [], sourceStore: writeScope };
 
   try {
     updateUnderBothLocks(writeScope, (target, other) => {
@@ -188,8 +197,11 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
         setNestedValue(entries, to, values[from]);
         meta[to] = now;
       }
-      const aliasView = aliasWriteBase(ctx, writeScope, target.data.aliases, other?.data.aliases);
-      let aliases = repointAliases(aliasView, source, newKey) ?? target.data.aliases;
+      // #260: the written store's own aliases, re-pointed. A global alias of
+      // the source is left alone (in another project it may mean that
+      // project's entry) and reported.
+      let aliases = repointAliases(target.data.aliases, source, newKey) ?? target.data.aliases;
+      const globalAliasesLeft = defaultScopeInProject(ctx, writeScope) && other ? aliasesPointingAt(other.data.aliases, source) : [];
       if (newAlias) {
         // #279: not under a name that is an entry's key once the rename is
         // done, in either store — the old key is free if it moved away.
@@ -206,7 +218,7 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
       const confirm = { ...target.data.confirm };
       for (const [, to] of flagged) confirm[to] = true;
 
-      result = { moved, flagged };
+      result = { moved, flagged, globalAliasesLeft, sourceStore: found.store.scope };
       return { ...target.data, entries, _meta: meta, aliases, confirm };
     });
   } catch (err) {
@@ -219,6 +231,19 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
     throw err;
   }
   return result;
+}
+
+/**
+ * #260: what a rename says about a global alias it left pointing at a key it
+ * moved — the project's aliases were re-pointed, this one was not. The
+ * source was a project entry, or a global one the rename copied into the
+ * project (where it stays in the global store, and so does what the alias
+ * names).
+ */
+export function globalAliasLeftNote(alias: string, target: string, sourceStore: 'project' | 'global'): string {
+  return sourceStore === 'project'
+    ? `The global alias '${alias}' still points at '${target}': a rename without a scope re-points only this project's aliases (in another project '${target}' may be that project's own entry).`
+    : `The global alias '${alias}' still points at '${target}', which stays in the global store: a rename without a scope copies a global entry into the project and re-points only this project's aliases.`;
 }
 
 function isErrnoCode(err: unknown, code: string): boolean {

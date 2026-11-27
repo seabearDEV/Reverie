@@ -4,7 +4,7 @@ import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, unusedProjectStore } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
-import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasListedIn, aliasWriteBase, aliasesPointingAt, aliasesSeen, defaultScopeInProject, referenceContext, resolveName, typedContext } from './utils/nameResolver';
+import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasListedIn, aliasTarget, aliasesPointingAt, aliasesSeen, defaultScopeInProject, referenceContext, resolveName, typedContext } from './utils/nameResolver';
 
 /**
  * The resolver's view of the stores as they stand now (utils/nameResolver).
@@ -53,31 +53,10 @@ export function loadAliases(scope?: Scope  ): Record<string, string> {
   return loadAliasMap(scope);
 }
 
-/** Replace the map wholesale (reset). A change to the map goes through updateAliases (#254). */
+/** Replace the map wholesale (reset). A change to the map goes through updateAliasMap (#254). */
 export function saveAliases(data: Record<string, string>, scope?: Scope  ): void {
   const effectiveScope = resolveScopeForWrite(scope);
   saveAliasMap(data, effectiveScope);
-}
-
-/**
- * #254: the read-modify-write `saveAliases(fn(loadAliases(scope)), scope)` as
- * one transaction on the map it writes. `fn` returns the new map, or null to
- * write nothing; it runs under the store lock, so it must be synchronous and
- * must not touch the store.
- *
- * In the default scope loadAliases layers the project's map over the global
- * one, and callers wrote that whole view to the project. A single writer
- * still gets exactly that: the global layer, another store under another
- * lock, is read first; the project's own map is read under its lock.
- */
-export function updateAliases(
-  fn: (aliases: Record<string, string>) => Record<string, string> | null,
-  scope?: Scope,
-): void {
-  const effectiveScope = resolveScopeForWrite(scope);
-  const ctx = typedContext(scope);
-  const below = defaultScopeInProject(ctx, effectiveScope) ? loadAliasMap('global') : undefined;
-  updateAliasMap(own => fn(aliasWriteBase(ctx, effectiveScope, own, below)), effectiveScope);
 }
 
 /**
@@ -95,21 +74,22 @@ export function aliasTargetListed(name: string, scope?: Scope): string | undefin
 }
 
 /**
- * Remove alias `name` from the map `scope` shows: false when it lists no
- * such alias. In the default scope inside a project the removal goes
- * through updateAliases, which writes the layered view to the project
- * (#260, kept as it is).
+ * #260: the global alias named `name` that an alias command in the default
+ * scope left alone — it changes the project's list only — or undefined (an
+ * explicit scope, or no such global alias). Asked after the command, so
+ * outside a project the command has refused before this reads anything.
  */
-export function removeAliasFromView(name: string, scope?: Scope): boolean {
-  if (!aliasListed(name, scope)) return false;
-  // #254: removed from the map as it stands under the store lock.
-  updateAliases(aliases => {
-    if (!aliasListedIn(aliases, name)) return null;
-    const next = { ...aliases };
-    delete next[name];
-    return next;
-  }, scope);
-  return true;
+export function globalAliasLeft(name: string, scope?: Scope): string | undefined {
+  // In the default scope the command wrote the project's list, or refused before this.
+  if (!defaultScopeInProject(typedContext(scope), 'project')) return undefined;
+  return aliasTarget(loadAliasMap('global'), name);
+}
+
+/** What a default-scope alias removal says about a global alias of the name: refused when only the global store has it, a note when both do. `how`: the scope option on this surface. */
+export function globalAliasRemovalMessage(name: string, target: string, removed: boolean, how: string): string {
+  return removed
+    ? `A global alias '${name}' (-> ${target}) still resolves here. To remove it too, pass ${how}.`
+    : `Alias '${name}' is a global alias (-> ${target}), not one of this project's, so nothing was removed. To remove it, pass ${how}.`;
 }
 
 // Create or update an alias (one alias per entry — replaces any existing alias for the same target)

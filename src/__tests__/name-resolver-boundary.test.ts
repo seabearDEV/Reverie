@@ -147,8 +147,8 @@ describe('one name resolver', () => {
       'mcp-server.ts: envelopePayload.aliases',               // import: the file's section
       'mcp-server.ts: obj.aliases',                           // import: the file's section
       'mcp-server.ts: payload.aliases',                       // export: the section written
-      'rename.ts: data.aliases',                              // the re-point, through aliasWriteBase / repointAliases
-      'rename.ts: target.data.aliases',                       // the same
+      'rename.ts: other.data.aliases',                        // #260: the global aliases a default-scope rename leaves, to name them
+      'rename.ts: target.data.aliases',                       // the re-point, through repointAliases
       'storage.ts: current.aliases',                          // set -a: the alias written with the value (#268)
       'storage.ts: next.aliases',                             // the same
       'store.ts: current.aliases',                            // the store

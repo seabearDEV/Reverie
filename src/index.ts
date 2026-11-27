@@ -2,7 +2,7 @@
 
 import { Command, Option } from 'commander';
 import * as commands from './commands';
-import { removeAlias, resolveTypedName, loadAliases, setAlias, renameAlias, aliasListed } from './alias';
+import { removeAlias, resolveTypedName, loadAliases, setAlias, renameAlias, aliasListed, globalAliasLeft, globalAliasRemovalMessage } from './alias';
 import { removeConfirm, loadConfirmKeys } from './confirm';
 import { color } from './formatting';
 import { showHelp, showExamples } from './formatting';
@@ -383,11 +383,14 @@ reverie
       async () => {
         if (options.alias) {
           const removed = removeAlias(key, scope);
+          // #260: the default scope removes the project's alias only.
+          const global = globalAliasLeft(key, scope);
           if (!removed) {
-            printError(`Alias '${key}' not found.`, 'NOT_FOUND');
+            printError(global === undefined ? `Alias '${key}' not found.` : globalAliasRemovalMessage(key, global, false, '-G'), 'NOT_FOUND');
             return undefined;
           }
           console.log(`Alias '${key}' removed successfully.`);
+          if (global !== undefined) printWarning(globalAliasRemovalMessage(key, global, true, '-G'));
           return { alias: key, removed: true };
         }
         return await commands.removeEntry(resolvedKey, options.force, options.global);
@@ -426,11 +429,14 @@ aliasCommand
       { tool: 'reverie_alias_remove', key: name, scope, params: { alias: name } },
       () => {
         const removed = removeAlias(name, scope);
+        // #260: the default scope removes the project's alias only.
+        const global = globalAliasLeft(name, scope);
         if (!removed) {
-          printError(`Alias '${name}' not found.`, 'NOT_FOUND');
+          printError(global === undefined ? `Alias '${name}' not found.` : globalAliasRemovalMessage(name, global, false, '-G'), 'NOT_FOUND');
           return undefined;
         }
         console.log(`Alias '${name}' removed.`);
+        if (global !== undefined) printWarning(globalAliasRemovalMessage(name, global, true, '-G'));
         return { alias: name, removed: true };
       }
     );

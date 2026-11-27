@@ -218,24 +218,22 @@ export function aliasListedIn(map: AliasMap, name: string): boolean {
 }
 
 /**
- * A write command in the default scope whose write lands in the project:
- * its reads of an entry key fall through to the global store (a rename's
- * source and its "already exists" check), and its alias writes lay the
- * global map under the project's (aliasWriteBase, #260 kept).
+ * A write command in the default scope whose write lands in the project.
+ * Its reads of an entry key fall through to the global store (a rename's
+ * source and its "already exists" check). And (#260) it changes the
+ * project's alias list only: each store's list changes only for the
+ * aliases that live in it, and a command in one scope never writes the
+ * other store's list. A global alias of the same name, or one pointing at
+ * a key a rename moves, is left alone (in another project it may mean that
+ * project's entry) and reported.
  */
 export function defaultScopeInProject(ctx: NameContext, written: StoreName): boolean {
   return ctx.kind === 'typed' && ctx.scope === 'auto' && written === 'project';
 }
 
-/**
- * The alias map an alias write starts from (#260, kept as it is): in the
- * default scope inside a project, the project's map laid over the global
- * one — and all of it is written to the project, copying every global
- * alias there. Any other write starts from its own store's map. `below`:
- * the global map, read when defaultScopeInProject says it is needed.
- */
-export function aliasWriteBase(ctx: NameContext, written: StoreName, own: AliasMap, below: AliasMap | undefined): AliasMap {
-  return defaultScopeInProject(ctx, written) && below !== undefined ? { ...below, ...own } : own;
+/** The target `map` gives the alias `name` — an own property only — or undefined. */
+export function aliasTarget(map: AliasMap, name: string): string | undefined {
+  return Object.hasOwn(map, name) ? map[name] : undefined;
 }
 
 /** The aliases in `map` that point at `key` or at a key under it, as [alias, target], in map order. */
