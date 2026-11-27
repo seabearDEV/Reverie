@@ -60,7 +60,7 @@ describe('resolveScopeForWrite — scope passthrough', () => {
     expect(resolveScopeForWrite('project')).toBe('project');
   });
 
-  it("returns 'project' unchanged when scope is 'project' even if resolution fails (caller's responsibility)", () => {
+  it("returns 'project' unchanged when scope is 'project' even if resolution fails (the store refuses it, #294)", () => {
     process.env.RVR_NO_PROJECT = '1';
     expect(resolveScopeForWrite('project')).toBe('project');
   });
@@ -148,6 +148,27 @@ describe('ProjectResolutionError shape', () => {
       const e = err as ProjectResolutionError;
       expect(e.message).toContain('unset RVR_NO_PROJECT');
     }
+  });
+
+  // #294, #296: the store's refusal of an explicit project scope.
+  it("an explicit project scope says so, and that nothing was changed; the auto message is unchanged", () => {
+    setProjectRootOverride(nestedTmpDir);
+    const d = captureResolverDiagnostic();
+    const explicit = new ProjectResolutionError(d, 'project');
+    expect(explicit.code).toBe('PROJECT_UNRESOLVED');
+    expect(explicit.requested).toBe('project');
+    expect(explicit.message).toContain('Project scope was requested explicitly');
+    expect(explicit.message).toContain('nothing was changed');
+    expect(explicit.message).toContain('Walk up from');
+    expect(explicit.message).toContain('scope:"global"');
+    expect(explicit.message).not.toContain('refusing to write');
+    expect(explicit.message).not.toContain('scope:auto');
+
+    const auto = new ProjectResolutionError(d);
+    expect(auto.requested).toBe('auto');
+    expect(auto.message.startsWith('Project resolution failed; refusing to write under scope:auto.\n')).toBe(true);
+    expect(auto.message).toContain('for an\n    intentional global-store write');
+    expect(auto.message).not.toContain('requested explicitly');
   });
 });
 

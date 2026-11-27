@@ -28,8 +28,9 @@ import {
   clearStoreCaches, loadMeta, touchMeta,
   updateEntries, updateAliasMap, updateConfirmMap, updateAll,
   loadMetaMerged, getStalenessTag, STALE_DAYS, STALE_MS,
-  saveAll,
+  saveAll, updateUnderBothLocks, assertProjectScope,
 } from '../store';
+import { ProjectResolutionError } from '../projectResolution';
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-store-'));
@@ -591,5 +592,55 @@ describe('constants', () => {
 
   it('STALE_MS equals STALE_DAYS * 86400000', () => {
     expect(STALE_MS).toBe(STALE_DAYS * 86400000);
+  });
+});
+
+// #294, #296: this suite has no project store (findProjectStoreDir is null).
+// Project scope named outside a project used to fall back to the global
+// store; every load and save now refuses it, and the global store is not
+// touched. Auto still reads the global store.
+describe('project scope with no project store', () => {
+  const refusal = (fn: () => unknown): ProjectResolutionError => {
+    let thrown: unknown;
+    try { fn(); } catch (err) { thrown = err; }
+    expect(thrown).toBeInstanceOf(ProjectResolutionError);
+    const err = thrown as ProjectResolutionError;
+    expect(err.code).toBe('PROJECT_UNRESOLVED');
+    expect(err.requested).toBe('project');
+    return err;
+  };
+
+  it('every load and save refuses it, and the global store is unchanged', () => {
+    writeData({ entries: { keep: 'me' }, aliases: { k: 'keep' }, confirm: { keep: true } });
+    clearStoreCaches();
+    const before = fs.readdirSync(storeDir).sort().map(f => [f, fs.readFileSync(path.join(storeDir, f), 'utf8')]);
+
+    refusal(() => loadEntries('project'));
+    refusal(() => loadAliasMap('project'));
+    refusal(() => loadConfirmMap('project'));
+    refusal(() => loadMeta('project'));
+    refusal(() => saveEntries({}, 'project'));
+    refusal(() => saveAliasMap({}, 'project'));
+    refusal(() => saveConfirmMap({}, 'project'));
+    refusal(() => updateEntries(() => { /* no change */ }, 'project'));
+    refusal(() => updateAll(() => ({ entries: {} }), 'project'));
+    refusal(() => saveAll({ entries: {}, aliases: {}, confirm: {} }, 'project'));
+    refusal(() => touchMeta('keep', 'project'));
+    refusal(() => updateUnderBothLocks('project', () => ({ entries: {}, aliases: {}, confirm: {} })));
+    refusal(() => assertProjectScope('project'));
+
+    const after = fs.readdirSync(storeDir).sort().map(f => [f, fs.readFileSync(path.join(storeDir, f), 'utf8')]);
+    expect(after).toEqual(before);
+  });
+
+  it('auto and global are unchanged: they read the global store', () => {
+    writeData({ entries: { keep: 'me' }, aliases: {}, confirm: {} });
+    clearStoreCaches();
+    expect(loadEntries()).toEqual({ keep: 'me' });
+    expect(loadEntries('auto')).toEqual({ keep: 'me' });
+    expect(loadEntries('global')).toEqual({ keep: 'me' });
+    expect(() => assertProjectScope('global')).not.toThrow();
+    expect(() => assertProjectScope('auto')).not.toThrow();
+    expect(() => assertProjectScope(undefined)).not.toThrow();
   });
 });
