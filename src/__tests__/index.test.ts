@@ -59,6 +59,9 @@ function setupMocks() {
   vi.mock('../alias', () => ({
     removeAlias: mockRemoveAlias,
     resolveKey: mockResolveKey,
+    // The resolver's wrapper for a typed name, over the same mock: what a
+    // name means is still what mockResolveKey says.
+    resolveTypedName: (k: string, scope?: string) => ({ key: scope === undefined ? mockResolveKey(k) : (mockResolveKey as (k: string, s?: string) => string)(k, scope) }),
     loadAliases: vi.fn(() => ({})),
     setAlias: vi.fn(),
     renameAlias: vi.fn(() => true),
