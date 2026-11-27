@@ -140,7 +140,14 @@ function storeUnreadableErrorResponse(err: StoreUnreadableError) {
  * surface the failure like any other tool error.
  */
 function projectResolutionErrorResponse(err: ProjectResolutionError) {
-  const structured = JSON.stringify({ code: err.code, diagnostic: err.diagnostic }, null, 2);
+  // `requested`: 'project' for an explicit scope:"project" (#294, #296), else
+  // 'auto'; `unusable`: a project this process found but is not using.
+  const structured = JSON.stringify({
+    code: err.code,
+    requested: err.requested,
+    ...(err.unusable !== undefined && { unusable: err.unusable }),
+    diagnostic: err.diagnostic,
+  }, null, 2);
   const response = {
     content: [
       { type: "text" as const, text: err.message },
@@ -1607,7 +1614,7 @@ server.tool(
   "Wipe entries/aliases/confirm (type:'all') or clear audit/telemetry/miss-path logs. Destructive and scope-wide — reverie_export first for a backup. Single entries: reverie_remove.",
   {
     type: z.enum(["entries", "aliases", "confirm", "all", "audit", "telemetry", "miss-paths"]).describe("What to reset ('all' covers entries+aliases+confirm, not logs)"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global; \"project\" with no project refuses). Logs are global; scope is not used for them."),
+    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global; \"project\" with no project refuses, for logs too). Logs are global."),
   },
   async ({ type, scope: scopeParam }) => {
     try {

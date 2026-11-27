@@ -15,7 +15,7 @@ THE LOOP:
 
 NAMESPACES: project.* commands.* arch.* conventions.* context.* (gotchas) files.* deps.*. Schema + tiers: docs/schema-guide.md.
 
-SCOPE: the .reverie/ project store is the default when present; scope:"global" targets ~/.reverie/store. With no project, writes and every scope:"project" call refuse (PROJECT_UNRESOLVED) — run reverie_init or use scope:"global". Unscoped reads fall through.
+SCOPE: the .reverie/ project store is the default when present; scope:"global" targets ~/.reverie/store. With no project, writes and every scope:"project" call refuse (PROJECT_UNRESOLVED) — run \`rvr init\` in a shell, or use scope:"global". Unscoped reads fall through.
 
 WARNINGS ARE ACTIONABLE: "[demoted ...]"/"[trimmed ...]" = size budget (reverie_get the keys, or tier:"full"); "warning: ... written N times" = write-amplification (let entries stabilize). Entries tagged [Nd]/[untracked] are freshness-suspect — verify before trusting; reverie_stale audits this.
 

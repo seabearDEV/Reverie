@@ -63,13 +63,13 @@ function resolveScope(options: { global?: boolean | undefined, project?: boolean
 
 export function exportData(type: string, options: ExportOptions): { type: string; files: string[] } | undefined {
   debug('exportData called', { type, options });
+  if (!validateDataType(type)) {
+    printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
+    return;
+  }
+  // Before the try: a refusal is reported by the wrapper, as for import and reset.
+  const scope = resolveScope(options);
   try {
-    if (!validateDataType(type)) {
-      printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
-      return;
-    }
-
-    const scope = resolveScope(options);
     const defaultDir = process.cwd();
     const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
     const indent = options.pretty ? 2 : 0;
@@ -169,14 +169,13 @@ export function exportData(type: string, options: ExportOptions): { type: string
 
 export async function importData(type: string, file: string, options: ImportOptions): Promise<void> {
   debug('importData called', { type, file, options });
+  // Validate type parameter
+  if (!validateDataType(type)) {
+    printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
+    return;
+  }
   const scope = resolveScope(options);
   try {
-    // Validate type parameter
-    if (!validateDataType(type)) {
-      printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
-      return;
-    }
-
     // Check if file exists
     if (!fs.existsSync(file)) {
       printError(`Import file not found: ${file}`, 'NOT_FOUND');
@@ -411,14 +410,13 @@ export async function importData(type: string, file: string, options: ImportOpti
 
 export async function resetData(type: string, options: ResetOptions): Promise<void> {
   debug('resetData called', { type, options });
+  // Validate type parameter
+  if (!validateResetType(type)) {
+    printError(getInvalidResetTypeMessage(type), 'INVALID_INPUT');
+    return;
+  }
   const scope = resolveScope(options);
   try {
-    // Validate type parameter
-    if (!validateResetType(type)) {
-      printError(getInvalidResetTypeMessage(type), 'INVALID_INPUT');
-      return;
-    }
-
     // Confirm before resetting unless --force is used
     if (!options.force) {
       console.log(color.yellow(`⚠ This will reset your ${type} to an empty state.`));
