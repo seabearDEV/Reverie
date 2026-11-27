@@ -155,9 +155,8 @@ export function getValue(key: string, scope?: Scope  ): CodexValue | undefined {
  * getValue, and the store the value was read from (#280). A reference in a
  * value resolves in that value's own store, so whoever interpolates it has
  * to know where it came from: in the default scope the answer can be either.
- * With an explicit scope it is that scope (a project read with no project
- * reads the global store, and resolves its references as a project entry
- * would there — the same lookups).
+ * With an explicit scope it is that scope. A project read with no project
+ * throws ProjectResolutionError (#294): it used to read the global store.
  */
 export function getValueWithStore(key: string, scope?: Scope): { value: CodexValue; store: 'project' | 'global' } | undefined {
   const found = (value: CodexValue | undefined, store: 'project' | 'global') =>

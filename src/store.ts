@@ -20,7 +20,7 @@ import { flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 import { debug } from './utils/debug';
 import { registerUnreadableSource, type UnreadableFile } from './utils/unreadable';
 import { registerStoredKeysSource } from './utils/keyCollision';
-import { resolveScopeForWrite } from './projectResolution';
+import { resolveScopeForWrite, ProjectResolutionError, captureResolverDiagnostic } from './projectResolution';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -235,12 +235,50 @@ export function getEffectiveScope(scope?: Scope): 'project' | 'global' {
   return findProjectFile() ? 'project' : 'global';
 }
 
+/**
+ * The project store for a caller that named project scope, or a refusal:
+ * never the global store in its place (#294, #296). Outside a project an
+ * explicit `scope: "project"` / `-P` used to read and write the global store
+ * while the checks before the write looked at the absent project store, so a
+ * reset emptied the global store with no backup and a refused alias left its
+ * entry written.
+ *
+ * "No project" is getProjectStore's answer, the store every load and save
+ * uses, so the refusal and the write target cannot disagree. A long-lived
+ * process (the MCP server) caches "not found": a project created since, by
+ * `rvr init` in another process, is looked for once more before refusing.
+ */
+function requireProjectStore(): ScopedStore {
+  let ps = getProjectStore();
+  if (!ps) {
+    clearProjectFileCache();
+    ps = getProjectStore();
+  }
+  if (ps) return ps;
+  throw new ProjectResolutionError(captureResolverDiagnostic(), 'project');
+}
+
+/**
+ * Refuse project scope when there is no project: throws
+ * ProjectResolutionError (PROJECT_UNRESOLVED) for `scope === 'project'` with
+ * no project store, does nothing otherwise. For the entry points that must
+ * refuse before any side effect — a prompt, a backup, a command run — rather
+ * than at the first load or save, where resolveStore refuses anyway.
+ */
+export function assertProjectScope(scope?: Scope): void {
+  if (scope === 'project') requireProjectStore();
+}
+
 function resolveStore(scope?: Scope  ): ScopedStore {
-  const effective = getEffectiveScope(scope);
-  if (effective === 'project') {
+  // Project scope — named, or an auto write resolveScopeForWrite resolved to
+  // it — is the project store or a refusal (#294, #296).
+  if (scope === 'project') return requireProjectStore();
+  if (scope === 'global') return getGlobalStore();
+  // Auto: the project store when there is one, else the global store. Reads
+  // fall through; auto writes never get here (resolveScopeForWrite, #99).
+  if (findProjectFile()) {
     const ps = getProjectStore();
     if (ps) return ps;
-    // Fallback to global if project file doesn't exist (shouldn't happen with getEffectiveScope)
   }
   return getGlobalStore();
 }
@@ -454,7 +492,8 @@ export function updateUnderBothLocks(
 ): void {
   const global = getGlobalStore();
   const globalDir = getGlobalStoreDirPath();
-  const project = getProjectStore();
+  // Writing the project store needs one: refused, as resolveStore refuses (#294, #296).
+  const project = scope === 'project' ? requireProjectStore() : getProjectStore();
   const projectDir = projectStoreDirPath;
   const view = (store: ScopedStore, which: 'project' | 'global', dir: string, data: UnifiedData): LockedStore =>
     ({ scope: which, dir, data, keys: store.storedKeys(), unreadable: store.unreadable() });

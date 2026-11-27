@@ -10,7 +10,9 @@
  *
  * Reads are unaffected — they intentionally fall through to global so that
  * a user with one project shell open can still browse global from a sibling
- * directory.
+ * directory. That is the auto scope only: an explicit project scope (MCP
+ * `scope: "project"`, CLI `-P`) with no project refuses everywhere, reads
+ * included (#294, #296) — see `assertProjectScope` in `store.ts`.
  *
  * See `docs/design-99-project-resolution-refusal.md` for the full design.
  */
@@ -25,18 +27,23 @@ export type { ResolverDiagnostic };
 
 /**
  * Thrown by `resolveScopeForWrite` when scope is auto/undefined and project
- * resolution failed. Carries a `code` of `'PROJECT_UNRESOLVED'` for
- * programmatic consumers (MCP wrapper, telemetry) and the captured
- * `diagnostic` so callers can render the failure mode without re-probing.
+ * resolution failed, and by the store (`assertProjectScope`) when project
+ * scope was asked for explicitly and there is no project (#294, #296).
+ * Carries a `code` of `'PROJECT_UNRESOLVED'` for programmatic consumers (MCP
+ * wrapper, telemetry) and the captured `diagnostic` so callers can render
+ * the failure mode without re-probing. `requested` says which of the two it
+ * is: the message differs, the code does not.
  */
 export class ProjectResolutionError extends Error {
   readonly code = 'PROJECT_UNRESOLVED';
   readonly diagnostic: ResolverDiagnostic;
+  readonly requested: 'auto' | 'project';
 
-  constructor(diagnostic: ResolverDiagnostic) {
-    super(buildMessage(diagnostic));
+  constructor(diagnostic: ResolverDiagnostic, requested: 'auto' | 'project' = 'auto') {
+    super(buildMessage(diagnostic, requested));
     this.name = 'ProjectResolutionError';
     this.diagnostic = diagnostic;
+    this.requested = requested;
   }
 }
 
@@ -48,9 +55,10 @@ export class ProjectResolutionError extends Error {
  * Read paths must NOT call this — they should continue to fall through to
  * global on resolution failure.
  *
- * Note: when `scope === 'project'` and project resolution failed, this still
- * returns `'project'`. The caller asked for project explicitly and is
- * responsible for the downstream behavior (current behavior preserved).
+ * An explicit `'project'` is returned as is, project or not: the store
+ * refuses it when there is no project (`assertProjectScope` in `store.ts`,
+ * checked by `resolveStore` on every load and save), so a project write
+ * never lands in the global store (#294, #296).
  */
 export function resolveScopeForWrite(scope: Scope | undefined): Exclude<Scope, 'auto'> {
   if (scope === 'project' || scope === 'global') return scope;
@@ -71,9 +79,14 @@ export function captureResolverDiagnostic(): ResolverDiagnostic {
   return findProjectFileWithDiagnostic().diagnostic;
 }
 
-function buildMessage(d: ResolverDiagnostic): string {
+function buildMessage(d: ResolverDiagnostic, requested: 'auto' | 'project'): string {
   const lines: string[] = [];
-  lines.push('Project resolution failed; refusing to write under scope:auto.');
+  if (requested === 'project') {
+    lines.push('Project scope was requested explicitly (scope:"project" or -P / --project), but there');
+    lines.push('is no project store here. Refused; nothing was changed.');
+  } else {
+    lines.push('Project resolution failed; refusing to write under scope:auto.');
+  }
   lines.push('');
   lines.push('Resolver tried (in order):');
   lines.push(`  1. RVR_NO_PROJECT env: ${d.rvrNoProject ? 'set (resolution disabled)' : 'not set'}`);
@@ -111,8 +124,13 @@ function buildMessage(d: ResolverDiagnostic): string {
   } else {
     lines.push('  - run `reverie_init` (or `rvr init`) here to create a project store');
   }
-  lines.push('  - retry with explicit scope:"global" (MCP) or -G / --global (CLI) for an');
-  lines.push('    intentional global-store write');
+  if (requested === 'project') {
+    lines.push('  - retry with scope:"global" (MCP) or -G / --global (CLI) to use the global');
+    lines.push('    store, or with no scope to read through to it');
+  } else {
+    lines.push('  - retry with explicit scope:"global" (MCP) or -G / --global (CLI) for an');
+    lines.push('    intentional global-store write');
+  }
 
   return lines.join('\n');
 }
