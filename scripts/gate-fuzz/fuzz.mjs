@@ -112,14 +112,20 @@ async function doWorld(o, spec, work) {
   return { stats, violations, diffs, records: o.world !== undefined || o.replay ? records : undefined };
 }
 
-/** Greedy shrink: drop entries, aliases, flags, irregular sidecars and references while the same rule still fires. */
+// The rules that need no model, or one lookup: a shrunk world must still fire every one the violation fired.
+const PRIMARY = new Set(['R1-flagged-entry', 'R2-typed-name', 'R4-confinement', 'R6-unreadable-list', 'R7-exec-on-read', 'R8-store', 'R9-flag-kept']);
+
+/** Greedy shrink: drop entries, aliases, flags, irregular sidecars and references while the same rules still fire. */
 async function shrink(o, spec, invIndex, rules, work) {
   // The invocation runs last, after what it depends on; only it is judged.
   const base = subsetSpec(spec, [...prerequisites(spec, invIndex), invIndex]);
   const target = base.invocations.length - 1;
+  const keep = rules.filter(r => PRIMARY.has(r));
+  if (keep.length === 0) keep.push(rules[0]);
   const still = async s => {
     const recs = await runWorld(s, o.dist, path.join(work, `shrink${spec.index}`), { cacheDir: o.cache });
-    return recs.find(r => r.i === target)?.violations.some(v => rules.includes(v.rule));
+    const fired = new Set(recs.find(r => r.i === target)?.violations.map(v => v.rule) ?? []);
+    return keep.every(r => fired.has(r));
   };
   if (!(await still(base))) return null;   // does not replay on its own: no shrunk world
   let cur = JSON.parse(JSON.stringify(base));
