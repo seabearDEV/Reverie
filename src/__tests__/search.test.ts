@@ -13,6 +13,9 @@ vi.mock('../storage', () => ({
     'commands.test': 'npm test',
   })),
   loadData: vi.fn(() => ({})),
+  // #280: every entry here is in one store; interpolation is mocked below.
+  entryStoreOf: vi.fn(() => () => 'project'),
+  getValueWithStore: vi.fn(() => { throw new Error('getValueWithStore is not mocked in this suite'); }),
 }));
 
 vi.mock('../alias', () => ({
@@ -40,6 +43,12 @@ vi.mock('../formatting', () => ({
 
 vi.mock('../utils/interpolate', () => ({
   interpolate: vi.fn((v: string) => v),
+  // #280: the form search and the tree display call, with the entry's store.
+  interpolateFrom: vi.fn((v: string) => v),
+  interpolateForRead: vi.fn(() => { throw new Error('interpolateForRead is not mocked in this suite'); }),
+  collectReferences: vi.fn(() => { throw new Error('collectReferences is not mocked in this suite'); }),
+  collectReferencedKeys: vi.fn(() => { throw new Error('collectReferencedKeys is not mocked in this suite'); }),
+  gateNamesFor: vi.fn(() => { throw new Error('gateNamesFor is not mocked in this suite'); }),
 }));
 
 vi.mock('../utils/crypto', () => ({

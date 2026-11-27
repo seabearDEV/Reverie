@@ -9,7 +9,7 @@ import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
-import { loadData, saveData, getValue, setValue, removeValue, getEntriesFlat, Scope, validateImportEntries, validateImportAliases, validateImportConfirm } from "./storage";
+import { loadData, saveData, getValue, getValueWithStore, setValue, removeValue, getEntriesFlat, Scope, validateImportEntries, validateImportAliases, validateImportConfirm } from "./storage";
 import { isValidEntryKey } from "./utils/directoryStore";
 import {
   flattenObject,
@@ -36,14 +36,15 @@ import { findProjectFile, updateEntries, updateAll, loadMeta, loadMetaMerged, ge
 import { hasConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
 import { renameKey, RenameRefusal } from "./rename";
 import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from "./config";
-import { computeImportSections } from "./utils/importSections";
+import { computeImportSections, assertImportedAliasesFree } from "./utils/importSections";
+import { assertAliasNameFreeNow, otherStoreEntryKeys } from "./utils/aliasNames";
 import { KeyCollisionError, assertKeysWritable, renameDestinationProblem } from "./utils/keyCollision";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
-import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, interpolateForRead, unresolvedWarning, unresolvedOverflowNote } from "./utils/interpolate";
-import type { UnresolvedOnRead } from "./utils/interpolate";
+import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, gateNamesFor, interpolateForRead, unresolvedWarning, unresolvedOverflowNote } from "./utils/interpolate";
+import type { UnresolvedOnRead, EntryStore } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace, keyIsEntryKey } from "./utils/telemetry";
 import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
@@ -169,18 +170,26 @@ import crypto from 'crypto';
 const CONFIRM_TOKEN_TTL = 5 * 60 * 1000;
 const pendingConfirmations = new Map<string, { key: string; command: string; fingerprint: string; expires: number }>();
 
+/** A value `reverie_run` runs, and the store it was read from — where its references resolve (#280). */
+interface RunValue {
+  value: string;
+  from: EntryStore;
+}
+
 /**
  * #243: what a confirm_token approves — the previewed command, and the stored
- * value of every key the run reaches through `${key}` or `$(key)` (aliases
+ * value of every entry the run reaches through `${key}` or `$(key)` (aliases
  * resolved). A `$(key)` shows in the preview as written, so the preview text
  * alone would not change when the command it names does. The token is
- * redeemed only while this is unchanged.
+ * redeemed only while this is unchanged. #280: entries as the run reads
+ * them, each in its store — the value in the store a reference resolves in,
+ * not whichever a lookup by name finds first.
  */
-function runFingerprint(command: string, rawValues: string[]): string {
-  const reached = new Set<string>();
-  for (const cv of rawValues) for (const k of collectReferencedKeys(cv)) reached.add(k);
-  const values = [...reached].sort().map((k) => [k, getValue(k) ?? null]);
-  return crypto.createHash('sha256').update(JSON.stringify([command, rawValues, values])).digest('hex');
+function runFingerprint(command: string, runs: RunValue[]): string {
+  // As the gate walks them (#289): in order, each value with its own exec cache.
+  const reads = collectRunReferences(runs, false).reads;
+  const values = [...reads].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return crypto.createHash('sha256').update(JSON.stringify([command, runs.map((r) => [r.from, r.value]), values])).digest('hex');
 }
 
 // --- Miss-path tracker for observed exploration cost ---
@@ -513,6 +522,9 @@ server.tool(
       // #215: the value and the alias map are two writes. Check the map
       // before the value lands, so a refusal leaves nothing half-written.
       if (alias) assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases']);
+      // #279: likewise an alias named after an entry, the one this call
+      // writes included. setAlias checks again under the lock.
+      if (alias) assertAliasNameFreeNow(alias, [resolved]);
       setValue(resolved, storedValue, scope);
       if (alias) {
         setAlias(alias, resolved, scope);
@@ -535,7 +547,7 @@ server.tool(
       // executes; an encrypted value is not inspected.
       if (!encrypt) {
         try {
-          const read = interpolateForRead(value);
+          const read = interpolateForRead(value, wroteTo);
           if (read.unresolved) lines.push(`warning: ${unresolvedWarning(resolved, read.unresolved)}`);
         } catch { /* `:?` or a cycle: the author asked for that failure on read */ }
       }
@@ -627,7 +639,10 @@ server.tool(
         if (Object.keys(data).length > 0) {
           const showValues = values ?? false;
           if (format === "tree") {
-            sections.push(formatTree(data, keyToAliasMap, '', '', false, false, undefined, false, !showValues, depth));
+            // #280: one store's entries — the project's, or the global
+            // store's (with scope:"global", or outside a project).
+            const listingStore: EntryStore = listingScope === 'project' ? 'project' : 'global';
+            sections.push(formatTree(data, keyToAliasMap, '', '', false, false, undefined, false, !showValues, depth, 1, listingStore));
           } else {
             const flat = flattenObject(data, '', depth);
             if (showValues) {
@@ -646,9 +661,10 @@ server.tool(
 
       // Resolve potential alias
       const resolvedKey = resolveKey(key, lookupScope);
-      const value = getValue(resolvedKey, lookupScope);
+      const found = getValueWithStore(resolvedKey, lookupScope);
+      const value = found?.value;
 
-      if (value === undefined) {
+      if (found === undefined || value === undefined) {
         return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
       }
 
@@ -676,7 +692,7 @@ server.tool(
           // circular): it propagates. Anything else that does not resolve
           // comes back as written, with a line saying so (#202) — it used to
           // come back as written with no sign that anything was unresolved.
-          const read = interpolateForRead(strVal);
+          const read = interpolateForRead(strVal, found.store);
           display = read.value;
           if (read.unresolved) unresolvedNote = `\nwarning: ${unresolvedWarning(resolvedKey, read.unresolved)}`;
         } else {
@@ -690,12 +706,12 @@ server.tool(
       // Object subtree
       const showSubtreeValues = values ?? false;
       if (format === "tree") {
-        return textResponse(formatTree(value, keyToAliasMap, '', resolvedKey, false, false, undefined, false, !showSubtreeValues, depth));
+        return textResponse(formatTree(value, keyToAliasMap, '', resolvedKey, false, false, undefined, false, !showSubtreeValues, depth, 1, found.store));
       }
       const flat = flattenObject(value, resolvedKey, depth);
       if (showSubtreeValues) {
         const unresolved: [string, UnresolvedOnRead][] = [];
-        const interpFlat = interpolateObject(flat, (k, u) => { unresolved.push([k, u]); });
+        const interpFlat = interpolateObject(flat, (k, u) => { unresolved.push([k, u]); }, found.store);
         const lines = Object.entries(interpFlat).map(([k, v]) => {
           const strVal = typeof v === 'string' ? v : JSON.stringify(v);
           return `${k}: ${isEncrypted(strVal) ? '[encrypted]' : strVal}`;
@@ -986,6 +1002,8 @@ server.tool(
       return textResponse(`Alias set: ${alias} -> ${key}`);
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
+      // #279: an alias named after an entry — the refusal is complete on its own.
+      if (err instanceof KeyCollisionError) return errorResponse(err.message, err.code);
       return errorResponse(`Error setting alias: ${String(err)}`);
     }
   }
@@ -1039,16 +1057,17 @@ server.tool(
 // confirm/interpolation fix cannot miss a branch.
 function runGated(
   key: string,
-  rawValues: string[],
-  needsConfirm: boolean,
+  runs: RunValue[],
+  gateNames: string[],
   opts: { dry?: boolean | undefined; force?: boolean | undefined; confirm_token?: string | undefined },
 ) {
   // Safe (non-exec) display command for dry output and the confirm prompt.
   // SECURITY: building the preview must not execute `$(key)` exec refs, so
   // the safe pass (display) and exec pass (interpolateExec) run separately.
+  // #280: each value in its own store, in every pass.
   let command: string;
   try {
-    command = rawValues.map((cv) => interpolate(cv)).join(' && ');
+    command = runs.map((r) => interpolateFrom(r.value, r.from)).join(' && ');
   } catch (err) {
     // #215: a `${key}` naming an unreadable entry is not an interpolation
     // error. Let the wrapper render it, with its code.
@@ -1056,30 +1075,31 @@ function runGated(
     return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // #158: the caller's needsConfirm covers only the top-level/chain keys. A
-  // confirm-gated command pulled in transitively via ${key}/$(key) must also
-  // force the gate — enumerate the referenced keys (no execution) and OR them
-  // in. Done here so both the single-key and chain callsites are covered.
-  if (!needsConfirm) {
-    for (const cv of rawValues) {
-      for (const k of collectReferencedKeys(cv)) {
-        if (hasConfirm(k)) { needsConfirm = true; break; }
-      }
-      if (needsConfirm) break;
-    }
-  }
+  // The caller's gateNames are the top-level/chain keys, each as typed and
+  // as its alias resolves (#279). #158: a confirm-gated command pulled in
+  // transitively via ${key}/$(key) must also force the gate — enumerate the
+  // referenced keys (no execution) and OR them in. Done here so both the
+  // single-key and chain callsites are covered. #289: walked as exec runs
+  // them — in order, each value with its own exec cache, as below.
+  const trace = collectRunReferences(runs, false);
+  let needsConfirm = gateNames.some((k) => hasConfirm(k)) || [...trace.keys].some((k) => hasConfirm(k));
+  // #289: fail closed when the walk stopped past a command exec would run:
+  // what follows was not checked. The preview says so.
+  const unchecked = walkUnchecked(trace) ? trace.incomplete : undefined;
+  if (unchecked !== undefined) needsConfirm = true;
   // #215: fail closed. A confirmation list that does not parse loads as
   // empty, so "no flag" proves nothing while one is unreadable — every entry
-  // is gated until it is resolved. Both callsites looked a flag up before
-  // calling here, which is the scan this check reads.
+  // is gated until it is resolved. A flag was looked up above, which is the
+  // scan this check reads.
   if (!needsConfirm && confirmListUnreadable()) needsConfirm = true;
 
   if (opts.dry) return textResponse(`$ ${command}`);
 
   if (needsConfirm && !opts.force) {
-    const fingerprint = runFingerprint(command, rawValues);
+    const fingerprint = runFingerprint(command, runs);
+    const why = unchecked === undefined ? '' : `Not every reference it reaches could be checked for a confirmation flag (${unchecked}).\n`;
     const prompt = () =>
-      `⚠ This command requires confirmation before execution:\n$ ${command}\n\nTo execute, call reverie_run again with confirm_token: "${createConfirmToken(key, command, fingerprint)}"`;
+      `⚠ This command requires confirmation before execution:\n$ ${command}\n${why}\nTo execute, call reverie_run again with confirm_token: "${createConfirmToken(key, command, fingerprint)}"`;
     if (opts.confirm_token) {
       const approved = consumeConfirmToken(opts.confirm_token, key);
       if (!approved) {
@@ -1100,7 +1120,7 @@ function runGated(
   // Past the gates — resolve exec refs for real.
   let execCommand: string;
   try {
-    execCommand = rawValues.map((cv) => interpolateExec(cv)).join(' && ');
+    execCommand = runs.map((r) => interpolateExec(r.value, r.from)).join(' && ');
   } catch (err) {
     if (err instanceof StoreUnreadableError || isStoreIoError(err)) throw err; // #215, as above
     return errorResponse(`Interpolation error: ${err instanceof Error ? err.message : String(err)}`);
@@ -1140,11 +1160,14 @@ server.tool(
   async ({ key, dry, force, confirm_token, chain, scope: scopeParam }) => {
     const scope = toScope(scopeParam);
     const resolvedKey = resolveKey(key, scope);
-    const value = getValue(resolvedKey, scope);
+    const found = getValueWithStore(resolvedKey, scope);
+    const value = found?.value;
 
-    if (value === undefined) {
+    if (found === undefined || value === undefined) {
       return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
     }
+    // #279: the key as typed is gated as well as the key its alias names.
+    const gateNames = gateNamesFor(key, resolvedKey, scope !== 'global');
     if (typeof value !== "string") {
       return errorResponse(`Value at '${key}' is not a string command.`);
     }
@@ -1160,27 +1183,32 @@ server.tool(
       // interpolation yet — SECURITY: building the preview must not execute
       // `$(key)` exec refs, so we keep the raw values and run the safe pass
       // (display) and exec pass (interpolateExec) separately below.
-      const rawValues: string[] = [];
-      let anyNeedsConfirm = false;
+      // #280: the keys a chain entry lists are references in it, so they
+      // resolve in its store — a global chain runs global entries only.
+      const memberScope = found.store === 'global' ? 'global' : scope;
+      const runs: RunValue[] = [];
       for (const ck of chainKeys) {
-        const rk = resolveKey(ck, scope);
-        const cv = getValue(rk, scope);
-        if (cv === undefined) return errorResponse(`Chain key '${ck}' not found.`, 'NOT_FOUND');
+        const rk = resolveKey(ck, memberScope);
+        const member = getValueWithStore(rk, memberScope);
+        const cv = member?.value;
+        if (member === undefined || cv === undefined) return errorResponse(`Chain key '${ck}' not found.`, 'NOT_FOUND');
         if (typeof cv !== 'string') return errorResponse(`Chain key '${ck}' is not a string command.`);
         if (isEncrypted(cv)) return errorResponse(`Chain key '${ck}' is encrypted.`);
-        if (hasConfirm(rk)) anyNeedsConfirm = true;
-        rawValues.push(cv);
+        // #279: each member as typed and as its alias resolves.
+        gateNames.push(...gateNamesFor(ck, rk, memberScope !== 'global'));
+        runs.push({ value: cv, from: member.store });
       }
 
-      // Confirm if ANY key on the chain is confirm-flagged.
-      return runGated(key, rawValues, anyNeedsConfirm, { dry, force, confirm_token });
+      // Confirm if ANY key on the chain — or the chain entry itself — is
+      // confirm-flagged.
+      return runGated(key, runs, gateNames, { dry, force, confirm_token });
     }
 
     if (isEncrypted(value)) {
       return errorResponse(`Value at '${key}' is encrypted. Decryption is not supported via MCP.`);
     }
 
-    return runGated(key, [value], hasConfirm(resolvedKey), { dry, force, confirm_token });
+    return runGated(key, [{ value, from: found.store }], gateNames, { dry, force, confirm_token });
   }
 );
 
@@ -1402,6 +1430,16 @@ server.tool(
             if (!hasNonStringValues) validateImportAliases(aliasesSection);
           }
           if (confirmSection) validateImportConfirm(confirmSection);
+          // #279: an alias the apply would refuse, refused here too —
+          // checked against the store the import writes, as it stands.
+          if (aliasesSection) {
+            const written = getEffectiveScope(scope);
+            assertImportedAliasesFree({ entries: entriesSection, aliases: aliasesSection }, !!merge, {
+              entries: () => loadData(written),
+              aliases: () => loadAliases(written),
+              otherEntryKeys: () => otherStoreEntryKeys(written),
+            });
+          }
         } catch (err) {
           // The data is what is wrong, not the store: INVALID_INPUT, as the
           // CLI reports a file that fails the same checks.
@@ -1505,6 +1543,7 @@ server.tool(
       // Compute each section's final value (shared #133 contract: omitted
       // sections are never touched, including type:'all' replace), and
       // commit all sections in a single store write.
+      const otherKeys = aliasesSection ? otherStoreEntryKeys(getEffectiveScope(scope)) : [];
       updateAll(current => computeImportSections(
         {
           entries: entriesSection,
@@ -1522,6 +1561,10 @@ server.tool(
           aliases: () => current.aliases,
           confirm: () => current.confirm,
           hidden: () => current.hidden,
+          // #279: an imported alias must not be named after an entry of the
+          // other store either. Read before the lock, as that store is not
+          // the one written.
+          otherEntryKeys: () => otherKeys,
         },
       ), scope);
 

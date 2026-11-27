@@ -3,6 +3,9 @@ import { DEFAULT_LLM_INSTRUCTIONS, CLI_LLM_INSTRUCTIONS, getCustomInstructions, 
 
 vi.mock('../storage', () => ({
   getValue: vi.fn(),
+  // #280: reached only through interpolation, which nothing here does.
+  getValueWithStore: vi.fn(() => { throw new Error('getValueWithStore is not mocked in this suite'); }),
+  entryStoreOf: vi.fn(() => { throw new Error('entryStoreOf is not mocked in this suite'); }),
 }));
 
 import { getValue } from '../storage';

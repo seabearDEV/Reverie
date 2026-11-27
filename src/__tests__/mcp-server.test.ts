@@ -123,10 +123,17 @@ vi.mock('../storage', () => {
       Object.assign(mockData, d);
     }),
     getValue: vi.fn((key: string) => getNestedMock(mockData, key)),
+    // #280: this mock has one store; a value read in the default scope counts as the project's.
+    getValueWithStore: vi.fn((key: string, scope?: string) => {
+      const value = getNestedMock(mockData, key);
+      return value === undefined ? undefined : { value, store: scope === 'global' ? 'global' : 'project' };
+    }),
     setValue: vi.fn((key: string, value: string) => setNestedMock(mockData, key, value)),
     removeValue: vi.fn((key: string) => removeNestedMock(mockData, key)),
     getEntriesFlat: vi.fn(() => flattenMock(mockData)),
     validateImportEntries: _realStorage.validateImportEntries,
+    // #280: for listings in the CLI; the MCP tools read one store at a time.
+    entryStoreOf: vi.fn(() => { throw new Error('entryStoreOf is not mocked in this suite'); }),
     validateImportAliases: vi.fn(),
     validateImportConfirm: vi.fn(),
   };
@@ -219,6 +226,9 @@ vi.mock('../store', () => {
   });
   return {
     findProjectFile: vi.fn(() => null),
+    // As in mcp-advanced: the real resolution with this mock's
+    // findProjectFile (always null), so auto resolves to global.
+    getEffectiveScope: vi.fn((scope?: string) => (scope === 'project' ? 'project' : 'global')),
     clearProjectFileCache: vi.fn(),
     clearStoreCaches: vi.fn(),
     loadEntries: vi.fn(() => ({ ...mockData })),
@@ -281,6 +291,9 @@ vi.mock('../utils/entryIdentity', () => ({
   keysOpeningSameEntry: vi.fn(() => []),
   opensEntryFile: vi.fn(() => false),
   storedSpellingOf: vi.fn(() => undefined),
+  // #279: the alias-name check, by name only — this mock's filesystem folds nothing.
+  entryNamedBy: vi.fn((name: string, keys: ReadonlySet<string>) =>
+    keys.has(name) ? name : [...keys].find(k => k.toLowerCase() === name.toLowerCase())),
 }));
 
 vi.mock('../formatting', () => ({
@@ -956,25 +969,26 @@ describe('MCP Server Tools', () => {
     it('imports all (replace) with structured JSON', async () => {
       Object.assign(mockData, { old: 'data' });
       Object.assign(mockAliases, { old: 'alias.path' });
-      const json = JSON.stringify({ entries: { new: 'data' }, aliases: { new: 'alias.path' } });
+      // An alias is not named after an entry (#279): 'al.new', not 'new'.
+      const json = JSON.stringify({ entries: { new: 'data' }, aliases: { 'al.new': 'alias.path' } });
       const result = await toolHandlers['reverie_import']({
         type: 'all', data: json, merge: false,
       });
       expect(result.content[0].text).toContain('Entries, aliases, and confirm keys imported successfully');
       expect(mockData).toEqual({ new: 'data' });
-      expect(mockAliases).toEqual({ new: 'alias.path' });
+      expect(mockAliases).toEqual({ 'al.new': 'alias.path' });
     });
 
     it('imports all (merge) with structured JSON', async () => {
       Object.assign(mockData, { existing: 'data' });
       Object.assign(mockAliases, { existing: 'alias.path' });
-      const json = JSON.stringify({ entries: { added: 'data' }, aliases: { added: 'alias.path' } });
+      const json = JSON.stringify({ entries: { added: 'data' }, aliases: { 'al.added': 'alias.path' } });
       const result = await toolHandlers['reverie_import']({
         type: 'all', data: json, merge: true,
       });
       expect(result.content[0].text).toContain('Entries, aliases, and confirm keys merged successfully');
       expect(mockData).toEqual({ existing: 'data', added: 'data' });
-      expect(mockAliases).toEqual({ existing: 'alias.path', added: 'alias.path' });
+      expect(mockAliases).toEqual({ existing: 'alias.path', 'al.added': 'alias.path' });
     });
 
     it('rejects oversized string payloads (#80)', async () => {

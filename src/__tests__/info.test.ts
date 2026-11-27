@@ -13,6 +13,9 @@ vi.mock('../storage', () => ({
     'server.port': '22',
     'db.host': 'localhost',
   })),
+  // #280: reached only through interpolation, which nothing here does.
+  getValueWithStore: vi.fn(() => { throw new Error('getValueWithStore is not mocked in this suite'); }),
+  entryStoreOf: vi.fn(() => { throw new Error('entryStoreOf is not mocked in this suite'); }),
 }));
 
 vi.mock('../alias', () => ({

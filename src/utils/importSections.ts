@@ -1,6 +1,7 @@
 import { deepMerge } from './deepMerge';
 import { expandFlatKeys, flattenObject } from './objectPath';
 import { assertKeysWritable } from './keyCollision';
+import { assertAliasNamesFree, entryKeysIn } from './aliasNames';
 import type { CodexData } from '../types';
 
 export interface ImportSections {
@@ -19,9 +20,10 @@ export interface ImportSections {
  * the ones absent from it: the preview only ever diffs present sections,
  * and deliberate wipes are reset's job.
  *
- * Current-state loaders are passed lazily so this stays pure and a surface
- * never pays a load for a section its file doesn't carry. CLI and MCP
- * import must both build their payload here, inside updateAll, from the
+ * Current-state loaders are passed lazily so this stays pure (the alias
+ * check aside, which asks the filesystem which file a name opens) and a
+ * surface never pays a load for a section its file doesn't carry. CLI and
+ * MCP import must both build their payload here, inside updateAll, from the
  * state it hands them under the store lock (#254) — do not reintroduce
  * surface-local section math, or a merge base loaded before the lock.
  */
@@ -38,11 +40,14 @@ export function computeImportSections(
     confirm: () => Record<string, true>;
     /** #267: entries stored under another entry, which `entries()` cannot show. */
     hidden?: () => readonly string[];
+    /** #279: the entry keys of the store the import does not write, read before the lock. */
+    otherEntryKeys?: () => readonly string[];
   },
 ): ImportSections {
   const next: ImportSections = {};
-  if (sections.entries) {
-    const incoming = expandFlatKeys(sections.entries);
+  const incoming = sections.entries ? expandFlatKeys(sections.entries) : undefined;
+  assertImportedAliasesFree(sections, merge, current);
+  if (sections.entries && incoming) {
     if (merge) {
       const existing = current.entries();
       // An empty group names no entry. Merged as-is it replaced a leaf at
@@ -74,6 +79,42 @@ export function computeImportSections(
     next.confirm = merge ? { ...current.confirm(), ...sections.confirm } : sections.confirm;
   }
   return next;
+}
+
+/**
+ * #279: an imported alias must not be named after an entry. An alias stands
+ * in for the entry of its name wherever the name is used, and a merge import
+ * could put one over a confirm-gated entry. Refused, merge or replace: a name
+ * that is the key of an entry the store will hold after the import (its
+ * entries now, or the file's in place of them for a replace that brings
+ * entries), of one this file brings, or of one in the other store — under
+ * that spelling, another case, or a spelling the filesystem opens its file
+ * under. An alias the store already has, with the same target, adds nothing
+ * and passes (a file imported back into the store it came from). Throws the
+ * refusal (KeyCollisionError, INVALID_INPUT).
+ *
+ * computeImportSections runs it under the store lock; a preview runs it on
+ * the store as it stands, so a preview does not show an import that the
+ * apply then refuses.
+ */
+export function assertImportedAliasesFree(
+  sections: { entries?: Record<string, unknown> | undefined; aliases?: Record<string, unknown> | undefined },
+  merge: boolean,
+  current: {
+    entries: () => CodexData;
+    aliases: () => Record<string, string>;
+    hidden?: () => readonly string[];
+    otherEntryKeys?: () => readonly string[];
+  },
+): void {
+  const aliases = sections.aliases;
+  if (!aliases) return;
+  const have = current.aliases();
+  const added = Object.keys(aliases).filter(name => !(Object.hasOwn(have, name) && have[name] === aliases[name]));
+  if (added.length === 0) return;
+  const incoming = sections.entries ? Object.keys(flattenObject(expandFlatKeys(sections.entries))) : [];
+  const kept = merge || !sections.entries ? entryKeysIn({ entries: current.entries(), hidden: current.hidden?.() }) : [];
+  assertAliasNamesFree(added, [...kept, ...incoming, ...(current.otherEntryKeys?.() ?? [])]);
 }
 
 /** A copy of `node` without groups that hold no entry at any depth. */

@@ -23,6 +23,15 @@ vi.mock('../store', () => {
       const next = fn(loadAliasMap(scope));
       if (next !== null) saveAliasMap(next, scope);
     }),
+    // #279: setAlias and renameAlias write through updateStore, which hands
+    // them the store's entries too. Over this mock's alias map, with no
+    // entries: the change still shows up as a saveAliasMap call.
+    updateStore: vi.fn((fn: (c: { entries: Record<string, unknown>; aliases: Record<string, string>; confirm: Record<string, true> }) => { aliases: Record<string, string> } | null, scope?: string) => {
+      const next = fn({ entries: {}, aliases: loadAliasMap(scope), confirm: {} });
+      if (next !== null) saveAliasMap(next.aliases, scope);
+    }),
+    // The other store's entries, read for the same check: none.
+    loadEntries: vi.fn(() => ({})),
     loadAliasMapMerged: vi.fn(() => ({ ...aliases })),
     clearStoreCaches: vi.fn(() => { aliases = {}; }),
     findProjectFile: vi.fn(() => null),

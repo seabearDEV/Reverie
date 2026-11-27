@@ -7,10 +7,21 @@ import { getValue } from '../storage';
 import { resolveKey } from '../alias';
 
 // Mock storage and alias modules
-vi.mock('../storage', () => ({
-  getValue: vi.fn(),
-  loadData: vi.fn(() => ({})),
-}));
+vi.mock('../storage', () => {
+  const getValue = vi.fn();
+  return {
+    getValue,
+    // #280: interpolation reads through getValueWithStore. A plain function
+    // over the getValue mock, so each test sets its values one way; a value
+    // read in the default scope counts as the project's.
+    getValueWithStore: (key: string, scope?: string) => {
+      const value: unknown = scope === undefined ? getValue(key) : getValue(key, scope);
+      return value === undefined ? undefined : { value, store: scope === 'global' ? 'global' : 'project' };
+    },
+    loadData: vi.fn(() => ({})),
+    entryStoreOf: vi.fn(() => { throw new Error('entryStoreOf is not mocked in this suite'); }),
+  };
+});
 
 vi.mock('../alias', () => ({
   resolveKey: vi.fn((key: string) => key),

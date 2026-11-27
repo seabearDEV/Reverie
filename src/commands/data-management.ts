@@ -7,7 +7,8 @@ import { ExportOptions, ImportOptions, ResetOptions } from '../types';
 import path from 'path';
 import { validateDataType, validateResetType, confirmOrAbort, getInvalidDataTypeMessage, getInvalidResetTypeMessage, printSuccess, printError, printWarning } from './helpers';
 import { flattenObject, expandFlatKeys } from '../utils/objectPath';
-import { computeImportSections } from '../utils/importSections';
+import { computeImportSections, assertImportedAliasesFree } from '../utils/importSections';
+import { otherStoreEntryKeys } from '../utils/aliasNames';
 import { maskEncryptedValues } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { createAutoBackup } from '../utils/autoBackup';
@@ -303,6 +304,16 @@ export async function importData(type: string, file: string, options: ImportOpti
           if (!hasNonStringValues) validateImportAliases(aliasesSection);
         }
         if (confirmSection) validateImportConfirm(confirmSection);
+        // #279: an alias the apply would refuse, refused here too — checked
+        // against the store the import writes, as it stands.
+        if (aliasesSection) {
+          const written = getEffectiveScope(scope);
+          assertImportedAliasesFree({ entries: entriesSection, aliases: aliasesSection }, !!options.merge, {
+            entries: () => loadData(written),
+            aliases: () => loadAliases(written),
+            otherEntryKeys: () => otherStoreEntryKeys(written),
+          });
+        }
       } catch (err) {
         // The file is what is wrong, not the store or the process.
         printError(err instanceof Error ? err.message : String(err), 'INVALID_INPUT');
@@ -351,6 +362,7 @@ export async function importData(type: string, file: string, options: ImportOpti
     // store write. Closes the cross-section tear window: even with process
     // death or disk error mid-apply, the store never ends up with new
     // entries and stale aliases / confirm (or vice versa).
+    const otherKeys = aliasesSection ? otherStoreEntryKeys(getEffectiveScope(scope)) : [];
     updateAll(current => computeImportSections(
       {
         entries: entriesSection,
@@ -370,6 +382,10 @@ export async function importData(type: string, file: string, options: ImportOpti
         aliases: () => current.aliases,
         confirm: () => current.confirm,
         hidden: () => current.hidden,
+        // #279: an imported alias must not be named after an entry of the
+        // other store either. Read before the lock, as that store is not
+        // the one written.
+        otherEntryKeys: () => otherKeys,
       },
     ), scope);
 

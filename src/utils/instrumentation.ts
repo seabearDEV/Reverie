@@ -12,6 +12,7 @@ import { startResponseMeasure, addResponseBytes, endResponseMeasure } from './re
 import { resolveAgentIdentity } from './agentIdentity';
 import { ProjectResolutionError } from '../projectResolution';
 import { isStoreIoError } from './storeWriteError';
+import { KeyCollisionError } from './keyCollision';
 import { loadConfig } from '../config';
 import { color } from '../formatting';
 import { StoreUnreadableError, listUnreadableFiles, markUnreadableShown, takeWriteRefused, unreadableWarning, unreadableWarningBlock, withoutShown } from './unreadable';
@@ -284,6 +285,7 @@ export async function withCliInstrumentation<T>(
     thrownCode = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
       : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
       : isStoreIoError(err) ? 'IO'
+      : err instanceof KeyCollisionError ? err.code
       : 'RUNTIME';
     if (err instanceof ProjectResolutionError) {
       refusedReason = 'project_unresolved';
@@ -302,13 +304,15 @@ export async function withCliInstrumentation<T>(
       const code = err instanceof ProjectResolutionError ? 'PROJECT_UNRESOLVED'
         : err instanceof StoreUnreadableError ? 'STORE_UNREADABLE'
         : isStoreIoError(err) ? 'IO'
+        : err instanceof KeyCollisionError ? err.code
         : 'RUNTIME';
       failJson(code, err instanceof Error ? err.message : String(err));
-    } else if (err instanceof StoreUnreadableError || err instanceof ProjectResolutionError || isStoreIoError(err)) {
+    } else if (err instanceof StoreUnreadableError || err instanceof ProjectResolutionError || isStoreIoError(err) || err instanceof KeyCollisionError) {
       // An expected, self-explaining failure: its message, not a stack trace
       // (#249: confirm and alias set/remove reach here outside a project;
       // #261: a store lock another process held for the whole wait; #271: a
-      // store file the filesystem would not write).
+      // store file the filesystem would not write; #279: an alias named
+      // after an entry, from alias set/rename).
       originalConsoleError.call(console, `${color.red('✗ ')}${err.message}`);
       process.exitCode = 1;
     } else {

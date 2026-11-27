@@ -10,6 +10,7 @@ import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, ProjectResolutionError } from './projectResolution';
 import { StoreUnreadableError, markUnreadableShown, noteWriteRefused, readForWrite } from './utils/unreadable';
 import { isJsonMode, failJson, recordErrorCode } from './utils/output';
+import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/aliasNames';
 
 export type { Scope } from './store';
 
@@ -147,6 +148,21 @@ export function saveData(data: CodexData, scope?: Scope  ): void {
  * With 'auto' scope: checks project first, falls through to global.
  */
 export function getValue(key: string, scope?: Scope  ): CodexValue | undefined {
+  return getValueWithStore(key, scope)?.value;
+}
+
+/**
+ * getValue, and the store the value was read from (#280). A reference in a
+ * value resolves in that value's own store, so whoever interpolates it has
+ * to know where it came from: in the default scope the answer can be either.
+ * With an explicit scope it is that scope (a project read with no project
+ * reads the global store, and resolves its references as a project entry
+ * would there — the same lookups).
+ */
+export function getValueWithStore(key: string, scope?: Scope): { value: CodexValue; store: 'project' | 'global' } | undefined {
+  const found = (value: CodexValue | undefined, store: 'project' | 'global') =>
+    value === undefined ? undefined : { value, store };
+  const explicit: 'project' | 'global' = scope === 'global' ? 'global' : 'project';
   // Fast path: leaf-key lookups read exactly one entry file instead of
   // scanning the whole store directory. On miss we fall through to the slow
   // path, which can also resolve subtree lookups (where `key` is a parent of
@@ -159,16 +175,16 @@ export function getValue(key: string, scope?: Scope  ): CodexValue | undefined {
       if (!scope || scope === 'auto') {
         if (findProjectFile()) {
           const projectVal = getEntryFast(key, 'project');
-          if (projectVal !== undefined) return projectVal;
+          if (projectVal !== undefined) return found(projectVal, 'project');
           const globalVal = getEntryFast(key, 'global');
-          if (globalVal !== undefined) return globalVal;
+          if (globalVal !== undefined) return found(globalVal, 'global');
         } else {
           const globalVal = getEntryFast(key, 'global');
-          if (globalVal !== undefined) return globalVal;
+          if (globalVal !== undefined) return found(globalVal, 'global');
         }
       } else {
         const v = getEntryFast(key, scope);
-        if (v !== undefined) return v;
+        if (v !== undefined) return found(v, explicit);
       }
     } catch (err) {
       // #215: an entry file that exists but does not parse is not a miss.
@@ -185,12 +201,12 @@ export function getValue(key: string, scope?: Scope  ): CodexValue | undefined {
     // Fallthrough: project first, then global
     if (findProjectFile()) {
       const projectVal = getNestedValue(loadEntries('project'), key);
-      if (projectVal !== undefined) return projectVal;
-      return getNestedValue(loadEntries('global'), key);
+      if (projectVal !== undefined) return found(projectVal, 'project');
+      return found(getNestedValue(loadEntries('global'), key), 'global');
     }
-    return getNestedValue(loadEntries('global'), key);
+    return found(getNestedValue(loadEntries('global'), key), 'global');
   }
-  return getNestedValue(loadEntries(scope), key);
+  return found(getNestedValue(loadEntries(scope), key), explicit);
 }
 
 /**
@@ -273,7 +289,8 @@ export function setValue(key: string, value: string, scope?: Scope  ): void {
  * alias and the flag change (a flag-only `set --no-confirm -a`). The checks
  * of setValue apply, decided under the lock: a key or an alias that cannot
  * be stored, and an entry in the way (#216, #224), refuse before anything is
- * written. Returns whether a flag was taken off.
+ * written. So does an alias named after an entry (#279), this one included.
+ * Returns whether a flag was taken off.
  */
 export function setValueWithMeta(
   key: string,
@@ -289,9 +306,13 @@ export function setValueWithMeta(
     throw new Error(`Invalid alias name: ${JSON.stringify(meta.alias)}`);
   }
   const effectiveScope = resolveScopeForWrite(scope);
+  const otherKeys = meta.alias !== undefined ? otherStoreEntryKeys(effectiveScope) : [];
   let flagRemoved = false;
   updateStore(current => {
     flagRemoved = false;
+    if (meta.alias !== undefined) {
+      assertAliasNamesFree([meta.alias], [...entryKeysIn(current), key, ...otherKeys]);
+    }
     const next = { ...current };
     if (value !== undefined) {
       assertKeyWritable(current.entries, key);
@@ -369,6 +390,24 @@ export function getEntriesFlat(scope?: Scope  ): Record<string, string> {
     return flattenObject(loadEntriesMerged());
   }
   return flattenObject(loadEntries(scope));
+}
+
+/**
+ * For the entries getEntriesFlat(scope) lists: the store each key's entry is
+ * in, where its references resolve (#280). One scope is one store. The
+ * default view lays the project's entries over the global ones, so a key the
+ * project holds is the project's and any other is global. The project's keys
+ * are read once, on the first question.
+ */
+export function entryStoreOf(scope?: Scope): (key: string) => 'project' | 'global' {
+  if (scope === 'global') return () => 'global';
+  if (scope === 'project') return () => 'project';
+  let projectKeys: Set<string> | undefined;
+  return key => {
+    // Outside a project there is nothing to lay over the global store.
+    projectKeys ??= findProjectFile() ? new Set(Object.keys(flattenObject(loadEntries('project')))) : new Set();
+    return projectKeys.has(key) ? 'project' : 'global';
+  };
 }
 
 /**

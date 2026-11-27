@@ -46,6 +46,8 @@ vi.mock('../utils/entryIdentity', () => ({
   entriesOpenedBy: vi.fn(() => new Map()),
   opensEntryFile: vi.fn(() => true),
   storedSpellingOf: vi.fn(() => undefined),
+  // #279: the alias-name check; nothing here adds an alias.
+  entryNamedBy: vi.fn(() => { throw new Error('entryNamedBy is not mocked in this suite'); }),
 }));
 
 import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged, findProjectFile, updateUnderBothLocks, inspectBothStores } from '../store';

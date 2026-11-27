@@ -32,6 +32,7 @@ import { flattenObject, getNestedValue, removeNestedValue, removeFlatKeysUnder, 
 import { StoreUnreadableError } from './utils/unreadable';
 import { storedSpellingOf } from './utils/entryIdentity';
 import { isValidEntryKey } from './utils/directoryStore';
+import { assertAliasNamesFree } from './utils/aliasNames';
 
 /** A rename that cannot go ahead as asked. Nothing was written. */
 export class RenameRefusal extends Error {
@@ -187,7 +188,17 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
       }
       const aliasView = fallsThrough && other ? { ...other.data.aliases, ...target.data.aliases } : target.data.aliases;
       let aliases = repointAliases(aliasView, source, newKey) ?? target.data.aliases;
-      if (newAlias) aliases = withAlias(aliases, newAlias, newKey);
+      if (newAlias) {
+        // #279: not under a name that is an entry's key once the rename is
+        // done, in either store — the old key is free if it moved away.
+        const movedAway = (k: string): boolean => found.store === target && (k === source || k.startsWith(`${source}.`));
+        assertAliasNamesFree([newAlias], [
+          ...Object.keys(flattenObject(entries)),
+          ...(target.data.hidden ?? []).filter(k => !movedAway(k)),
+          ...(other ? storedKeys(other) : []),
+        ]);
+        aliases = withAlias(aliases, newAlias, newKey);
+      }
       // A rename removes no flag (#234): the old name's may gate an entry of
       // that name somewhere this rename cannot see. It adds the new key's.
       const confirm = { ...target.data.confirm };

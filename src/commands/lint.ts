@@ -1,7 +1,7 @@
-import { getEntriesFlat, Scope } from '../storage';
+import { getEntriesFlat, entryStoreOf, Scope } from '../storage';
 import { color } from '../formatting';
 import { findProjectFile } from '../store';
-import { interpolateForRead, unresolvedWarning } from '../utils/interpolate';
+import { interpolateForRead, unresolvedWarning, type EntryStore } from '../utils/interpolate';
 import { isJsonMode, setResult, failJson, recordErrorCode, addWarning } from '../utils/output';
 import { describeUnreadable, displayPath, listUnreadableFiles, markUnreadableShown, resolutionHint } from '../utils/unreadable';
 import { entriesUnderEntries, findCollidingPairs, storedKeysOf } from '../utils/keyCollision';
@@ -77,7 +77,8 @@ export interface SeedIssue {
   message: string;
 }
 
-export function checkSeedQuality(flat: Record<string, string>): SeedIssue[] {
+/** `storeOf`: the store each entry is in, where its references resolve (#280). */
+export function checkSeedQuality(flat: Record<string, string>, storeOf: (key: string) => EntryStore = () => 'project'): SeedIssue[] {
   const issues: SeedIssue[] = [];
 
   for (const [key, value] of Object.entries(flat)) {
@@ -117,7 +118,7 @@ export function checkSeedQuality(flat: Record<string, string>): SeedIssue[] {
     // those (findUnresolvedReferences), and flagging them here too listed
     // the entry twice, once as "would error".
     try {
-      interpolateForRead(value);
+      interpolateForRead(value, storeOf(key));
     } catch (err) {
       issues.push({
         key,
@@ -214,11 +215,11 @@ export interface LintResult {
 }
 
 /** Entries whose value has a `\${name}` that does not resolve (#202). Safe pass: never executes. */
-function findUnresolvedReferences(flat: Record<string, string>): { key: string; message: string }[] {
+function findUnresolvedReferences(flat: Record<string, string>, storeOf: (key: string) => EntryStore): { key: string; message: string }[] {
   const found: { key: string; message: string }[] = [];
   for (const [key, value] of Object.entries(flat)) {
     try {
-      const read = interpolateForRead(value);
+      const read = interpolateForRead(value, storeOf(key));
       if (read.unresolved) found.push({ key, message: unresolvedWarning(key, read.unresolved) });
     } catch { /* `:?` or a cycle: reported by the read that hits it, not here */ }
   }
@@ -228,6 +229,8 @@ function findUnresolvedReferences(flat: Record<string, string>): { key: string; 
 export function lintEntries(options: { json?: boolean; global?: boolean; seedQuality?: boolean } = {}): void {
   const scope: Scope | undefined = options.global ? 'global' : undefined;
   const flat = getEntriesFlat(scope);
+  // #280: each entry's references resolve in its own store.
+  const storeOf = entryStoreOf(scope);
 
   const customNamespaces = loadCustomSchema();
   const allowedNamespaces = customNamespaces
@@ -256,13 +259,13 @@ export function lintEntries(options: { json?: boolean; global?: boolean; seedQua
   // whenever a global entry held a reference.
   const unreadable = listUnreadableFiles();
 
-  const seedIssues = options.seedQuality ? checkSeedQuality(flat) : [];
+  const seedIssues = options.seedQuality ? checkSeedQuality(flat, storeOf) : [];
 
   // #202: references that do not resolve, checked on every lint — this was
   // one heuristic of --seed-quality, so a default lint passed a store whose
   // entries could not be read. Advice, like the namespace check: a read
   // returns such a value as written, and only `run` fails on it.
-  const unresolvedRefs = findUnresolvedReferences(flat);
+  const unresolvedRefs = findUnresolvedReferences(flat, storeOf);
 
   // #216: keys in one store that differ only by case. On a case-insensitive
   // filesystem they are one file, so whoever checks the store out there gets

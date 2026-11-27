@@ -77,6 +77,20 @@ reverie.hook('preAction', (_thisCommand, actionCommand) => {
   configureOutput({ json: json && !sourceRun, command: names.join(' ') });
 });
 
+/**
+ * #284: the entry a name typed on the command line means. With -G it
+ * resolves through the global alias map only, as `run -G` does: the default
+ * view layers the project's aliases over the global ones, and a cloned
+ * repository's `_aliases.json` could make `set -G`, `rm -G`, `rename -G` or
+ * `confirm remove -G` act on another global entry than the one named. In the
+ * default scope a project alias still applies, as a lookup by key does; a
+ * write there lands in the project store, or (rename) copies a global entry
+ * into it, so it cannot reach a global entry through one.
+ */
+function resolveTyped(name: string, scope: 'global' | undefined): string {
+  return scope === 'global' ? resolveKey(name, 'global') : resolveKey(name);
+}
+
 // Set command
 reverie
   .command('set <key> [value...]')
@@ -106,7 +120,7 @@ reverie
         const pair = pairs[i];
         const eqIdx = pair.indexOf('=');
         if (eqIdx === -1) {
-          commands.warnUnresolvedReferences(stored);
+          commands.warnUnresolvedReferences(stored, scope ?? 'project');
           printError(`Invalid batch pair '${pair}'. Expected key=value format.`);
           process.exitCode = 1;
           return;
@@ -114,12 +128,12 @@ reverie
         const k = pair.slice(0, eqIdx);
         const v = pair.slice(eqIdx + 1);
         if (!k) {
-          commands.warnUnresolvedReferences(stored);
+          commands.warnUnresolvedReferences(stored, scope ?? 'project');
           printError(`Invalid batch pair '${pair}'. Key cannot be empty.`);
           process.exitCode = 1;
           return;
         }
-        const rk = resolveKey(k);
+        const rk = resolveTyped(k, scope);
         // JSON mode: one envelope for the batch, written by the last pair, so
         // a pair refused after the first still shows in `ok` and `error`. A
         // malformed pair returns above and leaves it to the finalize step.
@@ -129,7 +143,7 @@ reverie
           async () => {
             const result = await commands.setEntry(rk, v, options.force, undefined, undefined, undefined, options.global);
             if (result) stored.push([rk, v]);
-            if (!deferEnvelope) commands.warnUnresolvedReferences(stored);
+            if (!deferEnvelope) commands.warnUnresolvedReferences(stored, scope ?? 'project');
             return result;
           }
         );
@@ -200,7 +214,7 @@ reverie
     } else {
       value = shownValue = valueArray.join(' ');
     }
-    const resolvedKey = resolveKey(key);
+    const resolvedKey = resolveTyped(key, scope);
     await withCliInstrumentation(
       { tool: 'reverie_set', key: resolvedKey, rawKey: key, scope, writeValue: value, params: { key: resolvedKey, value: value ?? '' } },
       async () => {
@@ -216,7 +230,7 @@ reverie
         // prompt (shownValue is undefined then): both are secrets, and the
         // warning would print part of one.
         if (result && shownValue !== undefined && !options.encrypt) {
-          commands.warnUnresolvedReferences([[resolvedKey, shownValue]]);
+          commands.warnUnresolvedReferences([[resolvedKey, shownValue]], scope ?? 'project');
         }
         return result;
       }
@@ -246,7 +260,7 @@ reverie
   .action(async (key: string | undefined, options: { tree?: boolean, plain?: boolean, source?: boolean, decrypt?: boolean, copy?: boolean, aliases?: boolean, values?: boolean, depth?: number, json?: boolean, global?: boolean, all?: boolean, passwordFile?: string }) => {
     if (options.aliases) console.error(color.yellow('Deprecation: use `alias list` instead of `get -a`.'));
     const scope = options.global ? 'global' as const : undefined;
-    const resolvedKey = key ? resolveKey(key) : undefined;
+    const resolvedKey = key ? resolveTyped(key, scope) : undefined;
     await withCliInstrumentation(
       { tool: 'reverie_get', key: resolvedKey, rawKey: key, scope, params: { key: key ?? '' } },
       () => withPager(() => commands.getEntry(resolvedKey ?? key, options))
@@ -284,7 +298,7 @@ reverie
   .option('-G, --global', 'Target global data store')
   .action(async (source: string, dest: string, options: { force?: boolean, global?: boolean }) => {
     const scope = options.global ? 'global' as const : undefined;
-    const resolvedSource = resolveKey(source);
+    const resolvedSource = resolveTyped(source, scope);
     await withCliInstrumentation(
       { tool: 'reverie_copy', key: dest, rawKey: source, scope, copySourceKey: resolvedSource, params: { source: resolvedSource, dest } },
       () => commands.copyEntry(resolvedSource, dest, options.force, options.global)
@@ -323,9 +337,10 @@ reverie
   .option('--password-file <path>', 'Read decryption password from the first line of a file (chmod 600)')
   .option('-G, --global', 'Target global data store')
   .action(async (key: string, options: { decrypt?: boolean, global?: boolean, passwordFile?: string }) => {
-    const resolvedKey = resolveKey(key);
+    const scope = options.global ? 'global' as const : undefined;
+    const resolvedKey = resolveTyped(key, scope);
     await withCliInstrumentation(
-      { tool: 'reverie_set', key: resolvedKey, rawKey: key, scope: options.global ? 'global' as const : undefined, params: { key: resolvedKey } },
+      { tool: 'reverie_set', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => commands.editEntry(resolvedKey, options)
     );
   });
@@ -341,7 +356,7 @@ reverie
   .action(async (oldName: string, newName: string, options: { alias?: boolean, setAlias?: string, global?: boolean }) => {
     if (options.alias) console.error(color.yellow('Deprecation: use `alias rename <old> <new>` instead of `rename -a`.'));
     const scope = options.global ? 'global' as const : undefined;
-    const resolvedOld = options.alias ? oldName : resolveKey(oldName);
+    const resolvedOld = options.alias ? oldName : resolveTyped(oldName, scope);
     await withCliInstrumentation(
       { tool: 'reverie_rename', key: resolvedOld, rawKey: oldName, scope, params: { oldKey: resolvedOld, newKey: newName } },
       () => options.alias
@@ -362,7 +377,7 @@ reverie
     if (options.alias) console.error(color.yellow('Deprecation: use `alias remove <name>` instead of `remove -a`.'));
     const tool = options.alias ? 'reverie_alias_remove' : 'reverie_remove';
     const scope = options.global ? 'global' as const : undefined;
-    const resolvedKey = options.alias ? key : resolveKey(key);
+    const resolvedKey = options.alias ? key : resolveTyped(key, scope);
     await withCliInstrumentation(
       { tool, key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       async () => {
@@ -483,8 +498,8 @@ confirmCommand
   .description('Require confirmation before running this key')
   .option('-G, --global', 'Target global data store')
   .action(async (key: string, options: { global?: boolean }) => {
-    const resolvedKey = resolveKey(key);
     const scope = options.global ? 'global' as const : undefined;
+    const resolvedKey = resolveTyped(key, scope);
     await withCliInstrumentation(
       { tool: 'reverie_confirm_set', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {
@@ -506,8 +521,8 @@ confirmCommand
   .description('Remove confirmation requirement')
   .option('-G, --global', 'Target global data store')
   .action(async (key: string, options: { global?: boolean }) => {
-    const resolvedKey = resolveKey(key);
     const scope = options.global ? 'global' as const : undefined;
+    const resolvedKey = resolveTyped(key, scope);
     await withCliInstrumentation(
       { tool: 'reverie_confirm_remove', key: resolvedKey, rawKey: key, scope, params: { key: resolvedKey } },
       () => {

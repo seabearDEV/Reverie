@@ -12,6 +12,8 @@ Each trial builds two identical worlds, one per build: two projects (`p1`, `p2`)
 
 Afterwards `probe.mjs` evaluates the `run` gate with each build's own modules, for every key a sequence can produce — each namespace of the mix with each leaf name, since renaming or copying a namespace carries its leaf names into another, and the alias — from each of the three directories, in the default scope and with `-G`. A **hit** is a key the old build reports `GATED` and the new one does not. The harness also compares the entry files of the two worlds.
 
+The gate itself changed in #279 and #280: it checks a key as typed as well as its alias target (and its global alias target), and a value's references resolve in the store the value came from. `probe.mjs` asks each build which gate it has (a build that exports `getValueWithStore` and `gateNamesFor` has the new one) and evaluates that one. With `PROBE_TRACE=1` it also lists the keys each result checked; the harness compares plain results, so set it only when probing a world by hand.
+
 ## Running it
 
 Build the old code somewhere (a worktree of `main` is enough) and the new code in this checkout, then:
@@ -49,6 +51,7 @@ done: 150 trials, seed 7; trials with a main-gated/head-ungated key: 9 {"refusal
 
 - `nsRename`: the trial renamed a namespace. Before the rule that a rename never removes a flag, these were real losses.
 - `NEITHER`: nothing explains it. Treat it as a regression until shown otherwise.
+  One kind is expected since #280, and only this one: a global entry whose `${…}` or `$(…)` read a project entry of the same name, which reached a flagged command. The new build reads the global store there, so that command is not part of what the run executes, and is not gated. Show it before calling it that: with `PROBE_TRACE=1` the flagged key is in the old build's list and not the new one's, and `rvr --json run -G <key> --dry` on each build shows the old one running the project's text.
 
 `entry-file differences` should be 0: the two builds are expected to store the same entries.
 

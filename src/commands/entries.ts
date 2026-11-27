@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadData, handleError, getValue, getValueForWrite, setValue, setValueWithMeta, removeValue, Scope } from '../storage';
+import { loadData, handleError, getValue, getValueWithStore, getValueForWrite, setValue, setValueWithMeta, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
 import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
 import { renameKey, RenameRefusal } from '../rename';
@@ -22,11 +22,12 @@ import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
-import { interpolate, interpolateExec, interpolateObject, collectReferencedKeys, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, UNRESOLVED_WARNING_CODE, UnresolvedOnRead } from '../utils/interpolate';
+import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, gateNamesFor, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, UNRESOLVED_WARNING_CODE, type UnresolvedOnRead, type EntryStore } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
 import { isJsonMode, setResult, failJson, addWarning, recordErrorCode, type ErrorCode } from '../utils/output';
 import { markValueStored } from '../utils/writeAmp';
 import { writeSourceCommand } from '../utils/sourceOutput';
+import { assertAliasNameFreeNow } from '../utils/aliasNames';
 
 function toScope(global?: boolean  ): Scope | undefined {
   return global ? 'global' : undefined;
@@ -63,19 +64,33 @@ function warnUnresolved(found: [string, UnresolvedOnRead][]): void {
  * Called by the command, not by setEntry, and only with values that may be
  * shown: the warning quotes the reference, so a value typed at the masked
  * prompt or about to be encrypted must never be passed in.
+ *
+ * `from`: the store the values went to — where a read resolves them (#280).
+ * 'project' for the default scope: outside a project that reads the global
+ * store, as the write did.
  */
-export function warnUnresolvedReferences(stored: [string, string][]): void {
+export function warnUnresolvedReferences(stored: [string, string][], from: EntryStore = 'project'): void {
   const found: [string, UnresolvedOnRead][] = [];
   for (const [key, value] of stored) {
     try {
-      const read = interpolateForRead(value);
+      const read = interpolateForRead(value, from);
       if (read.unresolved) found.push([key, read.unresolved]);
     } catch { /* `:?` or a cycle fails the read of this entry; that is the read's to report, and a fault here must not fail a write that succeeded */ }
   }
   warnUnresolved(found);
 }
 
-export async function runCommand(keys: string[], options: { yes?: boolean, dry?: boolean, decrypt?: boolean, source?: boolean, capture?: boolean, chain?: boolean, global?: boolean, passwordFile?: string }): Promise<void> {
+interface RunOptions { yes?: boolean, dry?: boolean, decrypt?: boolean, source?: boolean, capture?: boolean, chain?: boolean, global?: boolean, passwordFile?: string }
+
+export async function runCommand(keys: string[], options: RunOptions): Promise<void> {
+  return runKeys(keys, options, []);
+}
+
+/**
+ * `gateAlso`: names the confirmation gate checks besides the keys run — the
+ * chain entry that listed them, as typed and as its alias resolves (#279).
+ */
+async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]): Promise<void> {
   debug('runCommand called', { keys, options });
   const scope = toScope(options.global);
   try {
@@ -88,7 +103,8 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       }
       const chainKey = keys[0];
       const resolvedChainKey = resolveKey(chainKey, scope);
-      const chainValue = getValue(resolvedChainKey, scope);
+      const chainFound = getValueWithStore(resolvedChainKey, scope);
+      const chainValue = chainFound?.value;
       if (chainValue === undefined) {
         printError(`Entry '${chainKey}' not found.`, 'NOT_FOUND');
         process.exitCode = 1;
@@ -107,8 +123,12 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
         return;
       }
       debug('chain resolved', { chainKey, chainKeys });
-      // Recurse without --chain to run the resolved keys normally
-      return runCommand(chainKeys, { ...options, chain: false });
+      // Recurse without --chain to run the resolved keys normally. #280: the
+      // keys a chain entry lists are references in it, so they resolve in its
+      // store — a global chain runs global entries only. #279: the chain
+      // entry's own flag gates the run, under the name typed as well.
+      return runKeys(chainKeys, { ...options, chain: false, global: options.global === true || chainFound?.store === 'global' },
+        [...gateAlso, ...gateNamesFor(chainKey, resolvedChainKey, scope !== 'global')]);
     }
 
     const commands: string[] = [];
@@ -116,20 +136,30 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     // execution can resolve `$(key)` exec refs separately from the safe display
     // value. `commands` (below) is built with the non-exec interpolation pass
     // and drives all preview/dry/confirm output; exec refs only run at the
-    // execution moment via interpolateExec(rawValue).
-    const rawCommands: string[] = [];
+    // execution moment via interpolateExec.
+    //
+    // #280: each segment is kept with the store its value came from, and is
+    // interpolated — shown, gated and run — on its own, in that store.
+    // Interpolating the joined text resolved every segment in one store.
+    const rawCommands: { value: string; from: EntryStore }[][] = [];
     const resolvedKeys: string[] = [];
+    // #279: the gate checks each key under the name typed as well as the
+    // key its alias resolves to.
+    const gateNames: string[] = [...gateAlso];
 
     for (const keyGroup of keys) {
       // Split on : for composition (e.g. "cd:reverie" → "cd /path")
       const segments = keyGroup.replace(/:$/, '').split(':');
       const resolvedSegments: string[] = [];
-      const rawSegments: string[] = [];
+      const rawSegments: { value: string; from: EntryStore }[] = [];
 
       for (const segment of segments) {
         const resolvedKey = resolveKey(segment, scope);
         resolvedKeys.push(resolvedKey);
-        let value = getValue(resolvedKey, scope);
+        gateNames.push(...gateNamesFor(segment, resolvedKey, scope !== 'global'));
+        const found = getValueWithStore(resolvedKey, scope);
+        const from: EntryStore = found?.store ?? 'project';
+        let value = found?.value;
 
         if (value === undefined) {
           printError(`Entry '${segment}' not found.`, 'NOT_FOUND');
@@ -167,9 +197,9 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
 
         // Retain the raw value for exec-time resolution; the displayed/preview
         // value uses the SAFE (non-exec) interpolation pass.
-        rawSegments.push(value);
+        rawSegments.push({ value, from });
         try {
-          value = interpolate(value);
+          value = interpolateFrom(value, from);
         } catch (err) {
           // #215: a `${key}` that names an unreadable entry. The outer catch
           // reports it as STORE_UNREADABLE and marks the file as shown;
@@ -184,23 +214,30 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       }
 
       commands.push(resolvedSegments.join(' '));
-      rawCommands.push(rawSegments.join(' '));
+      rawCommands.push(rawSegments);
     }
 
     const value = commands.join(' && ');
-    const rawValue = rawCommands.join(' && ');
 
     // #158: the confirm gate must cover every key run touches, not just the
     // top-level segments. A hostile non-gated entry that references a
     // confirm-gated command via ${key} or $(key) would otherwise execute it
     // with no prompt. Enumerate the transitive key set (no execution) and
-    // gate on any of them carrying confirm metadata.
-    const confirmKeys = new Set<string>(resolvedKeys);
-    for (const k of collectReferencedKeys(rawValue)) confirmKeys.add(k);
+    // gate on any of them carrying confirm metadata — each segment in its
+    // own store (#280), in the order exec runs them, with one exec cache for
+    // the run as exec has (#289).
+    const trace = collectRunReferences(rawCommands.flat(), true);
+    const confirmKeys = new Set<string>([...gateNames, ...trace.keys]);
+    // #289: fail closed when the walk stopped past a command exec would run:
+    // what follows was not checked. The reason goes in the refusal.
+    const unchecked = walkUnchecked(trace) ? trace.incomplete : undefined;
+    const refusal = unchecked === undefined
+      ? 'Entry requires confirmation.'
+      : `Entry requires confirmation: not every reference it reaches could be checked for a confirmation flag (${unchecked}).`;
     // #215: fail closed. An unreadable confirmation list loads as empty, so
     // while one is unreadable every entry is gated. hasConfirm runs first —
     // it does the scan the second check reads.
-    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || confirmListUnreadable();
+    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || unchecked !== undefined || confirmListUnreadable();
 
     // SECURITY: produce the real shell command ONLY when actually executing —
     // this is the single place `$(key)` exec refs run. Callers invoke it past
@@ -208,7 +245,12 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     // undefined so the caller aborts without executing.
     const buildExecCommand = (): string | undefined => {
       try {
-        return interpolateExec(rawValue);
+        // One exec cache for the whole run: an entry's command runs once,
+        // as it did when the joined text was interpolated in one pass.
+        const execCache = new Map<string, string>();
+        return rawCommands
+          .map(group => group.map(seg => interpolateExec(seg.value, seg.from, execCache)).join(' '))
+          .join(' && ');
       } catch (err) {
         if (err instanceof StoreUnreadableError) throw err; // #215, as above
         printError(err instanceof Error ? err.message : String(err));
@@ -231,7 +273,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
       // command rides in error.preview.
       if (needsConfirmJson && !options.yes) {
         setResult({ keys: resolvedKeys, command: value });
-        failJson('REQUIRES_CONFIRMATION', `Entry requires confirmation. Re-run with --yes to execute.`, value);
+        failJson('REQUIRES_CONFIRMATION', `${refusal} Re-run with --yes to execute.`, value);
         return;
       }
       const execValue = buildExecCommand();
@@ -269,6 +311,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
     const needsConfirm = anyKeyNeedsConfirm;
     if (needsConfirm && !options.yes) {
       if (process.stdin.isTTY) {
+        if (unchecked !== undefined) console.error(`warning: not every reference this command reaches could be checked for a confirmation flag (${unchecked}).`);
         const answer = await askConfirmation('Run this? [y/N] ', options.source ? process.stderr : undefined);
         if (answer.toLowerCase() !== 'y') {
           if (options.source) {
@@ -284,7 +327,7 @@ export async function runCommand(keys: string[], options: { yes?: boolean, dry?:
         // unconfirmed on the non-interactive (agent/CI/piped) surface the
         // tripwire is meant to protect. Refuse and tell the caller how to opt in.
         printError(
-          `Entry requires confirmation. Re-run with --yes to execute non-interactively.`,
+          `${refusal} Re-run with --yes to execute non-interactively.`,
           'REQUIRES_CONFIRMATION',
         );
         process.exitCode = 1;
@@ -603,8 +646,10 @@ export async function setEntry(key: string, value: string | undefined, force = f
         const sidecars: ('aliases' | 'confirm')[] = confirm ? [] : ['confirm'];
         if (alias) sidecars.push('aliases');
         if (sidecars.length > 0) assertSidecarsWritable(() => resolveScopeForWrite(scope), sidecars);
-        // An alias that cannot be stored is refused before the flag changes.
+        // An alias that cannot be stored is refused before the flag changes —
+        // so is one named after an entry (#279; checked again by the write).
         if (alias && !isValidEntryKey(alias)) throw new Error(`Invalid alias name: ${JSON.stringify(alias)}`);
+        if (alias) assertAliasNameFreeNow(alias, [key]);
         if (confirm) {
           const flagged = flagEntry(key, scope);
           if (!flagged) {
@@ -718,7 +763,12 @@ export async function setEntry(key: string, value: string | undefined, force = f
   }
 }
 
-function displayFlatEntries(flat: Record<string, string>, aliasMap: Record<string, string>, options: GetOptions): void {
+/**
+ * #280: `from` is the store the entries were read from — their references
+ * resolve there. A listing reads one store (the project's, or the global one
+ * with -G or outside a project), and a subtree comes from one store.
+ */
+function displayFlatEntries(flat: Record<string, string>, aliasMap: Record<string, string>, options: GetOptions, from: EntryStore): void {
   // Keys-only mode: no key specified and --values not set
   if (!options.values) {
     if (options.plain) {
@@ -736,7 +786,7 @@ function displayFlatEntries(flat: Record<string, string>, aliasMap: Record<strin
   try {
     entries = options.source
       ? flat
-      : interpolateObject(flat, (k, u) => { unresolved.push([k, u]); });
+      : interpolateObject(flat, (k, u) => { unresolved.push([k, u]); }, from);
   } catch (err) {
     // A `:?` or a cycle in one entry of the listing (or a fault): the
     // one-line error a get of that entry gives. This used to escape as a
@@ -758,7 +808,7 @@ function displayFlatEntries(flat: Record<string, string>, aliasMap: Record<strin
   displayEntries(entries as Record<string, string>, aliasMap);
 }
 
-function jsonFlatEntries(data: Record<string, string> | Record<string, CodexValue>, source = false): Record<string, string> {
+function jsonFlatEntries(data: Record<string, string> | Record<string, CodexValue>, source: boolean | undefined, from: EntryStore): Record<string, string> {
   const flat = flattenObject(data);
   const result: Record<string, string> = {};
   const unresolved: [string, UnresolvedOnRead][] = [];
@@ -772,7 +822,7 @@ function jsonFlatEntries(data: Record<string, string> | Record<string, CodexValu
     } else {
       // A `:?` or a cycle keeps the raw value here, as it always has.
       try {
-        const read = interpolateForRead(v);
+        const read = interpolateForRead(v, from);
         result[k] = read.value;
         if (read.unresolved) unresolved.push([k, read.unresolved]);
       } catch { result[k] = v; }
@@ -800,14 +850,14 @@ function displayScopedEntries(scope: 'project' | 'global', aliasMap: Record<stri
   }
 
   if (options.tree) {
-    displayTree(data, aliasMap, '', '', !!options.plain, undefined, !!options.source, !options.values, options.depth);
+    displayTree(data, aliasMap, '', '', !!options.plain, undefined, !!options.source, !options.values, options.depth, scope);
   } else {
-    displayFlatEntries(flattenObject(data, '', options.depth), aliasMap, options);
+    displayFlatEntries(flattenObject(data, '', options.depth), aliasMap, options, scope);
   }
   console.log('');
 }
 
-function displayAllEntries(data: Record<string, CodexValue>, aliasMap: Record<string, string>, options: GetOptions): void {
+function displayAllEntries(data: Record<string, CodexValue>, aliasMap: Record<string, string>, options: GetOptions, from: EntryStore): void {
   if (Object.keys(data).length === 0) {
     if (options.plain) return;
     console.log(color.gray(`No entries found. Add one with "${getBinaryName()} set <key> <value>"`));
@@ -816,16 +866,16 @@ function displayAllEntries(data: Record<string, CodexValue>, aliasMap: Record<st
   }
 
   if (options.tree) {
-    displayTree(data, aliasMap, '', '', !!options.plain, undefined, !!options.source, !options.values, options.depth);
+    displayTree(data, aliasMap, '', '', !!options.plain, undefined, !!options.source, !options.values, options.depth, from);
     return;
   }
 
-  displayFlatEntries(flattenObject(data, '', options.depth), aliasMap, options);
+  displayFlatEntries(flattenObject(data, '', options.depth), aliasMap, options, from);
 }
 
-function displaySubtree(key: string, value: Record<string, CodexValue>, aliasMap: Record<string, string>, options: GetOptions): void {
+function displaySubtree(key: string, value: Record<string, CodexValue>, aliasMap: Record<string, string>, options: GetOptions, from: EntryStore): void {
   if (options.tree) {
-    displayTree({ [key]: value }, aliasMap, '', '', !!options.plain, undefined, !!options.source, !options.values, options.depth);
+    displayTree({ [key]: value }, aliasMap, '', '', !!options.plain, undefined, !!options.source, !options.values, options.depth, from);
     return;
   }
 
@@ -836,7 +886,7 @@ function displaySubtree(key: string, value: Record<string, CodexValue>, aliasMap
     return;
   }
 
-  displayFlatEntries(flat, aliasMap, options);
+  displayFlatEntries(flat, aliasMap, options, from);
 }
 
 export async function getEntry(key?: string, options: GetOptions = {}): Promise<void> {
@@ -847,6 +897,9 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
   const listingScope: Scope | undefined = options.global ? 'global' : (hasProject && !options.all) ? 'project' : undefined;
   // For single-key lookups, use auto fallthrough (project → global)
   const lookupScope = toScope(options.global);
+  // #280: the store a listing reads, where its entries' references resolve.
+  // listingScope is undefined only outside a project: the global store.
+  const listingStore: EntryStore = listingScope === 'project' ? 'project' : 'global';
 
   // --json output mode (no alias map needed). The value goes inside the WS1
   // envelope's `result` (decision D3 — the bare-value shape was a documented
@@ -855,22 +908,23 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
   if (isJsonMode()) {
     if (!key) {
       if (options.all && hasProject) {
-        setResult({ project: jsonFlatEntries(loadData('project'), options.source), global: jsonFlatEntries(loadData('global'), options.source) });
+        setResult({ project: jsonFlatEntries(loadData('project'), options.source, 'project'), global: jsonFlatEntries(loadData('global'), options.source, 'global') });
       } else if (options.aliases) {
         setResult({ aliases: loadAliases(listingScope) });
       } else {
-        setResult(jsonFlatEntries(loadData(listingScope), options.source));
+        setResult(jsonFlatEntries(loadData(listingScope), options.source, listingStore));
       }
       return;
     }
 
-    const val = getValue(key, lookupScope);
-    if (val === undefined) {
+    const found = getValueWithStore(key, lookupScope);
+    const val = found?.value;
+    if (found === undefined || val === undefined) {
       failJson('NOT_FOUND', `Entry '${key}' not found`);
       return;
     }
     if (typeof val === 'object' && val !== null) {
-      setResult(jsonFlatEntries(flattenObject({ [key]: val }), options.source));
+      setResult(jsonFlatEntries(flattenObject({ [key]: val }), options.source, found.store));
     } else {
       const strVal = String(val);
       let displayVal: string;
@@ -881,7 +935,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
       } else {
         // A `:?` or a cycle keeps the raw value here, as it always has.
         try {
-          const read = interpolateForRead(strVal);
+          const read = interpolateForRead(strVal, found.store);
           displayVal = read.value;
           if (read.unresolved) warnUnresolved([[key, read.unresolved]]);
         } catch { displayVal = strVal; }
@@ -909,13 +963,14 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
     }
 
     const data = loadData(listingScope);
-    displayAllEntries(data, aliasMap, options);
+    displayAllEntries(data, aliasMap, options, listingStore);
     return;
   }
 
-  const value = getValue(key, lookupScope);
+  const found = getValueWithStore(key, lookupScope);
+  const value = found?.value;
 
-  if (value === undefined) {
+  if (found === undefined || value === undefined) {
     printError(`Entry '${key}' not found.`, 'NOT_FOUND');
     process.exitCode = 1;
     return;
@@ -925,7 +980,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
     if (options.copy) {
       printWarning('--copy only works with a single value, not a subtree.');
     }
-    displaySubtree(key, value, aliasMap, options);
+    displaySubtree(key, value, aliasMap, options, found.store);
     return;
   }
 
@@ -950,7 +1005,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
     let decryptedDisplay: string;
     try {
       // #202: an unresolved reference is returned as written, with a warning.
-      const read = interpolateForRead(decrypted);
+      const read = interpolateForRead(decrypted, found.store);
       decryptedDisplay = read.value;
       if (read.unresolved) warnUnresolved([[key, read.unresolved]]);
     } catch (err) {
@@ -983,7 +1038,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
       // the same answer `get --json` and a subtree listing give. This used to
       // fail with exit 1, so an entry documenting a tool with \${VAR} syntax
       // could not be read at all. Only a `:?` or a cycle still fails here.
-      const read = interpolateForRead(strValue);
+      const read = interpolateForRead(strValue, found.store);
       displayValue = read.value;
       if (read.unresolved) warnUnresolved([[key, read.unresolved]]);
     } catch (err) {

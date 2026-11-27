@@ -22,11 +22,11 @@
 import type { CodexData } from '../types';
 import { flattenObject } from './objectPath';
 
-export type KeyCollisionKind = 'case' | 'fold' | 'parent' | 'child';
+export type KeyCollisionKind = 'case' | 'fold' | 'parent' | 'child' | 'alias';
 
 export interface KeyCollision {
   kind: KeyCollisionKind;
-  /** The key the caller tried to write. */
+  /** The key the caller tried to write (for 'alias', the alias name). */
   key: string;
   /** The existing key(s) in the way, as they are spelled in the store. */
   existing: string[];
@@ -37,6 +37,16 @@ const NAMED_KEYS_CAP = 5;
 
 function describeCollision(c: KeyCollision): string {
   const key = `'${c.key}'`;
+  if (c.kind === 'alias') {
+    // #279: an alias is looked up before an entry, so it would stand in for
+    // the entry under that name.
+    const entry = c.existing[0];
+    const names = entry === c.key
+      ? 'an entry is stored under that key'
+      : `it names the entry '${entry}' (they differ only by case, or are one file on this filesystem)`;
+    return `Refusing to add the alias ${key}: ${names}, and an alias is looked up before an entry, so it would stand in `
+      + `for that entry wherever the name is used. Pick another name for the alias.`;
+  }
   if (c.kind === 'case') {
     const other = `'${c.existing[0]}'`;
     return `Refusing to write ${key}: it differs only by case from the existing key ${other}, `
