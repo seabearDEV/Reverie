@@ -17,7 +17,7 @@
 	"scripts": {
 		"build": "tsc && chmod +x dist/index.js dist/mcp-server.js",
 		"install-local": "npm run build && npm link",
-		"test": "bun test --isolate",
+		"test": "bun test --parallel",
 		"test:watch": "bun test --watch --isolate",
 		"dev:watch": "tsc --watch",
 		"lint": "eslint src/",
