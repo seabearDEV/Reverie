@@ -29,9 +29,10 @@ export function nameView(): NameView {
 
 /** What `written` means in `ctx`, as the stores stand now. */
 export function resolveNameNow(ctx: NameContext, written: string): Resolution {
-  const resolution = resolveName(nameView(), ctx, written);
-  if (resolution.key !== resolution.name) debug(`Alias resolved: "${resolution.name}" -> "${resolution.key}"`);
-  return resolution;
+  // Each alias found is printed under --debug as it is looked up: the
+  // name's own, and the global map's answer for the gate when a run reads
+  // the gate names.
+  return resolveName(nameView(), ctx, written, (name, target) => debug(`Alias resolved: "${name}" -> "${target}"`));
 }
 
 /** What a name typed with `scope` (CLI -G, an MCP scope; undefined or 'auto': the default) means. */

@@ -138,34 +138,50 @@ function dropColon(name: string): string {
 }
 
 /**
+ * Told of each alias lookup that found an alias: the name looked up and its
+ * target. The wrapper prints them under --debug; the core does no I/O.
+ */
+export type OnAliasLookup = (name: string, target: string) => void;
+
+/**
  * The gate's names for one lookup of `written` that gave `key` (#279).
  * `globalAliases`: when the lookup read project aliases, the global map,
  * whose answer for the name is checked too. The name goes through the
  * global lookup with a trailing colon dropped once more, as it always has.
  */
-export function gateNamesOf(written: string, key: string, globalAliases?: AliasMap): string[] {
+export function gateNamesOf(written: string, key: string, globalAliases?: AliasMap, onLookup?: OnAliasLookup): string[] {
   const name = dropColon(written);
   const names = new Set([name, key]);
-  if (globalAliases !== undefined) names.add(lookUp(globalAliases, dropColon(name)));
+  if (globalAliases !== undefined) {
+    const looked = dropColon(name);
+    const globalKey = lookUp(globalAliases, looked);
+    if (globalKey !== looked) onLookup?.(looked, globalKey);
+    names.add(globalKey);
+  }
   return [...names];
 }
 
-/** What `written` means in `ctx`, over `view`. */
-export function resolveName(view: NameView, ctx: NameContext, written: string): Resolution {
+/**
+ * What `written` means in `ctx`, over `view`. `onLookup` hears each lookup
+ * that finds an alias, in the order they happen: the name's own, then —
+ * when the gate names are first read — the global map's answer for it.
+ */
+export function resolveName(view: NameView, ctx: NameContext, written: string, onLookup?: OnAliasLookup): Resolution {
   const name = dropColon(written);
-  const { scope } = plan(ctx);
+  const { maps, scope } = plan(ctx);
   const key = lookUp(aliasesSeen(view, ctx), name);
+  if (key !== name) onLookup?.(name, key);
   // Project aliases were in play unless the lookup was global-only. That
   // holds outside a project too, where the default view is the global map
   // and the extra name is the key itself.
-  const projectAliases = plan(ctx).maps !== 'global';
+  const projectAliases = maps !== 'global';
   let gateNames: string[] | undefined;
   return {
     name,
     key,
     scope,
     get gateNames() {
-      gateNames ??= gateNamesOf(written, key, projectAliases ? view.globalAliases : undefined);
+      gateNames ??= gateNamesOf(written, key, projectAliases ? view.globalAliases : undefined, onLookup);
       return gateNames;
     },
   };

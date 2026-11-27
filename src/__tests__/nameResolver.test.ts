@@ -132,6 +132,27 @@ describe('resolveName: the gate names (#279)', () => {
   });
 });
 
+describe('the lookups it reports (printed under --debug)', () => {
+  const heard = (ctx: NameContext, name: string, readGate: boolean) => {
+    const out: string[] = [];
+    const r = resolveName(view(P, G).view, ctx, name, (n, t) => out.push(`${n} -> ${t}`));
+    if (readGate) void r.gateNames;
+    return out;
+  };
+  it('the name\'s own alias as it is looked up, the global answer for the gate when the gate names are read', () => {
+    expect(heard(AUTO, 'dup', false)).toEqual(['dup -> k.p']);
+    expect(heard(AUTO, 'dup', true)).toEqual(['dup -> k.p', 'dup -> k.g']);
+    expect(heard(AUTO, 'ga', true)).toEqual(['ga -> k.g', 'ga -> k.g']);
+    expect(heard(AUTO, 'pa', true)).toEqual(['pa -> k.p']);
+    expect(heard(GLOBAL, 'dup', true)).toEqual(['dup -> k.g']);
+    expect(heard(REF_P, 'dup', true)).toEqual(['dup -> k.p', 'dup -> k.g']);
+    expect(heard(AUTO, 'k.x', true)).toEqual([]);
+  });
+  it('the gate\'s global lookup drops a trailing colon once more, and reports that name', () => {
+    expect(heard(AUTO, 'ga::', true)).toEqual(['ga -> k.g']);
+  });
+});
+
 describe('contexts', () => {
   it('a typed scope', () => {
     expect(typedContext(undefined)).toEqual({ kind: 'typed', scope: 'auto' });
