@@ -86,6 +86,8 @@ An invocation's id is `<world>|<cwd>|cli <argv>` or `<world>|<cwd>|mcp <tool> <a
 
 For a change that is meant to change behaviour, `--expect <module>` names the differences it should make. The module's default export gets each differing invocation and both records (`inv`, the record of the build under test, the record of the other build) and returns the rule the difference falls under, or null. The run prints the count per rule, prints in full only the differences no rule covers, and fails only on those. Make each predicate exact: what changed as well as where, and every line of output the rule calls for, none missing and none extra. `expect-260.mjs` is the one for #260.
 
+`write-then-run.mjs <first dist> <second dist>` covers what neither this tool nor the gate fuzzer does: a run after an alias write. It applies one rename or alias removal with each build, then runs every name the write touched on the stores that build left, in every scope, and fails on a run that asks on the first build and runs on the second.
+
 ## Its check
 
 The tool should find the bug it exists for. A mutant that reintroduces #284 (`resolveTyped` resolving through the default view for `-G`) must show differences, and main against itself must show none. Both results are in the commit that added the tool.
