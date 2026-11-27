@@ -65,8 +65,13 @@ function parseArgs(argv) {
   return o;
 }
 
+function escapeRegExpLiteral(s) {
+  if (typeof RegExp.escape === 'function') return RegExp.escape(s);
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function selected(o) {
-  const re = o.filter ? new RegExp(o.filter) : null;
+  const re = o.filter ? new RegExp(escapeRegExpLiteral(o.filter)) : null;
   return allInvocations({ worlds: o.worlds ?? WORLDS }).filter(inv => !re || re.test(inv.id));
 }
 
