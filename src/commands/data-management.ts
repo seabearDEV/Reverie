@@ -13,7 +13,9 @@ import { maskEncryptedValues } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { createAutoBackup } from '../utils/autoBackup';
 import { assertNotTestCheckout } from '../utils/directoryStore';
-import { findProjectFile, clearProjectFileCache, updateAll, getEffectiveScope } from '../store';
+import { findProjectStoreDir } from '../utils/paths';
+import { findProjectFile, clearProjectFileCache, updateAll, getEffectiveScope, assertProjectScope } from '../store';
+import { ProjectResolutionError } from '../projectResolution';
 import { wrapExport, tryUnwrapImport } from '../utils/envelope';
 import { version as pkgVersion } from '../../package.json';
 import { getConfigSetting } from '../config';
@@ -40,9 +42,18 @@ import { getTelemetryPath, getMissPathsPath } from '../utils/telemetry';
 import { scanCodebase, ScaffoldEntry } from './scan';
 import { generateClaudeMd, generateAgentsMd } from './claude-md';
 
+/**
+ * The scope -G / -P name. `-P` with no project refuses here, first — before
+ * a prompt, a backup or a read (#296): it used to fall back to the global
+ * store, so `data reset -P` outside a project emptied the global store with
+ * no backup, and `export -P` exported it labeled "project".
+ */
 function resolveScope(options: { global?: boolean | undefined, project?: boolean | undefined }): Scope | undefined {
   if (options.global) return 'global';
-  if (options.project) return 'project';
+  if (options.project) {
+    assertProjectScope('project');
+    return 'project';
+  }
   return undefined;
 }
 
@@ -52,13 +63,13 @@ function resolveScope(options: { global?: boolean | undefined, project?: boolean
 
 export function exportData(type: string, options: ExportOptions): { type: string; files: string[] } | undefined {
   debug('exportData called', { type, options });
+  if (!validateDataType(type)) {
+    printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
+    return;
+  }
+  // Before the try: a refusal is reported by the wrapper, as for import and reset.
+  const scope = resolveScope(options);
   try {
-    if (!validateDataType(type)) {
-      printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
-      return;
-    }
-
-    const scope = resolveScope(options);
     const defaultDir = process.cwd();
     const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
     const indent = options.pretty ? 2 : 0;
@@ -158,14 +169,13 @@ export function exportData(type: string, options: ExportOptions): { type: string
 
 export async function importData(type: string, file: string, options: ImportOptions): Promise<void> {
   debug('importData called', { type, file, options });
+  // Validate type parameter
+  if (!validateDataType(type)) {
+    printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
+    return;
+  }
   const scope = resolveScope(options);
   try {
-    // Validate type parameter
-    if (!validateDataType(type)) {
-      printError(getInvalidDataTypeMessage(type), 'INVALID_INPUT');
-      return;
-    }
-
     // Check if file exists
     if (!fs.existsSync(file)) {
       printError(`Import file not found: ${file}`, 'NOT_FOUND');
@@ -330,6 +340,7 @@ export async function importData(type: string, file: string, options: ImportOpti
       try {
         createAutoBackup('pre-import', scope);
       } catch (err) {
+        if (err instanceof ProjectResolutionError) throw err;   // #296: a refusal, not a failed backup
         printError(`Aborting: auto-backup failed (${err instanceof Error ? err.message : String(err)}). No changes were made.`, 'IO');
         return;
       }
@@ -399,14 +410,13 @@ export async function importData(type: string, file: string, options: ImportOpti
 
 export async function resetData(type: string, options: ResetOptions): Promise<void> {
   debug('resetData called', { type, options });
+  // Validate type parameter
+  if (!validateResetType(type)) {
+    printError(getInvalidResetTypeMessage(type), 'INVALID_INPUT');
+    return;
+  }
   const scope = resolveScope(options);
   try {
-    // Validate type parameter
-    if (!validateResetType(type)) {
-      printError(getInvalidResetTypeMessage(type), 'INVALID_INPUT');
-      return;
-    }
-
     // Confirm before resetting unless --force is used
     if (!options.force) {
       console.log(color.yellow(`⚠ This will reset your ${type} to an empty state.`));
@@ -430,6 +440,7 @@ export async function resetData(type: string, options: ResetOptions): Promise<vo
     try {
       createAutoBackup('pre-reset', scope);
     } catch (err) {
+      if (err instanceof ProjectResolutionError) throw err;   // #296: a refusal, not a failed backup
       printError(`Aborting: auto-backup failed (${err instanceof Error ? err.message : String(err)}). No changes were made.`);
       return;
     }
@@ -581,10 +592,20 @@ export function handleProjectFile(options: {
   // entries, CLAUDE.md, AGENTS.md — may land in the checkout.
   if (!options.dryRun) assertNotTestCheckout(target);
 
-  // Single stat call to determine the target's state.
-  let targetStat: ReturnType<typeof fs.statSync> | null = null;
+  // A store this process would not use is refused before anything is
+  // created: its seeds went to the global store, and since #296 they would
+  // be refused half-way, after the directory was made.
+  const unused = initTargetUnused(cwd, target);
+  if (unused) {
+    printError(unused, 'PROJECT_UNRESOLVED');
+    return;
+  }
+
+  // Single stat call to determine the target's state. lstat: a symlinked
+  // store directory is never used (#159), so init must not build on one.
+  let targetStat: ReturnType<typeof fs.lstatSync> | null = null;
   try {
-    targetStat = fs.statSync(target);
+    targetStat = fs.lstatSync(target);
   } catch { /* ENOENT — target doesn't exist yet */ }
 
   // Check for the edge case where target exists but is not a directory
@@ -615,6 +636,17 @@ export function handleProjectFile(options: {
 
   // Scan codebase and populate entries (unless --no-scan)
   const shouldScan = options.scan !== false;
+  // What the checks above cannot foresee (the walk stops at the global data
+  // directory, say): the seeds would be refused one by one. Say what happened.
+  if (shouldScan && !options.dryRun) {
+    try {
+      assertProjectScope('project');
+    } catch (err) {
+      if (!(err instanceof ProjectResolutionError)) throw err;
+      printError(`${existed ? 'Found' : 'Created'} ${target}, but this process does not resolve it as the project store, so nothing was seeded. Check RVR_PROJECT and RVR_NO_PROJECT, and run \`${getBinaryName()} init\` where the store resolves.`, 'PROJECT_UNRESOLVED');
+      return;
+    }
+  }
   if (shouldScan) {
     if (options.dryRun) {
       const discovered = scanCodebase(cwd);
@@ -738,6 +770,24 @@ function mergeScaffoldEntries(discovered: ScaffoldEntry[]): number {
   }
 
   return count;
+}
+
+/**
+ * Why the store init would create in `cwd` would not be the project store
+ * this process uses, or undefined. Checked before init creates anything.
+ */
+function initTargetUnused(cwd: string, target: string): string | undefined {
+  if (process.env.RVR_NO_PROJECT) {
+    return `Cannot initialize: RVR_NO_PROJECT is set, so no project store is used and the one init would create in ${cwd} would be ignored. Unset RVR_NO_PROJECT and retry. Nothing was created.`;
+  }
+  const envPath = process.env.RVR_PROJECT;
+  if (envPath) {
+    const resolved = path.resolve(envPath);
+    if (resolved !== target && resolved !== cwd && !findProjectStoreDir()) {
+      return `Cannot initialize: RVR_PROJECT is set to ${envPath}, which holds no project store, so the one init would create in ${cwd} would not be used. Unset RVR_PROJECT, or point it at ${target}, and retry. Nothing was created.`;
+    }
+  }
+  return undefined;
 }
 
 function scaffoldProject(): void {

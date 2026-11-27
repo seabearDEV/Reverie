@@ -229,6 +229,9 @@ vi.mock('../store', () => {
     // As in mcp-advanced: the real resolution with this mock's
     // findProjectFile (always null), so auto resolves to global.
     getEffectiveScope: vi.fn((scope?: string) => (scope === 'project' ? 'project' : 'global')),
+    // #294: the scope:"project" refusal is end to end (explicit-project-scope.test.ts).
+    assertProjectScope: vi.fn(),
+    hasProjectStore: vi.fn(() => false),
     clearProjectFileCache: vi.fn(),
     clearStoreCaches: vi.fn(),
     loadEntries: vi.fn(() => ({ ...mockData })),

@@ -141,6 +141,7 @@ vi.mock('../store', () => {
     loadConfirmMapMerged: vi.fn(()  => clone(storeState.confirm)),
     clearStoreCaches:   vi.fn(),
     findProjectFile:    vi.fn(() => null),
+    hasProjectStore: vi.fn(() => false),
     clearProjectFileCache: vi.fn(),
     getEffectiveScope:  vi.fn(() => 'global'),
     touchMeta:          vi.fn(),

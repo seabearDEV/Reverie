@@ -626,7 +626,7 @@ rvr set server.ip 192.168.1.100 -G
 rvr init --remove
 ```
 
-**Scope flags:** The `-G` / `--global` flag is available on `set`, `get`, `run`, `find`, `copy`, `edit`, `rename`, and `remove`. Data management commands (`export`, `import`, `reset`) also support `-P` / `--project`. With `-G`, a name you type resolves through the global aliases only, so a project's `_aliases.json` cannot point a `-G` command at another global entry; without it, the project's aliases apply over the global ones, and a write still lands in the project store.
+**Scope flags:** The `-G` / `--global` flag is available on `set`, `get`, `run`, `find`, `copy`, `edit`, `rename`, and `remove`. Data management commands (`export`, `import`, `reset`) also support `-P` / `--project`, which needs a project: outside one, `-P` is refused with `PROJECT_UNRESOLVED` before any prompt or backup, and nothing is changed. With `-G`, a name you type resolves through the global aliases only, so a project's `_aliases.json` cannot point a `-G` command at another global entry; without it, the project's aliases apply over the global ones, and a write still lands in the project store.
 
 #### Recommended Schema
 
@@ -1053,7 +1053,7 @@ claude mcp add reverie -- bun /absolute/path/to/dist/mcp-server.js
 | `reverie_stats` | View usage telemetry and [token savings](docs/token-savings.md) (hit rate, exploration cost avoided, per-namespace breakdown, trends) |
 | `reverie_audit` | Query the audit log of data mutations (before/after diffs, agent identity, scope, success/fail) |
 
-All data-touching tools accept an optional `scope` parameter (`"project"` or `"global"`). When listing entries (no key), `reverie_get` defaults to project-only if a `.reverie/` exists — pass `all: true` to see both scopes. Single-key lookups fall through from project to global automatically.
+All data-touching tools accept an optional `scope` parameter (`"project"` or `"global"`). When listing entries (no key), `reverie_get` defaults to project-only if a `.reverie/` exists — pass `all: true` to see both scopes. Single-key lookups fall through from project to global automatically. `scope: "project"` needs a project (found through `RVR_PROJECT`, the client's roots or the server's working directory): with none, every tool refuses it with `PROJECT_UNRESOLVED`, reads and `reverie_run` included, and changes nothing. Omit `scope` to read through to the global store, or pass `"global"`. The server looks for the project once and keeps the answer: after `rvr init` creates one under a server that started without it, restart the server — until then its unscoped writes and `scope: "project"` calls refuse rather than land in the wrong store, and every `reverie_run` asks first.
 
 ### LLM Instructions
 

@@ -35,6 +35,7 @@ vi.mock('../store', () => {
     loadAliasMapMerged: vi.fn(() => ({ ...aliases })),
     clearStoreCaches: vi.fn(() => { aliases = {}; }),
     findProjectFile: vi.fn(() => null),
+    hasProjectStore: vi.fn(() => false),
     clearProjectFileCache: vi.fn(),
     // These are needed because alias.ts re-exports Scope from store
   };

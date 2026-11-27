@@ -7,7 +7,7 @@ import { flattenObject, setNestedValue } from '../utils/objectPath';
 import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
 import { renameKey, RenameRefusal } from '../rename';
 import { isValidEntryKey } from '../utils/directoryStore';
-import { findProjectFile, updateEntries, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
+import { hasProjectStore, updateEntries, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
 import { displayTree } from '../formatting';
 import { color } from '../formatting';
@@ -15,7 +15,7 @@ import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
 import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, resolveKey, renameAlias } from '../alias';
 import { hasConfirm, setConfirm, removeConfirm, flagsListedUnder, flagsGating } from '../confirm';
-import { resolveScopeForWrite } from '../projectResolution';
+import { resolveScopeForWrite, unusedProjectStore, unusedProjectReason } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
 import { GetOptions } from '../types';
@@ -231,13 +231,21 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
     // #289: fail closed when the walk stopped past a command exec would run:
     // what follows was not checked. The reason goes in the refusal.
     const unchecked = walkUnchecked(trace) ? trace.incomplete : undefined;
-    const refusal = unchecked === undefined
+    // #294 review: fail closed too while the resolver finds a project this
+    // process has no store for (next to a legacy .codexcli.json that cannot
+    // be migrated): its confirmation list was never read.
+    const unusedProject = unusedProjectStore();
+    const reasons = [
+      ...(unchecked === undefined ? [] : [`not every reference it reaches could be checked for a confirmation flag (${unchecked})`]),
+      ...(unusedProject === undefined ? [] : [unusedProjectReason(unusedProject)]),
+    ];
+    const refusal = reasons.length === 0
       ? 'Entry requires confirmation.'
-      : `Entry requires confirmation: not every reference it reaches could be checked for a confirmation flag (${unchecked}).`;
+      : `Entry requires confirmation: ${reasons.join('; ')}.`;
     // #215: fail closed. An unreadable confirmation list loads as empty, so
     // while one is unreadable every entry is gated. hasConfirm runs first —
     // it does the scan the second check reads.
-    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || unchecked !== undefined || confirmListUnreadable();
+    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || unchecked !== undefined || confirmListUnreadable() || unusedProject !== undefined;
 
     // SECURITY: produce the real shell command ONLY when actually executing —
     // this is the single place `$(key)` exec refs run. Callers invoke it past
@@ -312,6 +320,7 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
     if (needsConfirm && !options.yes) {
       if (process.stdin.isTTY) {
         if (unchecked !== undefined) console.error(`warning: not every reference this command reaches could be checked for a confirmation flag (${unchecked}).`);
+        if (unusedProject !== undefined) console.error(`warning: ${unusedProjectReason(unusedProject)}.`);
         const answer = await askConfirmation('Run this? [y/N] ', options.source ? process.stderr : undefined);
         if (answer.toLowerCase() !== 'y') {
           if (options.source) {
@@ -444,7 +453,7 @@ export function stillGatedNote(key: string, removed: boolean): { message: string
 function storedKeys(scope?: Scope): string[] {
   if (scope === 'project' || scope === 'global') return Object.keys(flattenObject(loadData(scope)));
   const keys = new Set(Object.keys(flattenObject(loadData('global'))));
-  if (findProjectFile()) for (const k of Object.keys(flattenObject(loadData('project')))) keys.add(k);
+  if (hasProjectStore()) for (const k of Object.keys(flattenObject(loadData('project')))) keys.add(k);
   return [...keys];
 }
 
@@ -893,7 +902,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
   debug('getEntry called', { key, options });
 
   // Resolve listing scope: --global → global, --all → both, default → project if exists else global
-  const hasProject = !!findProjectFile();
+  const hasProject = hasProjectStore();
   const listingScope: Scope | undefined = options.global ? 'global' : (hasProject && !options.all) ? 'project' : undefined;
   // For single-key lookups, use auto fallthrough (project → global)
   const lookupScope = toScope(options.global);

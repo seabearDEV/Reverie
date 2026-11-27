@@ -4,7 +4,7 @@ import { getDataDirectory, findProjectStoreDir } from './paths';
 import { debug } from './debug';
 import { assertNotTestCheckout } from './directoryStore';
 import { getConfigSetting } from '../config';
-import type { Scope } from '../store';
+import { assertProjectScope, type Scope } from '../store';
 
 /**
  * Create automatic backups of data files before destructive operations.
@@ -20,8 +20,13 @@ import type { Scope } from '../store';
  * Returns the backup subdir path on success, or null if there was nothing to
  * back up (fresh/empty store). Throws on any filesystem failure — callers
  * must abort the destructive op when this throws.
+ *
+ * Project scope asked for with no project throws ProjectResolutionError
+ * (#296): it used to return null — "nothing to back up" — and the caller
+ * went on to reset or replace the global store, unbacked.
  */
 export function createAutoBackup(label: string, scope?: Scope): string | null {
+  assertProjectScope(scope);
   const effectiveScope = resolveBackupScope(scope);
   return effectiveScope === 'project'
     ? backupProjectStore(label)
