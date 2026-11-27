@@ -4,7 +4,7 @@ import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, unusedProjectStore } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
-import { type AliasMap, type NameContext, type NameView, type Resolution, resolveName, typedContext } from './utils/nameResolver';
+import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, referenceContext, resolveName, typedContext } from './utils/nameResolver';
 
 /**
  * The resolver's view of the stores as they stand now (utils/nameResolver).
@@ -37,6 +37,11 @@ export function resolveNameNow(ctx: NameContext, written: string): Resolution {
 /** What a name typed with `scope` (CLI -G, an MCP scope; undefined or 'auto': the default) means. */
 export function resolveTypedName(written: string, scope?: Scope): Resolution {
   return resolveNameNow(typedContext(scope), written);
+}
+
+/** What a `${name}` / `$(name)` in an entry stored in `from` means (#280). */
+export function resolveReferenceName(written: string, from: StoreName): Resolution {
+  return resolveNameNow(referenceContext(from), written);
 }
 
 

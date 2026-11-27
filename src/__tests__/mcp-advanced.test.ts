@@ -159,6 +159,7 @@ vi.mock('../alias', () => ({
   // The resolver's wrappers, over this suite's resolveKey (helpers/resolverMocks).
   resolveNameNow: (ctx: Parameters<typeof resolutionOver>[1], k: string) => resolutionOver(mockResolveKeyOf, ctx, k),
   nameView: () => mockNameView(),
+  resolveReferenceName: (k: string, from: 'project' | 'global') => resolutionOver(mockResolveKeyOf, { kind: 'reference', from }, k),
   buildKeyToAliasMap: vi.fn(() => ({})),
   removeAlias: vi.fn((alias: string) => {
     if (!(alias in mockAliases)) return false;

@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
-import { resolveKey } from '../alias';
+import { resolveReferenceName } from '../alias';
 import { getValueWithStore } from '../storage';
+import type { NameScope } from './nameResolver';
 import { flattenObject } from './objectPath';
 import { isEncrypted } from './crypto';
 import { StoreUnreadableError } from './unreadable';
@@ -23,14 +24,13 @@ const MAX_DEPTH = 10;
  */
 export type EntryStore = 'project' | 'global';
 
-/** resolveKey as the references of an entry in `from` see the alias maps. */
-function resolveIn(name: string, from: EntryStore): string {
-  return from === 'global' ? resolveKey(name, 'global') : resolveKey(name);
-}
-
-/** The value a reference in an entry of `from` reads, and the store it was found in. */
-function readIn(key: string, from: EntryStore): { value: CodexValue | undefined; store: EntryStore } {
-  const found = from === 'global' ? getValueWithStore(key, 'global') : getValueWithStore(key);
+/**
+ * The value a reference in an entry of `from` reads, in the scope the
+ * resolver gave it ('global' for a global entry's references, the default
+ * view for a project entry's), and the store it was found in.
+ */
+function readIn(key: string, scope: NameScope, from: EntryStore): { value: CodexValue | undefined; store: EntryStore } {
+  const found = scope === 'auto' ? getValueWithStore(key) : getValueWithStore(key, scope);
   return found ?? { value: undefined, store: from };
 }
 
@@ -45,26 +45,6 @@ function entryId(store: EntryStore, key: string): string {
 
 function keyOfId(id: string): string {
   return id.slice(id.indexOf(':') + 1);
-}
-
-/**
- * The names the confirmation gate asks about for one lookup (#279): the name
- * as written — as resolveKey reads it, a trailing colon dropped — and the key
- * its alias resolves to. A flag gates a name in every project, so a project
- * alias over a flagged name must not take the run past the flag: checking
- * only the target let a cloned repo's `_aliases.json` point the user's
- * flagged name at a command of its own.
- *
- * `projectAliases`: the lookup read the project's alias map. Then the key the
- * global map alone gives the name is checked too — a project alias must not
- * take a name away from the user's own global alias to a flagged command.
- * Each extra name only gates more.
- */
-export function gateNamesFor(typed: string, resolved: string, projectAliases = false): string[] {
-  const name = typed.replace(/:$/, '');
-  const names = new Set([name, resolved]);
-  if (projectAliases) names.add(resolveKey(name, 'global'));
-  return [...names];
 }
 
 /**
@@ -302,15 +282,16 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
   const { key: rawKey, modifier, modValue } = parseRef(ref);
   const name = rawKey.trim();
   // #280: aliases and values as the store of the entry holding this ref sees them.
-  const resolvedKey = resolveIn(name, from);
+  const named = resolveReferenceName(name, from);
+  const resolvedKey = named.key;
   // #158: record every key reached through interpolation so the run-path
   // confirm gate can consult keys pulled in transitively, not just the
   // top-level segments. Recorded before the existence check so a `${gated}`
   // ref counts even via a `:-`/`:?` path. #279: the name as written too, not
   // only the key its alias names.
-  if (trace) for (const k of gateNamesFor(name, resolvedKey, from !== 'global')) trace.keys.add(k);
+  if (trace) for (const k of named.gateNames) trace.keys.add(k);
 
-  const { value: resolved, store } = readIn(resolvedKey, from);
+  const { value: resolved, store } = readIn(resolvedKey, named.scope, from);
   const id = entryId(store, resolvedKey);
   trace?.reads.set(id, resolved ?? null);
 
@@ -376,12 +357,13 @@ const SHELL_SYNTAX = /[`$;&|<>()'"\\#\n]/;
 function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCache: Map<string, string>, trace?: ReferenceTrace, noExec = false, from: EntryStore = 'project'): string {
   const name = ref.trim();
   // #280: the command a global entry's `$(key)` runs is the global store's.
-  const resolvedKey = resolveIn(name, from);
+  const named = resolveReferenceName(name, from);
+  const resolvedKey = named.key;
   // #158: an exec ref pulls in a key transitively too — record it for the
   // confirm gate. #279: under the name as written as well.
-  if (trace) for (const k of gateNamesFor(name, resolvedKey, from !== 'global')) trace.keys.add(k);
+  if (trace) for (const k of named.gateNames) trace.keys.add(k);
 
-  const { value: resolved, store } = readIn(resolvedKey, from);
+  const { value: resolved, store } = readIn(resolvedKey, named.scope, from);
   const id = entryId(store, resolvedKey);
   trace?.reads.set(id, resolved ?? null);
 
