@@ -11,7 +11,7 @@
 //   --against <dir>    the other build (without it, only --dump is written)
 //   --jobs <n>         parallel workers (default: min(cores, 4))
 //   --world <names>    only these worlds (comma-separated)
-//   --filter <regex>   only invocations whose id matches
+//   --filter <text>    only invocations whose id contains this text
 //   --report <file>    write every difference as JSON
 //   --dump <file>      write every record (both builds) as JSON lines
 //   --show <n>         print the first n differences in full (default 30)
@@ -69,14 +69,10 @@ function parseArgs(argv) {
   return o;
 }
 
-function escapeRegExpLiteral(s) {
-  if (typeof RegExp.escape === 'function') return RegExp.escape(s);
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
+// --filter is plain text, not a regex: an id is full of regex syntax ('|',
+// '{', '('), and the text of an id selects exactly that invocation.
 function selected(o) {
-  const re = o.filter ? new RegExp(escapeRegExpLiteral(o.filter)) : null;
-  return allInvocations({ worlds: o.worlds ?? WORLDS }).filter(inv => !re || re.test(inv.id));
+  return allInvocations({ worlds: o.worlds ?? WORLDS }).filter(inv => !o.filter || inv.id.includes(o.filter));
 }
 
 async function worker(o) {
@@ -115,6 +111,8 @@ async function main() {
   if (o.worker) return worker(o);
 
   const invs = selected(o);
+  // A filter that matches nothing must not pass as "0 differing".
+  if (invs.length === 0) { console.error(`scope differential: no invocation matches${o.filter ? ` --filter ${JSON.stringify(o.filter)}` : ''}${o.worlds ? ` in --world ${o.worlds.join(',')}` : ''}`); process.exit(2); }
   const jobs = Math.max(1, Math.min(o.jobs ?? Math.min(os.cpus().length, 4), invs.length));
   const work = o.work ? path.resolve(o.work) : fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'rvr-scope-diff-'));
   fs.mkdirSync(work, { recursive: true });
