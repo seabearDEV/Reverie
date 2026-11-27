@@ -1,7 +1,8 @@
 // Drive a built CLI (dist/index.js) and MCP server (dist/mcp-server.js)
 // inside one world. Every child gets an environment built from scratch: a
 // temp HOME, RVR_DATA_DIR and TMPDIR under the world root, so no real store
-// is ever read or written. RVR_TEST=1 tags the audit and telemetry rows a
+// is ever read or written, and PATH=/usr/bin:/bin, so a generated name never
+// runs a program of the user's. RVR_TEST=1 tags the audit and telemetry rows a
 // child writes (into the temp data dir) as test traffic, and
 // RVR_TEST_CHECKOUT makes the store refuse any write inside this checkout;
 // neither changes the run path (src/utils/testTraffic.ts,
@@ -9,13 +10,14 @@
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', '..');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const TIMEOUT_MS = 30_000;
 
 export function childEnv(root, cacheDir) {
   return {
-    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    PATH: '/usr/bin:/bin',
     HOME: path.join(root, 'home'),
     RVR_DATA_DIR: path.join(root, 'data'),
     TMPDIR: path.join(root, 'tmp'),
@@ -30,6 +32,13 @@ export function childEnv(root, cacheDir) {
 }
 
 const MARKER = /RVM(\d+)x/g;
+
+/** MCP servers this process has running, for killChildren() on a signal. */
+const live = new Set();
+export function killChildren() {
+  for (const p of live) p.kill('SIGKILL');
+  live.clear();
+}
 
 function takeLog(root) {
   const file = path.join(root, 'log');
@@ -92,10 +101,11 @@ export async function runMcpSession(dist, root, cwd, calls, { cacheDir, after } 
   takeLog(root);
   const env = childEnv(root, cacheDir);
   const proc = spawn(process.execPath, [path.join(dist, 'mcp-server.js')], { cwd: path.join(root, cwd), env, stdio: ['pipe', 'pipe', 'pipe'] });
+  live.add(proc);
   const waiting = new Map();
   let buf = '';
   let exited = false;
-  proc.on('exit', () => { exited = true; for (const w of waiting.values()) w(null); waiting.clear(); });
+  proc.on('exit', () => { exited = true; live.delete(proc); for (const w of waiting.values()) w(null); waiting.clear(); });
   proc.stdout.on('data', chunk => {
     buf += chunk;
     let nl;

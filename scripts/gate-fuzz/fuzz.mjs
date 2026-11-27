@@ -27,30 +27,41 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
+import { killChildren } from './lib/drive.mjs';
 import { generateWorld } from './lib/gen.mjs';
 import { prerequisites, runWorld, subsetSpec, tally } from './lib/run.mjs';
-import { assertSafeRoot } from './lib/world.mjs';
+import { assertSafeRoot, validateSpec } from './lib/world.mjs';
 
-const HERE = path.dirname(new URL(import.meta.url).pathname);
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
 const QUICK_WORLDS = 300;
 const LONG_WORLDS = 3000;
+
+const usage = msg => Object.assign(new Error(msg), { usage: true });
 
 function parseArgs(argv) {
   const o = { dist: 'dist', seed: 1, start: 0, shrink: true, keep: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    const val = () => argv[++i];
+    const val = () => { if (i + 1 >= argv.length) throw usage(`${a} needs a value`); return argv[++i]; };
+    // A number argument must be a whole number: `--worlds abc` running 0 worlds green is worse than an error.
+    const num = (min = 0) => {
+      const v = val();
+      const n = Number(v);
+      if (!/^\d+$/.test(v) || !Number.isSafeInteger(n) || n < min) throw usage(`${a} takes a whole number${min ? ` of at least ${min}` : ''}, not ${JSON.stringify(v)}`);
+      return n;
+    };
     switch (a) {
       case '--quick': o.worlds ??= QUICK_WORLDS; break;
       case '--long': o.worlds ??= LONG_WORLDS; break;
       case '--dist': o.dist = val(); break;
-      case '--seed': o.seed = Number(val()); break;
-      case '--worlds': o.worlds = Number(val()); break;
-      case '--start': o.start = Number(val()); break;
-      case '--jobs': o.jobs = Number(val()); break;
-      case '--world': o.world = Number(val()); break;
-      case '--inv': o.inv = Number(val()); break;
+      case '--seed': o.seed = num(0); break;
+      case '--worlds': o.worlds = num(1); break;
+      case '--start': o.start = num(0); break;
+      case '--jobs': o.jobs = num(1); break;
+      case '--world': o.world = num(0); break;
+      case '--inv': o.inv = num(0); break;
       case '--replay': o.replay = val(); break;
       case '--against': o.against = val(); break;
       case '--no-shrink': o.shrink = false; break;
@@ -60,14 +71,14 @@ function parseArgs(argv) {
       case '--keep': o.keep = true; break;
       case '--print-spec': o.printSpec = true; break;
       case '--worker': o.worker = true; break;
-      case '--stride': o.stride = Number(val()); break;
+      case '--stride': o.stride = num(1); break;
       case '--work': o.work = val(); break;
       case '--cache': o.cache = val(); break;
       case '-h': case '--help':
         console.log(fs.readFileSync(new URL(import.meta.url), 'utf8').split('\n').filter(l => l.startsWith('//')).slice(0, 23).map(l => l.slice(3)).join('\n'));
         process.exit(0);
         break;
-      default: throw new Error(`unknown argument ${a}`);
+      default: throw usage(`unknown argument ${a}`);
     }
   }
   o.worlds ??= QUICK_WORLDS;
@@ -186,6 +197,10 @@ function mergeStats(into, s) {
 const SHRINKS_PER_WORKER = 6;
 
 async function worker(o) {
+  // A signal (Ctrl-C reaches the whole group; the parent sends SIGTERM) ends
+  // the worker and its MCP servers at once, so it recreates no world while
+  // the parent removes the work directory.
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { killChildren(); process.exit(130); });
   const work = o.work;
   let shrinks = 0;
   for (let i = o.start; i < o.start + o.worlds; i += o.stride) {
@@ -199,6 +214,7 @@ async function worker(o) {
       shrinks++;
       const small = await shrink(o, spec, v.inv, v.rules, work);
       if (small) {
+        fs.mkdirSync(o.out, { recursive: true });   // created at the first failure, not before
         const file = path.join(o.out, `seed${o.seed}-world${spec.index}-inv${v.inv}.json`);
         fs.writeFileSync(file, JSON.stringify(small.spec, null, 2));
         v.shrunk = file;
@@ -219,13 +235,31 @@ async function main() {
   const started = Date.now();
   const children = new Set();
   const stopAll = () => { for (const c of children) c.kill('SIGTERM'); };
+  // The failures directory is made only when a failure is written; its name
+  // shares the work directory's random suffix.
+  const out = o.out ? path.resolve(o.out) : path.join(path.dirname(work), `rvr-gate-fuzz-failures-${path.basename(work).slice('rvr-gate-fuzz-'.length)}`);
+  const cleanup = () => {
+    if (!o.keep) fs.rmSync(work, { recursive: true, force: true });
+    if (!o.out) { try { fs.rmdirSync(out); } catch { /* absent, or holds failures */ } }
+  };
+  let stopping = false;
   for (const sig of ['SIGINT', 'SIGTERM']) {
-    process.on(sig, () => { stopAll(); if (!o.keep) fs.rmSync(work, { recursive: true, force: true }); process.exit(130); });
+    process.on(sig, async () => {
+      if (stopping) return;
+      stopping = true;
+      stopAll();
+      killChildren();
+      // Wait for the workers to exit before removing what they write into.
+      const deadline = Date.now() + 10_000;
+      while (children.size && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+      cleanup();
+      process.exit(130);
+    });
   }
   try {
     // One world, every invocation printed: for replaying a reported violation.
     if (o.world !== undefined || o.replay) {
-      const spec = o.replay ? JSON.parse(fs.readFileSync(o.replay, 'utf8')) : generateWorld(o.seed, o.world);
+      const spec = validateSpec(o.replay ? JSON.parse(fs.readFileSync(o.replay, 'utf8')) : generateWorld(o.seed, o.world));
       if (o.inv !== undefined && !(Number.isInteger(o.inv) && o.inv >= 0 && o.inv < spec.invocations.length)) throw new Error(`--inv ${o.inv}: this world has invocations 0..${spec.invocations.length - 1}`);
       const rec = await doWorld(o, spec, work);
       for (const r of rec.records) {
@@ -243,7 +277,7 @@ async function main() {
     const fixtureDir = path.join(HERE, 'fixtures');
     const fixtureViolations = [];
     for (const f of fs.readdirSync(fixtureDir).filter(f => f.endsWith('.json')).sort()) {
-      const spec = { ...JSON.parse(fs.readFileSync(path.join(fixtureDir, f), 'utf8')), index: `fixture-${path.basename(f, '.json')}` };
+      const spec = validateSpec({ ...JSON.parse(fs.readFileSync(path.join(fixtureDir, f), 'utf8')), index: `fixture-${path.basename(f, '.json')}` });
       const rec = await doWorld({ ...o, inv: undefined }, spec, work);
       for (const v of rec.violations) fixtureViolations.push({ ...v, fixture: path.relative(REPO, path.join(fixtureDir, f)) });
     }
@@ -255,8 +289,6 @@ async function main() {
       return;
     }
 
-    const out = o.out ? path.resolve(o.out) : fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'rvr-gate-fuzz-failures-'));
-    fs.mkdirSync(out, { recursive: true });
     const jobs = Math.max(1, Math.min(o.jobs ?? Math.min(os.availableParallelism?.() ?? os.cpus().length, 8), o.worlds));
     console.log(`gate-fuzz: ${o.worlds} worlds from index ${o.start}, seed ${o.seed}, ${jobs} jobs, build ${o.dist}${o.against ? `, against ${o.against}` : ''}`);
     const stats = {};
@@ -280,28 +312,34 @@ async function main() {
         if (process.stdout.isTTY) process.stdout.write(`\r  ${done}/${o.worlds} worlds, ${violations.length} violations`);
         else if (done % 50 === 0) console.log(`  ${done}/${o.worlds} worlds, ${violations.length} violations, ${Math.round((Date.now() - started) / 1000)}s`);
       });
-      child.on('exit', code => { children.delete(child); if (code === 0) resolve(); else { stopAll(); reject(new Error(`worker ${k} exited with ${code}`)); } });
+      child.on('exit', code => { children.delete(child); if (code === 0) resolve(); else if (!stopping) { stopAll(); reject(new Error(`worker ${k} exited with ${code}`)); } });
     })));
     if (process.stdout.isTTY) process.stdout.write('\n');
 
     violations.sort((a, b) => a.world - b.world || a.inv - b.inv);
     for (const v of violations) printViolation(o, v, v.shrunk);
     for (const d of diffs) console.log(`\nDIFF world ${d.world} inv ${d.inv}: ${o.against} asks, ${o.dist} ran ${JSON.stringify(d.this.markers)} — ${JSON.stringify(d.invocation)}\n  replay: ${replayCmd(o, `--seed ${o.seed} --world ${d.world} --inv ${d.inv} --against ${shown(o.against)}`)}`);
+    // R0 exercised: a run in which no unapproved invocation ran anything
+    // checked no gate decision at all, whatever the build does.
+    if ((stats.worlds ?? 0) >= 20 && !(stats.coverage?.['unapproved runs that ran'] > 0)) {
+      const detail = `no unapproved invocation ran anything in ${stats.worlds} worlds: no gate decision was exercised`;
+      violations.push({ world: '-', inv: '-', invocation: null, result: {}, rules: ['R0-exercised'], details: [{ rule: 'R0-exercised', detail }] });
+      console.log(`\nVIOLATION [R0-exercised] ${detail}`);
+    }
     const byRule = {};
     for (const v of violations) for (const r of v.rules) byRule[r] = (byRule[r] ?? 0) + 1;
     const secs = ((Date.now() - started) / 1000).toFixed(1);
     console.log(`\nkinds: ${JSON.stringify(stats.kinds ?? {})}`);
     console.log(`coverage: ${JSON.stringify(stats.coverage ?? {})}`);
     console.log(`worlds with an irregular sidecar: ${stats.irregularWorlds ?? 0}`);
-    if (violations.length) console.log(`failing world specs: ${out}`);
-    else if (!o.out) fs.rmSync(out, { recursive: true, force: true });
+    if (fs.existsSync(out)) console.log(`failing world specs: ${out}`);
     console.log(`done: ${stats.worlds ?? 0} worlds + ${fixtureViolations.length ? `fixtures (${fixtureViolations.length} violations)` : 'fixtures'}, ${stats.invocations ?? 0} invocations, seed ${o.seed}, ${secs}s; violations: ${violations.length} ${JSON.stringify(byRule)}${o.against ? `; other build asks, this one ran: ${diffs.length}` : ''}`);
     if (o.report) fs.writeFileSync(o.report, JSON.stringify({ seed: o.seed, start: o.start, worlds: o.worlds, dist: o.dist, against: o.against, seconds: Number(secs), stats, byRule, fixtures: fixtureViolations, violations, diffs }, null, 2));
     process.exitCode = violations.length || fixtureViolations.length ? 1 : 0;
   } finally {
-    if (!o.keep) fs.rmSync(work, { recursive: true, force: true });
-    else if (o.keep) console.log(`worlds kept in ${work}`);
+    if (o.keep) console.log(`worlds kept in ${work}`);
+    cleanup();
   }
 }
 
-main().catch(err => { console.error(err?.stack ?? String(err)); process.exitCode = 2; });
+main().catch(err => { console.error(err?.usage || /^invalid world spec/.test(err?.message) ? `gate-fuzz: ${err.message}` : err?.stack ?? String(err)); process.exitCode = 2; });

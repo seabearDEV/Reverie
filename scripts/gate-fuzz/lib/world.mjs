@@ -10,7 +10,56 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { STORE_DIRS } from './model.mjs';
+import { STORE_DIRS, isValidEntryKey } from './model.mjs';
+
+const SIDECAR_KINDS = new Set(['dir', 'symlink', 'dangling', 'garbage', 'array', 'null', 'empty']);
+const MODES = new Set(['json', 'plain', 'capture', 'source']);
+const KINDS = new Set(['run', 'dry', 'get', 'write']);
+const TOOLS = new Set(['reverie_run', 'reverie_get', 'reverie_set', 'reverie_alias_set', 'reverie_rename', 'reverie_remove', 'reverie_copy']);
+
+/**
+ * Refuse a world spec whose paths could leave the world root: the index (part
+ * of the root's name), entry keys (file names) and cwds. The fuzzer's own
+ * specs always pass. A spec's entry values are shell commands, so a spec is
+ * code all the same: replay only specs your own runs wrote.
+ */
+export function validateSpec(spec) {
+  const fail = why => { throw new Error(`invalid world spec: ${why}`); };
+  if (!spec || typeof spec !== 'object') fail('not an object');
+  if (!(Number.isSafeInteger(spec.index) && spec.index >= 0) && !/^fixture-[A-Za-z0-9._-]+$/.test(String(spec.index))) fail(`index ${JSON.stringify(spec.index)} is neither a world number nor a fixture name`);
+  if (!spec.stores || typeof spec.stores !== 'object') fail('no stores');
+  for (const [name, st] of Object.entries(spec.stores)) {
+    if (!(name in STORE_DIRS)) fail(`unknown store ${JSON.stringify(name)}`);
+    for (const [key, value] of Object.entries(st.entries ?? {})) {
+      if (!isValidEntryKey(key)) fail(`entry key ${JSON.stringify(key)}`);
+      if (typeof value !== 'string') fail(`entry ${key}: value is not a string`);
+    }
+    for (const side of ['aliases', 'confirm']) {
+      const m = st[side];
+      if (m === undefined) continue;
+      if (!m || typeof m !== 'object' || Array.isArray(m)) fail(`${name} ${side} is not a map`);
+      if (m.$irregular !== undefined && !SIDECAR_KINDS.has(m.$irregular)) fail(`${name} ${side}: unknown irregular kind ${JSON.stringify(m.$irregular)}`);
+    }
+  }
+  if (!Array.isArray(spec.invocations)) fail('no invocations');
+  for (const [i, inv] of spec.invocations.entries()) {
+    if (inv.cwd !== 'proj' && inv.cwd !== 'out') fail(`invocation ${i}: cwd ${JSON.stringify(inv.cwd)}`);
+    if (inv.surface === 'cli') {
+      if (!KINDS.has(inv.kind)) fail(`invocation ${i}: kind ${JSON.stringify(inv.kind)}`);
+      if (!MODES.has(inv.mode)) fail(`invocation ${i}: mode ${JSON.stringify(inv.mode)}`);
+      const args = inv.kind === 'write' ? inv.argv : inv.keys;
+      if (!Array.isArray(args) || !args.every(a => typeof a === 'string')) fail(`invocation ${i}: arguments`);
+    } else if (inv.surface === 'mcp') {
+      if (!TOOLS.has(inv.tool)) fail(`invocation ${i}: tool ${JSON.stringify(inv.tool)}`);
+      if (!inv.args || typeof inv.args !== 'object') fail(`invocation ${i}: args`);
+      if (inv.token !== undefined && inv.token !== 'bogus' && !(Number.isSafeInteger(inv.token?.from) && inv.token.from >= 0 && inv.token.from < i)) fail(`invocation ${i}: token`);
+    } else fail(`invocation ${i}: surface ${JSON.stringify(inv.surface)}`);
+  }
+  for (const [n, m] of Object.entries(spec.markers ?? {})) {
+    if (!/^\d+$/.test(n) || !Array.isArray(m) || !(m[0] in STORE_DIRS) || !isValidEntryKey(m[1])) fail(`marker ${n}`);
+  }
+  return spec;
+}
 
 /** Refuse a work root that a project lookup walking up from it could mistake for (or migrate into) a project. */
 export function assertSafeRoot(root) {
