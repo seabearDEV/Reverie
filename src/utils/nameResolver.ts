@@ -171,3 +171,78 @@ export function resolveName(view: NameView, ctx: NameContext, written: string): 
   };
 }
 
+// ── Alias commands ───────────────────────────────────────────────────────
+
+/**
+ * Whether `name` is an alias in `map`, as the alias commands have always
+ * asked it: with `in`, which is also true for a name every object inherits
+ * (`toString`, `valueOf`). resolveName looks names up as own properties
+ * only, so such a name is never an alias there. Kept as it is: see the
+ * #260 notes.
+ */
+export function aliasListedIn(map: AliasMap, name: string): boolean {
+  return name in map;
+}
+
+/**
+ * Whether a default-view read of an entry key falls through from the
+ * project store to the global one for a write command in `ctx` that lands
+ * in `written` (a rename's source, and its "already exists" check).
+ */
+export function readsFallThrough(ctx: NameContext, written: StoreName): boolean {
+  return ctx.kind === 'typed' && ctx.scope === 'auto' && written === 'project';
+}
+
+/**
+ * The alias map an alias write starts from (#260, kept as it is): in the
+ * default scope inside a project, the project's map laid over the global
+ * one — and all of it is written to the project, copying every global
+ * alias there. Any other write starts from its own store's map. `below`:
+ * the global map, read when this says it is needed (aliasWriteLayers).
+ */
+export function aliasWriteBase(ctx: NameContext, written: StoreName, own: AliasMap, below: AliasMap | undefined): AliasMap {
+  return aliasWriteLayers(ctx, written) && below !== undefined ? { ...below, ...own } : own;
+}
+
+/** Whether an alias write in `ctx` landing in `written` lays the global map under the store's own (aliasWriteBase). */
+export function aliasWriteLayers(ctx: NameContext, written: StoreName): boolean {
+  return ctx.kind === 'typed' && ctx.scope === 'auto' && written === 'project';
+}
+
+/**
+ * The alias map with every alias that targets `oldKey`, or a key under it,
+ * pointed at the same place under `newKey` — or null when none does. One
+ * alias per entry, as setAlias keeps it: an alias already on a new target
+ * gives way to the one that moved there. (A rename's re-point.)
+ */
+export function repointAliases(current: AliasMap, oldKey: string, newKey: string): Record<string, string> | null {
+  const oldPrefix = oldKey + '.';
+  const updates: [string, string][] = [];
+  for (const [alias, target] of Object.entries(current)) {
+    if (target === oldKey) updates.push([alias, newKey]);
+    else if (target.startsWith(oldPrefix)) updates.push([alias, newKey + target.slice(oldKey.length)]);
+  }
+  if (updates.length === 0) return null;
+  const aliases = { ...current };
+  const newTargets = new Set(updates.map(([, t]) => t));
+  for (const [alias, target] of Object.entries(aliases)) {
+    if (newTargets.has(target)) delete aliases[alias];
+  }
+  for (const [alias, target] of updates) aliases[alias] = target;
+  return aliases;
+}
+
+/**
+ * `aliases` with `alias` pointing at `key`, taking the place of the alias
+ * `key` had — the last one listed, when several point at it. A rename's
+ * --set-alias; `alias set` keeps the same rule (setAlias). `set <key> -a`
+ * takes every other alias of `key` away instead (setValueWithMeta).
+ */
+export function withAlias(aliases: AliasMap, alias: string, key: string): Record<string, string> {
+  const next = { ...aliases };
+  let existing: string | undefined;
+  for (const [name, target] of Object.entries(next)) if (target === key) existing = name;
+  if (existing !== undefined && existing !== alias) delete next[existing];
+  next[alias] = key;
+  return next;
+}

@@ -13,7 +13,7 @@ import { displayTree } from '../formatting';
 import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
-import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, renameAlias, nameView, resolveNameNow } from '../alias';
+import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, renameAlias, nameView, resolveNameNow, aliasListed } from '../alias';
 import { chainMemberContext, typedContext } from '../utils/nameResolver';
 import { hasConfirm, setConfirm, removeConfirm, flagsListedUnder, flagsGating } from '../confirm';
 import { resolveScopeForWrite, unusedProjectReason } from '../projectResolution';
@@ -1297,8 +1297,7 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   if (aliasMode) {
     const result = renameAlias(oldKey, newKey, scope);
     if (!result) {
-      const aliases = loadAliases(scope);
-      if (!(oldKey in aliases)) {
+      if (!aliasListed(oldKey, scope)) {
         printError(`Alias '${oldKey}' not found.`, 'NOT_FOUND');
       } else {
         printError(`Alias '${newKey}' already exists.`, 'INVALID_INPUT');

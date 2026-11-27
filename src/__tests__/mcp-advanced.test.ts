@@ -160,8 +160,14 @@ vi.mock('../alias', () => ({
   resolveNameNow: (ctx: Parameters<typeof resolutionOver>[1], k: string) => resolutionOver(mockResolveKeyOf, ctx, k),
   resolveTypedName: (k: string, scope?: string) => resolutionOver(mockResolveKeyOf, { kind: 'typed', scope: scope ?? 'auto' }, k),
   nameView: () => mockNameView(),
-  // The audit row's before-value of an alias, over this suite's map (as `loadAliases(scope)[x]` was).
+  // The alias commands' questions, over this suite's map (as `x in loadAliases(scope)` and `loadAliases(scope)[x]` were).
+  aliasListed: (name: string) => name in { ...mockAliases },
   aliasTargetListed: (name: string) => ({ ...mockAliases } as Record<string, string | undefined>)[name],
+  removeAliasFromView: (name: string) => {
+    if (!(name in { ...mockAliases })) return false;
+    if (name in mockAliases) delete mockAliases[name];
+    return true;
+  },
   resolveReferenceName: (k: string, from: 'project' | 'global') => resolutionOver(mockResolveKeyOf, { kind: 'reference', from }, k),
   buildKeyToAliasMap: vi.fn(() => ({})),
   removeAlias: vi.fn((alias: string) => {

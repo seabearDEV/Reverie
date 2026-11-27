@@ -19,10 +19,11 @@ import {
 import {
   loadAliases,
   saveAliases,
-  updateAliases,
   setAlias,
   removeAlias,
   resolveTypedName,
+  aliasListed,
+  removeAliasFromView,
   buildKeyToAliasMap,
   removeAliasesForKey,
   renameAlias,
@@ -775,16 +776,9 @@ server.tool(
         // #215: an unreadable map loads as empty — "not found" would be the
         // wrong answer about a file that could not be read.
         assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases']);
-        if (!(key in loadAliases(scope))) {
+        if (!removeAliasFromView(key, scope)) {
           return errorResponse(`Alias '${key}' not found.`, 'NOT_FOUND');
         }
-        // #254: removed from the map as it stands under the store lock.
-        updateAliases(aliases => {
-          if (!(key in aliases)) return null;
-          const next = { ...aliases };
-          delete next[key];
-          return next;
-        }, scope);
         return textResponse(`Alias removed: ${key}`);
       }
 
@@ -899,8 +893,7 @@ server.tool(
       if (is_alias) {
         const result = renameAlias(oldKey, newKey, scope);
         if (!result) {
-          const aliases = loadAliases(scope);
-          if (!(oldKey in aliases)) {
+          if (!aliasListed(oldKey, scope)) {
             return errorResponse(`Alias '${oldKey}' not found.`, 'NOT_FOUND');
           }
           return errorResponse(`Alias '${newKey}' already exists.`, 'INVALID_INPUT');

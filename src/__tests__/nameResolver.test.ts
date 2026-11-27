@@ -7,12 +7,18 @@ import {
   type AliasMap,
   type NameContext,
   type NameView,
+  aliasListedIn,
+  aliasWriteBase,
+  aliasWriteLayers,
   aliasesSeen,
   chainMemberContext,
   gateNamesOf,
+  readsFallThrough,
   referenceContext,
+  repointAliases,
   resolveName,
   typedContext,
+  withAlias,
 } from '../utils/nameResolver';
 
 type Part = 'hasProjectStore' | 'projectAliases' | 'globalAliases' | 'unusedProject';
@@ -147,5 +153,39 @@ describe('contexts', () => {
     expect(aliasesSeen(view(P, G).view, GLOBAL)).toBe(G);
     expect(aliasesSeen(view(P, G).view, PROJECT)).toBe(P);
     expect(aliasesSeen(view(P, G).view, REF_G)).toBe(G);
+  });
+});
+
+describe('alias commands', () => {
+  it('ask `in`, which also finds a name every object inherits', () => {
+    expect(aliasListedIn({ pa: 'k.p' }, 'pa')).toBe(true);
+    expect(aliasListedIn({ pa: 'k.p' }, 'ga')).toBe(false);
+    expect(aliasListedIn({}, 'toString')).toBe(true);
+  });
+
+  it('a default-scope write in a project reads through to the global store, and lays the global aliases under its own (#260, kept)', () => {
+    expect(readsFallThrough(AUTO, 'project')).toBe(true);
+    expect(aliasWriteLayers(AUTO, 'project')).toBe(true);
+    expect(aliasWriteBase(AUTO, 'project', { pa: 'k.p', dup: 'k.p' }, G)).toEqual({ ga: 'k.g', gp: 'k.p', pa: 'k.p', dup: 'k.p' });
+    for (const ctx of [GLOBAL, PROJECT]) {
+      const store = ctx === GLOBAL ? 'global' : 'project';
+      expect(readsFallThrough(ctx, store)).toBe(false);
+      expect(aliasWriteLayers(ctx, store)).toBe(false);
+      expect(aliasWriteBase(ctx, store, P, G)).toBe(P);
+    }
+    // Nothing to lay under: the store's own map.
+    expect(aliasWriteBase(AUTO, 'project', P, undefined)).toBe(P);
+  });
+
+  it('a rename re-points every alias of the key and of the keys under it; one alias per entry', () => {
+    expect(repointAliases({ a: 'k', b: 'k.x', c: 'other' }, 'k', 'n')).toEqual({ a: 'n', b: 'n.x', c: 'other' });
+    expect(repointAliases({ c: 'other' }, 'k', 'n')).toBeNull();
+    // An alias already on a new target gives way to the one that moved there.
+    expect(repointAliases({ a: 'k', old: 'n' }, 'k', 'n')).toEqual({ a: 'n' });
+  });
+
+  it('--set-alias takes the place of the alias the key had (the last one listed)', () => {
+    expect(withAlias({ a: 'k', b: 'k', c: 'x' }, 'new', 'k')).toEqual({ a: 'k', new: 'k', c: 'x' });
+    expect(withAlias({ a: 'k' }, 'a', 'k')).toEqual({ a: 'k' });
   });
 });

@@ -62,7 +62,8 @@ function setupMocks() {
     // The resolver's wrapper for a typed name, over the same mock: what a
     // name means is still what mockResolveKey says.
     resolveTypedName: (k: string, scope?: string) => ({ key: scope === undefined ? mockResolveKey(k) : (mockResolveKey as (k: string, s?: string) => string)(k, scope) }),
-    // The audit row's before-value of an alias, over the loadAliases mock's empty map.
+    // The alias commands' questions, over the loadAliases mock's empty map.
+    aliasListed: (name: string) => name in {},
     aliasTargetListed: (): string | undefined => undefined,
     loadAliases: vi.fn(() => ({})),
     setAlias: vi.fn(),

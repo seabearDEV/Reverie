@@ -4,7 +4,7 @@ import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, unusedProjectStore } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
-import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasesSeen, referenceContext, resolveName, typedContext } from './utils/nameResolver';
+import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasListedIn, aliasWriteBase, aliasWriteLayers, aliasesSeen, referenceContext, resolveName, typedContext } from './utils/nameResolver';
 
 /**
  * The resolver's view of the stores as they stand now (utils/nameResolver).
@@ -74,14 +74,41 @@ export function updateAliases(
   scope?: Scope,
 ): void {
   const effectiveScope = resolveScopeForWrite(scope);
-  const layered = (!scope || scope === 'auto') && effectiveScope === 'project';
-  const below = layered ? loadAliasMap('global') : {};
-  updateAliasMap(own => fn(layered ? { ...below, ...own } : own), effectiveScope);
+  const ctx = typedContext(scope);
+  const below = aliasWriteLayers(ctx, effectiveScope) ? loadAliasMap('global') : undefined;
+  updateAliasMap(own => fn(aliasWriteBase(ctx, effectiveScope, own, below)), effectiveScope);
+}
+
+/**
+ * Whether `name` is an alias in the map `scope` shows — both maps in the
+ * default view — asked as the alias commands always have (aliasListedIn).
+ * Decides "not found" for an alias removal or rename that changed nothing.
+ */
+export function aliasListed(name: string, scope?: Scope): boolean {
+  return aliasListedIn(aliasesSeen(nameView(), typedContext(scope)), name);
 }
 
 /** The target the map `scope` shows for alias `name`, indexed as the audit row's before-value always was. */
 export function aliasTargetListed(name: string, scope?: Scope): string | undefined {
   return aliasesSeen(nameView(), typedContext(scope))[name];
+}
+
+/**
+ * Remove alias `name` from the map `scope` shows: false when it lists no
+ * such alias. In the default scope inside a project the removal goes
+ * through updateAliases, which writes the layered view to the project
+ * (#260, kept as it is).
+ */
+export function removeAliasFromView(name: string, scope?: Scope): boolean {
+  if (!aliasListed(name, scope)) return false;
+  // #254: removed from the map as it stands under the store lock.
+  updateAliases(aliases => {
+    if (!aliasListedIn(aliases, name)) return null;
+    const next = { ...aliases };
+    delete next[name];
+    return next;
+  }, scope);
+  return true;
 }
 
 // Create or update an alias (one alias per entry — replaces any existing alias for the same target)

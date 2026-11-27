@@ -2,7 +2,7 @@
 
 import { Command, Option } from 'commander';
 import * as commands from './commands';
-import { removeAlias, resolveTypedName, loadAliases, setAlias, renameAlias } from './alias';
+import { removeAlias, resolveTypedName, loadAliases, setAlias, renameAlias, aliasListed } from './alias';
 import { removeConfirm, loadConfirmKeys } from './confirm';
 import { color } from './formatting';
 import { showHelp, showExamples } from './formatting';
@@ -476,8 +476,7 @@ aliasCommand
           console.log(`Alias '${oldName}' renamed to '${newName}'.`);
           return { from: oldName, to: newName };
         }
-        const aliases = loadAliases(scope);
-        if (!(oldName in aliases)) {
+        if (!aliasListed(oldName, scope)) {
           printError(`Alias '${oldName}' not found.`, 'NOT_FOUND');
         } else {
           printError(`Alias '${newName}' already exists.`, 'INVALID_INPUT');
