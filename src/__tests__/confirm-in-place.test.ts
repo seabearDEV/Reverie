@@ -175,6 +175,52 @@ describe('#304: a flag added to _confirm.json in place gates the next MCP run', 
     expect(ran()).toEqual(['k', 'k']);
   }, SLOW_TEST_MS);
 
+  it('a flag reached through a ${…} reference, a $(…) reference or an alias', async () => {
+    ok(['set', 'viaref', '${k}']);
+    ok(['set', 'viaexec', 'true $(k)']);
+    ok(['alias', 'set', 'ak', 'k']);
+    const s = await server();
+    for (const key of ['viaref', 'viaexec', 'ak']) expect(text(await s.call('reverie_run', { key })).includes(ASKS)).toBe(false);
+    expect(ran()).toEqual(['k', 'k', 'k']);
+
+    addFlagInPlace(projectList(), 'k');
+
+    for (const key of ['viaref', 'viaexec', 'ak']) expect(text(await s.call('reverie_run', { key }))).toContain(ASKS);
+    expect(ran()).toEqual(['k', 'k', 'k']);
+  }, SLOW_TEST_MS);
+
+  it('a confirm_token issued for the in-place flag approves that run', async () => {
+    const s = await server();
+    expect(text(await s.call('reverie_run', { key: 'k' }))).toContain('$ echo k');
+
+    addFlagInPlace(projectList(), 'k');
+
+    const ask = await s.call('reverie_run', { key: 'k' });
+    expect(text(ask)).toContain(ASKS);
+    const token = /confirm_token: "([0-9a-f]+)"/.exec(text(ask))?.[1];
+    expect(token).toBeDefined();
+    expect(ran()).toEqual(['k']);
+    expect(text(await s.call('reverie_run', { key: 'k', confirm_token: token }))).toContain('$ echo k');
+    expect(ran()).toEqual(['k', 'k']);
+  }, SLOW_TEST_MS);
+
+  it('the global list made unreadable in place gates project and global runs, and a repair lifts it', async () => {
+    const s = await server();
+    expect(text(await s.call('reverie_run', { key: 'k' }))).toContain('$ echo k');
+    expect(text(await s.call('reverie_run', { key: 'g', scope: 'global' }))).toContain('$ echo g');
+    expect(ran()).toEqual(['k', 'g']);
+
+    writeInPlace(globalList(), '{"gother": tru');
+    expect(text(await s.call('reverie_run', { key: 'k' }))).toContain(ASKS);
+    expect(text(await s.call('reverie_run', { key: 'g', scope: 'global' }))).toContain(ASKS);
+    expect(ran()).toEqual(['k', 'g']);
+
+    writeInPlace(globalList(), JSON.stringify({ gother: true }, null, 2));
+    expect(text(await s.call('reverie_run', { key: 'k' }))).toContain('$ echo k');
+    expect(text(await s.call('reverie_run', { key: 'g', scope: 'global' }))).toContain('$ echo g');
+    expect(ran()).toEqual(['k', 'g', 'k', 'g']);
+  }, SLOW_TEST_MS);
+
   it('readers outside the gate see the flag too (reverie_export)', async () => {
     const s = await server();
     const exported = async (scope: string) =>
