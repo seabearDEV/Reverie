@@ -485,6 +485,30 @@ describe('merged accessors (global-only, no project)', () => {
 
     expect(loadMetaMerged()).toEqual({ k: 123 });
   });
+
+  it('the confirmation list readers see a flag written in place, both mtimes unchanged (#304)', () => {
+    // What the run gate reads, through the same singleton a long-lived
+    // process keeps: a write in place moves neither the store directory's
+    // mtime nor, within one tick, the file's.
+    writeData({ entries: { k: 'echo k', other: 'echo other' }, aliases: {}, confirm: { other: true } });
+    clearStoreCaches();
+    const confirmPath = path.join(storeDir, '_confirm.json');
+    const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000);
+    const pin = () => { fs.utimesSync(confirmPath, pinned, pinned); fs.utimesSync(storeDir, pinned, pinned); };
+    pin();
+    expect(loadEntries()).toEqual({ k: 'echo k', other: 'echo other' });
+    expect(loadConfirmMap('global')).toEqual({ other: true });
+    expect(loadConfirmMapMerged()).toEqual({ other: true });
+
+    const ino = fs.statSync(confirmPath).ino;
+    fs.writeFileSync(confirmPath, JSON.stringify({ other: true, k: true }));
+    pin();
+    expect(fs.statSync(confirmPath).ino).toBe(ino);
+    expect(fs.statSync(confirmPath).mtimeMs).toBe(pinned.getTime());
+
+    expect(loadConfirmMap('global')).toEqual({ other: true, k: true });
+    expect(loadConfirmMapMerged()).toEqual({ other: true, k: true });
+  });
 });
 
 // ── getStalenessTag ──────────────────────────────────────────────────
