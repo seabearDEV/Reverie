@@ -244,10 +244,27 @@ describe('#260: an alias command changes only the aliases of the store it writes
       expect(projectAliases()).toEqual({ pa: 'pk2', dup: 'pk2' });
     }, SLOW_TEST_MS);
 
+    it('rule 1: one alias name in both stores — the note says the project\'s alias is read here', async () => {
+      write(projectAliasFile(), { pa: 'pk' });
+      write(globalAliasFile(), { pa: 'pk' });
+      const res = await mcp.call('reverie_rename', { oldKey: 'pk', newKey: 'pk2' });
+      expect(res.content[0].text).toBe("Renamed: pk -> pk2\nnote: The global alias 'pa' still points at 'pk'. In this project the project's alias 'pa' (-> pk2) is read instead; a rename without a scope re-points only this project's aliases.");
+      expect(projectAliases()).toEqual({ pa: 'pk2' });
+      expect(globalAliases()).toEqual({ pa: 'pk' });
+    }, SLOW_TEST_MS);
+
     it('rule 1: a rename onto an alias\'s name says the new key is hidden behind it', async () => {
       write(globalAliasFile(), { a: 'gk' });
       const res = await mcp.call('reverie_rename', { oldKey: 'pk', newKey: 'a' });
       expect(res.content[0].text).toBe("Renamed: pk -> a\nnote: 'a' is also the name of the global alias 'a' (-> gk), and an alias is looked up before an entry, so 'a' still means 'gk'. To reach the renamed entry by its name, rename or remove that alias (pass scope: \"global\"), or give the entry an alias of its own.");
+    }, SLOW_TEST_MS);
+
+    it('rule 2: reverie_remove with is_alias leaves the copies a project list already holds', async () => {
+      write(projectAliasFile(), { pa: 'pk', ga: 'gk', gp: 'pk' });   // ga, gp: copies #260 made
+      const res = await mcp.call('reverie_remove', { key: 'pa', is_alias: true });
+      expect(res.content[0].text).toBe('Alias removed: pa');
+      expect(projectAliases()).toEqual({ ga: 'gk', gp: 'pk' });
+      expect(globalAliases()).toEqual({ ga: 'gk', dup: 'gk', gp: 'pk' });
     }, SLOW_TEST_MS);
 
     for (const [tool, nameArg, extra] of [['reverie_remove', 'key', { is_alias: true }], ['reverie_alias_remove', 'alias', {}]] as const) {
