@@ -7,14 +7,14 @@
 // ever `--dry`, `reverie_run` only `dry: true`. They hold references so that
 // a read and a dry run show how the names inside an entry resolve (#280).
 
-const GLOBAL_ENTRIES = {
+export const GLOBAL_ENTRIES = {
   'k.g': 'echo kg',
   'k.both': 'echo kboth-g',
   'k.gx': 'echo kgx',
   'ns.a': 'echo nsa-g',
   'ref.g': 'echo refg ${pa} ${ga} ${dup} ${k.p:-none}',
 };
-const PROJECT_ENTRIES = {
+export const PROJECT_ENTRIES = {
   'k.p': 'echo kp',
   'k.both': 'echo kboth-p',
   'ns.a': 'echo nsa-p',
