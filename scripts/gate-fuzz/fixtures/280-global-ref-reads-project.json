@@ -1,0 +1,73 @@
+{
+  "about": "A global entry's $(x) runs the project's x under -G and in the default scope (#280).",
+  "stores": {
+    "project": {
+      "entries": {
+        "x": "echo RVM1x >> \"$RLOG\""
+      }
+    },
+    "global": {
+      "entries": {
+        "g": "echo RVM2x $(x) >> \"$RLOG\"",
+        "x": "echo RVM3x >> \"$RLOG\""
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "project",
+      "x"
+    ],
+    "2": [
+      "global",
+      "g"
+    ],
+    "3": [
+      "global",
+      "x"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "g"
+      ],
+      "global": true,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "g"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "g",
+        "scope": "global"
+      }
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "g"
+      }
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+# End-to-end fuzzer for the run-confirmation gate (#290). Drives the built
+# CLI and MCP server through random two-store worlds and fails when an
+# unapproved invocation runs a command it should have asked about, a store
+# changes on a refused command, or a flag disappears
+# (scripts/gate-fuzz/README.md).
+#
+# Quick mode on pull requests that touch the code or the fuzzer, with a fixed
+# seed so a red run replays exactly. Long mode weekly, with a new seed each
+# week so the worlds keep changing. A failure uploads the report and the
+# shrunk failing worlds; each violation in the log has a one-line replay.
+name: Gate fuzz
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/gate-fuzz/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig.json'
+      - '.github/workflows/gate-fuzz.yml'
+  schedule:
+    - cron: '0 8 * * 1' # Mondays 08:00 UTC
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'quick or long'
+        required: true
+        default: quick
+        type: choice
+        options: [quick, long]
+      seed:
+        description: 'Seed (empty: 1 for quick, the run number for long)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  quick:
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'quick')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      - name: Gate fuzz (quick)
+        run: bun scripts/gate-fuzz/fuzz.mjs --quick --seed "${SEED:-1}" --report gate-fuzz-report.json --out gate-fuzz-failures
+        env:
+          SEED: ${{ inputs.seed }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: gate-fuzz-quick
+          path: |
+            gate-fuzz-report.json
+            gate-fuzz-failures/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  long:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'long')
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      - name: Gate fuzz (long)
+        run: bun scripts/gate-fuzz/fuzz.mjs --long --seed "${SEED:-$RUN_NUMBER}" --report gate-fuzz-report.json --out gate-fuzz-failures
+        env:
+          SEED: ${{ inputs.seed }}
+          RUN_NUMBER: ${{ github.run_number }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: gate-fuzz-long
+          path: |
+            gate-fuzz-report.json
+            gate-fuzz-failures/
+          if-no-files-found: ignore
+          retention-days: 30

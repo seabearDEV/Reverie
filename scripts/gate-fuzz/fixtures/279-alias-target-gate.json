@@ -1,0 +1,72 @@
+{
+  "about": "An alias to a flagged key, typed and referenced: the alias target is gated (gateNamesFor).",
+  "stores": {
+    "project": {
+      "entries": {
+        "fl": "echo RVM1x >> \"$RLOG\"",
+        "top": "echo RVM2x $(al) >> \"$RLOG\""
+      },
+      "aliases": {
+        "al": "fl"
+      },
+      "confirm": {
+        "fl": true
+      }
+    },
+    "global": {
+      "entries": {}
+    }
+  },
+  "markers": {
+    "1": [
+      "project",
+      "fl"
+    ],
+    "2": [
+      "project",
+      "top"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "al"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "top"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "al"
+      }
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "top"
+      }
+    }
+  ]
+}

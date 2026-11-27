@@ -21,6 +21,8 @@
 		"test:watch": "bun test --watch --isolate",
 		"dev:watch": "tsc --watch",
 		"lint": "eslint src/",
+		"fuzz:gate": "bun run build && bun scripts/gate-fuzz/fuzz.mjs --quick",
+		"fuzz:gate:long": "bun run build && bun scripts/gate-fuzz/fuzz.mjs --long",
 		"sea": "bun scripts/sea-build.js"
 	},
 	"keywords": [
