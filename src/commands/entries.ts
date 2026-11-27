@@ -7,7 +7,7 @@ import { flattenObject, setNestedValue } from '../utils/objectPath';
 import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
 import { renameKey, RenameRefusal } from '../rename';
 import { isValidEntryKey } from '../utils/directoryStore';
-import { findProjectFile, updateEntries, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
+import { hasProjectStore, updateEntries, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
 import { displayTree } from '../formatting';
 import { color } from '../formatting';
@@ -444,7 +444,7 @@ export function stillGatedNote(key: string, removed: boolean): { message: string
 function storedKeys(scope?: Scope): string[] {
   if (scope === 'project' || scope === 'global') return Object.keys(flattenObject(loadData(scope)));
   const keys = new Set(Object.keys(flattenObject(loadData('global'))));
-  if (findProjectFile()) for (const k of Object.keys(flattenObject(loadData('project')))) keys.add(k);
+  if (hasProjectStore()) for (const k of Object.keys(flattenObject(loadData('project')))) keys.add(k);
   return [...keys];
 }
 
@@ -893,7 +893,7 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
   debug('getEntry called', { key, options });
 
   // Resolve listing scope: --global → global, --all → both, default → project if exists else global
-  const hasProject = !!findProjectFile();
+  const hasProject = hasProjectStore();
   const listingScope: Scope | undefined = options.global ? 'global' : (hasProject && !options.all) ? 'project' : undefined;
   // For single-key lookups, use auto fallthrough (project → global)
   const lookupScope = toScope(options.global);

@@ -35,6 +35,7 @@ vi.mock('../store', () => {
       fn(undefined, { scope: 'global', dir: '/mock/store', data: { entries: {}, aliases: {}, confirm: loadConfirmMap('global') }, keys: [], unreadable: [] })),
     clearStoreCaches: vi.fn(() => { confirmKeys = {}; }),
     findProjectFile: vi.fn(() => null),
+    hasProjectStore: vi.fn(() => false),
     clearProjectFileCache: vi.fn(),
   };
 });
@@ -50,7 +51,7 @@ vi.mock('../utils/entryIdentity', () => ({
   entryNamedBy: vi.fn(() => { throw new Error('entryNamedBy is not mocked in this suite'); }),
 }));
 
-import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged, findProjectFile, updateUnderBothLocks, inspectBothStores } from '../store';
+import { loadConfirmMap, saveConfirmMap, loadConfirmMapMerged, findProjectFile, hasProjectStore, updateUnderBothLocks, inspectBothStores } from '../store';
 import { StoreUnreadableError } from '../utils/unreadable';
 import { LockTimeoutError } from '../utils/fileLock';
 
@@ -469,11 +470,13 @@ describe('Confirm Metadata', () => {
     /** A project list and a global list, each as given. */
     const twoLists = (project: Record<string, true>, global: Record<string, true>) => {
       (findProjectFile as Mock).mockReturnValue('/mock/project/.reverie');
+      (hasProjectStore as Mock).mockReturnValue(true);
       (loadConfirmMap as Mock).mockImplementation((scope?: string) => ({ ...(scope === 'project' ? project : global) }));
       (loadConfirmMapMerged as Mock).mockReturnValue({ ...global, ...project });
     };
     afterEach(() => {
       (findProjectFile as Mock).mockReturnValue(null);
+      (hasProjectStore as Mock).mockReturnValue(false);
       (loadConfirmMap as Mock).mockImplementation(() => ({}));
     });
 

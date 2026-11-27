@@ -31,6 +31,7 @@ vi.mock('../store', () => {
     loadEntriesMerged: vi.fn(() => ({ ...globalEntries, ...projectEntries })),
     clearStoreCaches: vi.fn(),
     findProjectFile: vi.fn(() => testState.hasProject ? '/fake/.codexcli.json' : null),
+    hasProjectStore: vi.fn(() => testState.hasProject),
     clearProjectFileCache: vi.fn(),
     // #254: a change is a function of the store as it stands; applied here
     // to this mock's state for the scope it names.

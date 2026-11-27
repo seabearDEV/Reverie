@@ -32,7 +32,7 @@ import {
   setProjectRootOverride,
 } from "./utils/paths";
 import { fileURLToPath } from "url";
-import { findProjectFile, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope, assertProjectScope } from "./store";
+import { findProjectFile, hasProjectStore, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope, assertProjectScope } from "./store";
 import { hasConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
 import { renameKey, RenameRefusal } from "./rename";
 import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from "./config";
@@ -609,7 +609,7 @@ server.tool(
   },
   async ({ key, format, aliases_only, values, depth, decrypt: decryptOpt, password, scope: scopeParam, all: showAll }) => {
     try {
-      const hasProject = !!findProjectFile();
+      const hasProject = hasProjectStore();
       // For listings: default to project-only when project exists (unless --all or explicit scope)
       const listingScope: Scope = scopeParam ?? ((hasProject && !showAll) ? 'project' : 'auto');
       // For single-key lookups: auto fallthrough
@@ -1666,7 +1666,9 @@ server.tool(
     try {
       const projectFile = findProjectFile();
       const hasProject = !!projectFile;
-      const effectiveScope: Scope = scopeParam ?? (hasProject ? 'project' : 'auto');
+      // The scope a store is read in: a project file the store cannot use is
+      // no project store, and the default scope reads the global one.
+      const effectiveScope: Scope = scopeParam ?? (hasProjectStore() ? 'project' : 'auto');
 
       const flat = getEntriesFlat(effectiveScope);
       const effectiveTier = tier ?? 'standard';

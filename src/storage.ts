@@ -5,7 +5,7 @@ import { LockTimeoutError } from './utils/fileLock';
 import { StoreWriteError, isStoreIoError } from './utils/storeWriteError';
 import { CodexData, CodexValue } from './types';
 import { debug } from './utils/debug';
-import { Scope, loadEntries, saveEntries, updateEntries, updateStore, loadEntriesMerged, findProjectFile, getEntryFast, setEntryFast } from './store';
+import { Scope, loadEntries, saveEntries, updateEntries, updateStore, loadEntriesMerged, hasProjectStore, getEntryFast, setEntryFast } from './store';
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, ProjectResolutionError } from './projectResolution';
 import { StoreUnreadableError, markUnreadableShown, noteWriteRefused, readForWrite } from './utils/unreadable';
@@ -172,7 +172,7 @@ export function getValueWithStore(key: string, scope?: Scope): { value: CodexVal
     // degrades to the slow path instead of breaking the operation.
     try {
       if (!scope || scope === 'auto') {
-        if (findProjectFile()) {
+        if (hasProjectStore()) {
           const projectVal = getEntryFast(key, 'project');
           if (projectVal !== undefined) return found(projectVal, 'project');
           const globalVal = getEntryFast(key, 'global');
@@ -198,7 +198,7 @@ export function getValueWithStore(key: string, scope?: Scope): { value: CodexVal
   // the fast path missed.
   if (!scope || scope === 'auto') {
     // Fallthrough: project first, then global
-    if (findProjectFile()) {
+    if (hasProjectStore()) {
       const projectVal = getNestedValue(loadEntries('project'), key);
       if (projectVal !== undefined) return found(projectVal, 'project');
       return found(getNestedValue(loadEntries('global'), key), 'global');
@@ -404,7 +404,7 @@ export function entryStoreOf(scope?: Scope): (key: string) => 'project' | 'globa
   let projectKeys: Set<string> | undefined;
   return key => {
     // Outside a project there is nothing to lay over the global store.
-    projectKeys ??= findProjectFile() ? new Set(Object.keys(flattenObject(loadEntries('project')))) : new Set();
+    projectKeys ??= hasProjectStore() ? new Set(Object.keys(flattenObject(loadEntries('project')))) : new Set();
     return projectKeys.has(key) ? 'project' : 'global';
   };
 }

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { debug } from './utils/debug';
 import { getGlobalStoreDirPath } from './utils/paths';
-import { Scope, loadConfirmMap, saveConfirmMap, updateConfirmMap, loadConfirmMapMerged, updateUnderBothLocks, inspectBothStores, findProjectFile, type LockedStore, type UnifiedData } from './store';
+import { Scope, loadConfirmMap, saveConfirmMap, updateConfirmMap, loadConfirmMapMerged, updateUnderBothLocks, inspectBothStores, hasProjectStore, type LockedStore, type UnifiedData } from './store';
 import { resolveScopeForWrite } from './projectResolution';
 import { StoreUnreadableError, assertSidecarsWritable } from './utils/unreadable';
 import { LockTimeoutError } from './utils/fileLock';
@@ -432,7 +432,7 @@ export function gatedByFlags(keys: readonly string[], flagged: readonly string[]
 export function flagsGating(key: string): { key: string; scope: 'project' | 'global' }[] {
   const held: { key: string; scope: 'project' | 'global' }[] = [];
   const lists: ['project' | 'global', Record<string, unknown>][] = [];
-  if (findProjectFile()) lists.push(['project', loadConfirmMap('project')]);
+  if (hasProjectStore()) lists.push(['project', loadConfirmMap('project')]);
   lists.push(['global', loadConfirmMap('global')]);
   for (const [scope, list] of lists) {
     const flagged = Object.keys(list).filter(k => list[k] === true);

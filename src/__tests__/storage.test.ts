@@ -12,6 +12,7 @@ vi.mock('../store', () => ({
   loadEntriesMerged: vi.fn(() => ({})),
   clearStoreCaches: vi.fn(),
   findProjectFile: vi.fn(() => null),
+  hasProjectStore: vi.fn(() => false),
   clearProjectFileCache: vi.fn(),
   getEffectiveScope: vi.fn(() => 'global'),
 }));
@@ -31,7 +32,7 @@ vi.mock('../formatting', () => ({
   }
 }));
 
-import { loadEntries, saveEntries, loadEntriesMerged, findProjectFile } from '../store';
+import { loadEntries, saveEntries, loadEntriesMerged, hasProjectStore } from '../store';
 import { resolveScopeForWrite } from '../projectResolution';
 
 describe('Storage', () => {
@@ -175,13 +176,17 @@ describe('Storage', () => {
     });
 
     it('falls through from project to global with auto scope', () => {
-      (findProjectFile as Mock).mockReturnValue('/some/.codexcli.json');
+      (hasProjectStore as Mock).mockReturnValue(true);
       (loadEntries as Mock)
         .mockReturnValueOnce({}) // project: no value
         .mockReturnValueOnce({ server: { ip: '1.2.3.4' } }); // global: has value
 
-      const result = getValue('server.ip');
-      expect(result).toBe('1.2.3.4');
+      try {
+        const result = getValue('server.ip');
+        expect(result).toBe('1.2.3.4');
+      } finally {
+        (hasProjectStore as Mock).mockReturnValue(false);
+      }
     });
   });
 

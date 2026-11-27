@@ -15,7 +15,7 @@
  * The store being written is checked as it stands under its lock; the other
  * store is read just before, without its lock.
  */
-import { findProjectFile, loadEntries } from '../store';
+import { hasProjectStore, loadEntries } from '../store';
 import type { CodexData } from '../types';
 import { flattenObject } from './objectPath';
 import { KeyCollisionError } from './keyCollision';
@@ -23,7 +23,7 @@ import { entryNamedBy } from './entryIdentity';
 
 /** The entry keys of the store a write does not write; none outside a project when the global store is written. */
 export function otherStoreEntryKeys(written: 'project' | 'global'): string[] {
-  if (written === 'global' && !findProjectFile()) return [];
+  if (written === 'global' && !hasProjectStore()) return [];
   return Object.keys(flattenObject(loadEntries(written === 'project' ? 'global' : 'project')));
 }
 
@@ -49,6 +49,6 @@ export function assertAliasNamesFree(names: Iterable<string>, entryKeys: Iterabl
  */
 export function assertAliasNameFreeNow(name: string, alsoKeys: readonly string[] = []): void {
   const keys = [...Object.keys(flattenObject(loadEntries('global'))), ...alsoKeys];
-  if (findProjectFile()) keys.push(...Object.keys(flattenObject(loadEntries('project'))));
+  if (hasProjectStore()) keys.push(...Object.keys(flattenObject(loadEntries('project'))));
   assertAliasNamesFree([name], keys);
 }

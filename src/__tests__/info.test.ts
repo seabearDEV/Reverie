@@ -34,6 +34,7 @@ vi.mock('../store', () => ({
   // call can never fall through to the real store.
   inspectBothStores: vi.fn(() => { throw new Error('inspectBothStores is not mocked in this suite'); }),
   findProjectFile: vi.fn(() => null),
+  hasProjectStore: vi.fn(() => false),
   clearProjectFileCache: vi.fn(),
 }));
 
