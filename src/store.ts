@@ -10,6 +10,7 @@ import {
   ensureDataDirectoryExists,
   findProjectFile,
   findProjectStoreDir,
+  findProjectFileWithDiagnostic,
   clearProjectFileCache,
 } from './utils/paths';
 
@@ -20,7 +21,7 @@ import { flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 import { debug } from './utils/debug';
 import { registerUnreadableSource, type UnreadableFile } from './utils/unreadable';
 import { registerStoredKeysSource } from './utils/keyCollision';
-import { resolveScopeForWrite, ProjectResolutionError, captureResolverDiagnostic } from './projectResolution';
+import { resolveScopeForWrite, ProjectResolutionError, registerProjectStoreLookup } from './projectResolution';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -231,9 +232,21 @@ function getProjectStore(): ScopedStore | null {
 export function getEffectiveScope(scope?: Scope): 'project' | 'global' {
   if (scope === 'project') return 'project';
   if (scope === 'global') return 'global';
-  // auto: use project if available
-  return findProjectFile() ? 'project' : 'global';
+  // auto: the project store when there is one
+  return hasProjectStore() ? 'project' : 'global';
 }
+
+/**
+ * Is there a project store — the one resolveStore('project') uses? What a
+ * caller in the default scope asks before it reads `'project'`. Not
+ * findProjectFile(): it also finds a legacy `.codexcli.json` that cannot be
+ * migrated, which gives the store nothing (#294, #296).
+ */
+export function hasProjectStore(): boolean {
+  return getProjectStore() !== null;
+}
+
+registerProjectStoreLookup(hasProjectStore);
 
 /**
  * The project store for a caller that named project scope, or a refusal:
@@ -244,18 +257,18 @@ export function getEffectiveScope(scope?: Scope): 'project' | 'global' {
  * entry written.
  *
  * "No project" is getProjectStore's answer, the store every load and save
- * uses, so the refusal and the write target cannot disagree. A long-lived
- * process (the MCP server) caches "not found": a project created since, by
- * `rvr init` in another process, is looked for once more before refusing.
+ * uses, so the refusal and the write target cannot disagree. It is cached:
+ * an MCP server that started outside a project refuses until restarted,
+ * even after a project is created.
  */
 function requireProjectStore(): ScopedStore {
-  let ps = getProjectStore();
-  if (!ps) {
-    clearProjectFileCache();
-    ps = getProjectStore();
-  }
+  const ps = getProjectStore();
   if (ps) return ps;
-  throw new ProjectResolutionError(captureResolverDiagnostic(), 'project');
+  // A project the resolver finds that the store is not using (it appeared
+  // after the cached lookup, or is a legacy file that could not be
+  // migrated) is named in the refusal.
+  const { path: found, diagnostic } = findProjectFileWithDiagnostic();
+  throw new ProjectResolutionError(diagnostic, 'project', found ?? undefined);
 }
 
 /**
@@ -276,11 +289,7 @@ function resolveStore(scope?: Scope  ): ScopedStore {
   if (scope === 'global') return getGlobalStore();
   // Auto: the project store when there is one, else the global store. Reads
   // fall through; auto writes never get here (resolveScopeForWrite, #99).
-  if (findProjectFile()) {
-    const ps = getProjectStore();
-    if (ps) return ps;
-  }
-  return getGlobalStore();
+  return getProjectStore() ?? getGlobalStore();
 }
 
 // ── Section accessors ──────────────────────────────────────────────────
