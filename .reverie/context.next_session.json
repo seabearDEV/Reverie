@@ -1,7 +1,7 @@
 {
-  "value": "2026-11-27 (late) — Owner decision: 1.4.0 ships with no known bugs. The ledger is #305: 57 items (L1–L57) in 8 PRs, frozen at main ea5c526; its top lists the rules for new findings, the runs per PR and the end. Merged today: #298 #299 #306 #307. PICK UP: PR 1 (#304, worktree Reverie-304) if it isn't merged, otherwise the next unticked PR in the ledger. One PR per session; end each with this note. Order and the rest: project.inFlight.",
+  "value": "2026-11-27 (late, 2) — PR 1 is the #304 PR: the run gate reads each confirmation list from disk, and `bun run test` runs in parallel (about 35 s). The ledger is #305: 57 items (L1–L57) in 8 PRs, frozen at main ea5c526; its top lists the rules for new findings, the runs per PR and the end. PICK UP: tick L1 on #305 if the #304 PR is merged, then PR 2 (tests and CI: the unit suite in CI, L2–L5). One PR per session; end each with this note. Order and the rest: project.inFlight.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1795819394732
+    "updated": 1795820731197
   }
 }
