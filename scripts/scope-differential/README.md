@@ -84,7 +84,7 @@ An invocation's id is `<world>|<cwd>|cli <argv>` or `<world>|<cwd>|mcp <tool> <a
 
 ## A change that is meant to differ
 
-For a change that is meant to change behaviour, `--expect <module>` names the differences it should make. The module's default export gets each differing invocation and both records (`inv`, the record of the build under test, the record of the other build) and returns the rule the difference falls under, or null. The run prints the count per rule, prints in full only the differences no rule covers, and fails only on those. Make each predicate exact: what changed as well as where, and every line of output the rule calls for, none missing and none extra.
+For a change that is meant to change behaviour, `--expect <module>` names the differences it should make. The module's default export gets each differing invocation and both records (`inv`, the record of the build under test, the record of the other build) and returns the rule the difference falls under, or null. The run prints the count per rule, prints in full only the differences no rule covers, and fails only on those. Make each predicate exact: what changed as well as where, and every line of output the rule calls for, none missing and none extra. `expect-260.mjs` is the one for #260.
 
 ## Its check
 
