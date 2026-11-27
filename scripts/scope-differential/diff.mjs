@@ -11,12 +11,15 @@
 //   --against <dir>    the other build (without it, only --dump is written)
 //   --jobs <n>         parallel workers (default: min(cores, 4))
 //   --world <names>    only these worlds (comma-separated)
-//   --filter <regex>   only invocations whose id matches
+//   --filter <text>    only invocations whose id contains this text
 //   --report <file>    write every difference as JSON
 //   --dump <file>      write every record (both builds) as JSON lines
 //   --show <n>         print the first n differences in full (default 30)
 //   --work <dir>       work directory (default: a new temp directory)
 //   --keep             keep the work directory
+//   --expect <module>  a module whose default export names the rule a
+//                      difference is expected under (or null): with it,
+//                      only unexpected differences fail the run
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -46,11 +49,12 @@ function parseArgs(argv) {
       case '--show': o.show = num(); break;
       case '--work': o.work = val(); break;
       case '--keep': o.keep = true; break;
+      case '--expect': o.expect = path.resolve(val()); break;
       case '--worker': o.worker = true; break;
       case '--slot': o.slot = num(); break;
       case '--of': o.of = num(); break;
       case '-h': case '--help':
-        console.log(fs.readFileSync(SELF, 'utf8').split('\n').filter(l => l.startsWith('//')).slice(0, 19).map(l => l.slice(3)).join('\n'));
+        console.log(fs.readFileSync(SELF, 'utf8').split('\n').filter(l => l.startsWith('//')).slice(0, 22).map(l => l.slice(3)).join('\n'));
         process.exit(0);
         break;
       default: throw new Error(`unknown argument ${a}`);
@@ -65,27 +69,25 @@ function parseArgs(argv) {
   return o;
 }
 
-function escapeRegExpLiteral(s) {
-  if (typeof RegExp.escape === 'function') return RegExp.escape(s);
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
+// --filter is plain text, not a regex: an id is full of regex syntax ('|',
+// '{', '('), and the text of an id selects exactly that invocation.
 function selected(o) {
-  const re = o.filter ? new RegExp(escapeRegExpLiteral(o.filter)) : null;
-  return allInvocations({ worlds: o.worlds ?? WORLDS }).filter(inv => !re || re.test(inv.id));
+  return allInvocations({ worlds: o.worlds ?? WORLDS }).filter(inv => !o.filter || inv.id.includes(o.filter));
 }
 
 async function worker(o) {
   const root = path.join(o.work, `slot${o.slot}`);
   const cache = path.join(o.work, 'bun-cache');
   const invs = selected(o);
+  const expectation = o.expect ? (await import(o.expect)).default : null;
   for (let i = o.slot; i < invs.length; i += o.of) {
     const inv = invs[i];
     // Both builds at the same path, one after the other, each in a fresh world.
     const a = await runInvocation(o.dist, root, inv, cache);
     const b = o.against ? await runInvocation(o.against, root, inv, cache) : undefined;
     const diffs = b ? compareRecords(a, b) : [];
-    process.stdout.write(JSON.stringify({ i, id: inv.id, diffs, ...(o.dump ? { a, b } : {}) }) + '\n');
+    const expected = expectation && diffs.length ? expectation(inv, a, b, diffs) : null;
+    process.stdout.write(JSON.stringify({ i, id: inv.id, diffs, ...(expected ? { expected } : {}), ...(o.dump ? { a, b } : {}) }) + '\n');
   }
   fs.rmSync(root, { recursive: true, force: true });
 }
@@ -109,6 +111,8 @@ async function main() {
   if (o.worker) return worker(o);
 
   const invs = selected(o);
+  // A filter that matches nothing must not pass as "0 differing".
+  if (invs.length === 0) { console.error(`scope differential: no invocation matches${o.filter ? ` --filter ${JSON.stringify(o.filter)}` : ''}${o.worlds ? ` in --world ${o.worlds.join(',')}` : ''}`); process.exit(2); }
   const jobs = Math.max(1, Math.min(o.jobs ?? Math.min(os.cpus().length, 4), invs.length));
   const work = o.work ? path.resolve(o.work) : fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'rvr-scope-diff-'));
   fs.mkdirSync(work, { recursive: true });
@@ -127,12 +131,13 @@ async function main() {
     if (o.worlds) args.push('--world', o.worlds.join(','));
     if (o.filter) args.push('--filter', o.filter);
     if (o.dump) args.push('--dump', '-');
+    if (o.expect) args.push('--expect', o.expect);
     const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'inherit'] });
     children.add(child);
     readline.createInterface({ input: child.stdout }).on('line', line => {
       const rec = JSON.parse(line);
       if (dump) dump.write(line + '\n');
-      results.push({ i: rec.i, id: rec.id, diffs: rec.diffs });
+      results.push({ i: rec.i, id: rec.id, diffs: rec.diffs, expected: rec.expected });
       if (results.length % 500 === 0) process.stderr.write(`  ${results.length}/${invs.length}\n`);
     });
     child.on('exit', code => { children.delete(child); code === 0 ? resolve() : reject(new Error(`worker ${slot} exited with ${code}`)); });
@@ -142,6 +147,9 @@ async function main() {
 
   results.sort((x, y) => x.i - y.i);
   const differing = results.filter(r => r.diffs.length > 0);
+  const unexpected = differing.filter(r => !r.expected);
+  const byRule = {};
+  for (const r of differing) if (r.expected) byRule[r.expected] = (byRule[r.expected] ?? 0) + 1;
   const perCommand = {};
   for (const r of results) {
     const c = commandOf(r.id);
@@ -151,7 +159,7 @@ async function main() {
   }
   if (o.report) fs.writeFileSync(path.resolve(o.report), JSON.stringify({ invocations: results.length, differing }, null, 2));
 
-  for (const r of differing.slice(0, o.show)) {
+  for (const r of (o.expect ? unexpected : differing).slice(0, o.show)) {
     console.log(`\nDIFF ${r.id}`);
     for (const d of r.diffs) {
       if (d.part === 'files') {
@@ -166,10 +174,14 @@ async function main() {
     console.log('\nper command (invocations / differing):');
     for (const [c, s] of Object.entries(perCommand).sort()) console.log(`  ${c.padEnd(28)} ${String(s.invocations).padStart(6)} ${String(s.differing).padStart(6)}`);
   }
+  if (o.expect) {
+    console.log('\nexpected differences, by rule:');
+    for (const [rule, n] of Object.entries(byRule).sort()) console.log(`  ${rule.padEnd(60)} ${String(n).padStart(6)}`);
+  }
   const secs = Math.round((Date.now() - started) / 1000);
-  console.log(`\n${results.length} invocations, ${differing.length} differing (${secs}s)`);
+  console.log(`\n${results.length} invocations, ${differing.length} differing${o.expect ? `, ${unexpected.length} unexpected` : ''} (${secs}s)`);
   if (results.length !== invs.length) { console.log(`MISSING ${invs.length - results.length} invocations`); process.exitCode = 2; }
-  else if (differing.length > 0) process.exitCode = 1;
+  else if ((o.expect ? unexpected : differing).length > 0) process.exitCode = 1;
 }
 
 main().catch(err => { console.error(err.message); process.exit(2); });

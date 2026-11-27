@@ -5,7 +5,7 @@ import path from 'path';
 import { loadData, handleError, getValue, getValueWithStore, getValueForWrite, setValue, setValueWithMeta, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
 import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
-import { renameKey, RenameRefusal } from '../rename';
+import { renameKey, RenameRefusal, renameNotes, type RenameResult } from '../rename';
 import { isValidEntryKey } from '../utils/directoryStore';
 import { hasProjectStore, updateEntries, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
 import { CodexValue } from '../types';
@@ -1340,8 +1340,9 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   // decided from the stores as they stand under their locks. The checks
   // above give the usual answers; renameKey asks again there, and refuses
   // another spelling of the source (#247) and an unreadable list (#245).
+  let renamed: RenameResult;
   try {
-    renameKey(oldKey, newKey, scope, newAlias);
+    renamed = renameKey(oldKey, newKey, scope, newAlias);
   } catch (error) {
     if (error instanceof RenameRefusal) {
       printError(error.message, error.code);
@@ -1356,5 +1357,7 @@ export function renameEntry(oldKey: string, newKey: string, aliasMode = false, n
   if (newAlias) console.log(`Alias '${newAlias}' added successfully.`);
 
   printSuccess(`Entry '${oldKey}' renamed to '${newKey}'.`);
+  // #260: a global alias of what moved was left alone, or an alias hides the new key; say so.
+  for (const note of renameNotes(renamed, newKey, '-G')) printWarning(note);
   return { from: oldKey, to: newKey, kind: 'entry', ...(newAlias ? { alias: newAlias } : {}) };
 }

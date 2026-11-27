@@ -371,6 +371,8 @@ rvr set server.production.ip 192.168.1.100 -a ip
 rvr remove server.production.ip
 ```
 
+Each store has its own aliases, and an alias command changes only the list of the store it writes: the project's without `-G` (outside a project the command is refused), the global one with it. A name looks through both, the project's first. So without `-G`, `alias remove` removes the project's alias of that name and says when a global alias of the same name still resolves; when only the global store has the alias, it changes nothing, says so, and asks for `-G`. The MCP tools (`reverie_alias_remove`, `reverie_remove` with `is_alias`) behave the same way: without a `scope` they remove the project's alias, and `scope: "global"` removes the global one.
+
 An alias is looked up before an entry, so an alias named after an entry would stand in for it wherever the name is used. Every command that adds an alias (`alias set`, `alias rename`, `set -a`, `rename --set-alias`, an import, and their MCP counterparts) refuses a name that is the key of an entry in either store, in another case too, with `INVALID_INPUT`. A flagged command is gated under the name you type as well as the entry an alias points it to (see [Run Confirmation](#run-confirmation)).
 
 ### Copying Data
@@ -403,7 +405,7 @@ rvr alias rename oldalias newalias
 rvr rename server.old server.new --set-alias sn
 ```
 
-A rename is one step: the value, the aliases that point at it and the new keys' confirmation flags move together, or nothing changes. Name the entry as it is stored. On a filesystem that ignores case, `rvr rename Commands.Deploy …` opens the file of `commands.deploy`, and the rename is refused with the stored name rather than copying the entry. The same name in another Unicode normalization counts as the stored one. A rename is also refused while either store's confirmation list cannot be read.
+A rename is one step: the value, the aliases that point at it and the new keys' confirmation flags move together, or nothing changes. The aliases re-pointed are those of the store the rename writes: without `-G`, the project's. A global alias that points at the old key is left as it is, since in another project that key may be the project's own entry, and the rename says so. Renaming onto a name that is also an alias's works, but the alias is looked up first and hides the entry; the rename says so. Name the entry as it is stored. On a filesystem that ignores case, `rvr rename Commands.Deploy …` opens the file of `commands.deploy`, and the rename is refused with the stored name rather than copying the entry. The same name in another Unicode normalization counts as the stored one. A rename is also refused while either store's confirmation list cannot be read.
 
 ### Editing Data
 
@@ -1036,7 +1038,7 @@ claude mcp add reverie -- bun /absolute/path/to/dist/mcp-server.js
 | `reverie_get` | Retrieve stored knowledge by dot-notation key, or list all entries (staleness tags on stale/untracked entries, optional decrypt) |
 | `reverie_remove` | Remove a stored entry or alias by key |
 | `reverie_copy` | Copy an entry to a new key (optional force to overwrite) |
-| `reverie_rename` | Rename an entry key or alias (re-points aliases, carries confirm flags to the new keys) |
+| `reverie_rename` | Rename an entry key or alias (re-points the aliases of the store it writes, carries confirm flags to the new keys) |
 | `reverie_find` | Search stored knowledge by keyword (keys, values, or both; regex supported) |
 | `reverie_alias_set` | Create or update an alias for a dot-notation path |
 | `reverie_alias_remove` | Remove an alias |

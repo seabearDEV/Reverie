@@ -163,11 +163,9 @@ vi.mock('../alias', () => ({
   // The alias commands' questions, over this suite's map (as `x in loadAliases(scope)` and `loadAliases(scope)[x]` were).
   aliasListed: (name: string) => name in { ...mockAliases },
   aliasTargetListed: (name: string) => ({ ...mockAliases } as Record<string, string | undefined>)[name],
-  removeAliasFromView: (name: string) => {
-    if (!(name in { ...mockAliases })) return false;
-    if (name in mockAliases) delete mockAliases[name];
-    return true;
-  },
+  // #260: these suites have one alias map, so no global alias is ever left alone.
+  globalAliasLeft: (): string | undefined => undefined,
+  globalAliasRemovalMessage: (name: string) => `Alias '${name}' is a global alias.`,
   resolveReferenceName: (k: string, from: 'project' | 'global') => resolutionOver(mockResolveKeyOf, { kind: 'reference', from }, k),
   buildKeyToAliasMap: vi.fn(() => ({})),
   removeAlias: vi.fn((alias: string) => {

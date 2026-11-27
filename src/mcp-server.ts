@@ -23,7 +23,8 @@ import {
   removeAlias,
   resolveTypedName,
   aliasListed,
-  removeAliasFromView,
+  globalAliasLeft,
+  globalAliasRemovalMessage,
   buildKeyToAliasMap,
   removeAliasesForKey,
   renameAlias,
@@ -38,7 +39,7 @@ import {
 import { fileURLToPath } from "url";
 import { findProjectFile, hasProjectStore, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope, assertProjectScope } from "./store";
 import { hasConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
-import { renameKey, RenameRefusal } from "./rename";
+import { renameKey, RenameRefusal, renameNotes } from "./rename";
 import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections, assertImportedAliasesFree } from "./utils/importSections";
 import { assertAliasNameFreeNow, otherStoreEntryKeys } from "./utils/aliasNames";
@@ -776,10 +777,11 @@ server.tool(
         // #215: an unreadable map loads as empty — "not found" would be the
         // wrong answer about a file that could not be read.
         assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases']);
-        if (!removeAliasFromView(key, scope)) {
+        if (!aliasListed(key, scope)) {
           return errorResponse(`Alias '${key}' not found.`, 'NOT_FOUND');
         }
-        return textResponse(`Alias removed: ${key}`);
+        // #260: without a scope, the project's alias only — as reverie_alias_remove.
+        return aliasRemovalResponse(key, scope, removeAlias(key, scope));
       }
 
       const resolvedKey = resolveTypedName(key, scope).key;
@@ -926,9 +928,11 @@ server.tool(
       // code as `rvr rename`. It asks again what was checked above, and
       // refuses another spelling of the source (#247) and an unreadable
       // confirmation list in either store (#245).
-      renameKey(resolvedOld, newKey, scope, alias);
+      const renamed = renameKey(resolvedOld, newKey, scope, alias);
 
-      return textResponse(`Renamed: ${resolvedOld} -> ${newKey}`);
+      // #260: a global alias of what moved was left alone, or an alias hides the new key; say so.
+      const notes = renameNotes(renamed, newKey, 'scope: "global"').map(n => `\nnote: ${n}`).join('');
+      return textResponse(`Renamed: ${resolvedOld} -> ${newKey}${notes}`);
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
       // #216 / #224 / #247: the refusal is complete on its own.
@@ -1032,6 +1036,20 @@ server.tool(
   }
 );
 
+/**
+ * The answer to an alias removal by name (reverie_alias_remove, and
+ * reverie_remove with is_alias). #260: without a scope only the project's
+ * alias is removed: a global alias of the name is named — the refusal when
+ * it is the only one, a note when the project's was removed.
+ */
+function aliasRemovalResponse(name: string, scope: Scope, removed: boolean) {
+  const global = globalAliasLeft(name, scope);
+  if (!removed) {
+    return errorResponse(global === undefined ? `Alias '${name}' not found.` : globalAliasRemovalMessage(name, global, false, 'scope: "global"'), 'NOT_FOUND');
+  }
+  return textResponse(global === undefined ? `Alias removed: ${name}` : `Alias removed: ${name}\nnote: ${globalAliasRemovalMessage(name, global, true, 'scope: "global"')}`);
+}
+
 // --- reverie_alias_remove ---
 server.tool(
   "reverie_alias_remove",
@@ -1040,11 +1058,7 @@ server.tool(
   async ({ alias, scope: scopeParam }) => {
     try {
       const scope = toScope(scopeParam);
-      const removed = removeAlias(alias, scope);
-      if (!removed) {
-        return errorResponse(`Alias '${alias}' not found.`, 'NOT_FOUND');
-      }
-      return textResponse(`Alias removed: ${alias}`);
+      return aliasRemovalResponse(alias, scope, removeAlias(alias, scope));
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
       return errorResponse(`Error removing alias: ${String(err)}`);

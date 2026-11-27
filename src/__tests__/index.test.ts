@@ -65,6 +65,9 @@ function setupMocks() {
     // The alias commands' questions, over the loadAliases mock's empty map.
     aliasListed: (name: string) => name in {},
     aliasTargetListed: (): string | undefined => undefined,
+    // #260: no global alias is left alone with the alias module mocked.
+    globalAliasLeft: (): string | undefined => undefined,
+    globalAliasRemovalMessage: (name: string) => `Alias '${name}' is a global alias.`,
     loadAliases: vi.fn(() => ({})),
     setAlias: vi.fn(),
     renameAlias: vi.fn(() => true),

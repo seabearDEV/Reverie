@@ -73,13 +73,20 @@ Before comparing, the world's path is replaced by `<ROOT>`. Timestamps a write p
 --against <dir>    the other build
 --jobs <n>         parallel workers (default: min(cores, 4))
 --world <names>    only these worlds (comma-separated)
---filter <regex>   only invocations whose id matches, e.g. '\|proj\|cli rename'
+--filter <text>    only invocations whose id contains this text, e.g. '|proj|cli rename'
 --report <file>    every difference, as JSON
 --dump <file>      every record of both builds, as JSON lines (large)
 --show <n>         how many differences to print in full (default 30)
+--expect <module>  name the differences a change is meant to make (below)
 ```
 
-An invocation's id is `<world>|<cwd>|cli <argv>` or `<world>|<cwd>|mcp <tool> <args>`. `--filter` with that id replays one invocation. `--dump` without `--against` records one build, which is how to read what a command does today.
+An invocation's id is `<world>|<cwd>|cli <argv>` or `<world>|<cwd>|mcp <tool> <args>`. `--filter` keeps the invocations whose id contains its text, matched as written, not as a regex: a whole id selects that invocation, plus any whose id extends it (`… cli get pa` also matches `… cli get pa -G`). A filter that matches nothing fails the run. `--dump` without `--against` records one build, which is how to read what a command does today.
+
+## A change that is meant to differ
+
+For a change that is meant to change behaviour, `--expect <module>` names the differences it should make. The module's default export gets each differing invocation and both records (`inv`, the record of the build under test, the record of the other build) and returns the rule the difference falls under, or null. The run prints the count per rule, prints in full only the differences no rule covers, and fails only on those. Make each predicate exact: what changed as well as where, and every line of output the rule calls for, none missing and none extra. `expect-260.mjs` is the one for #260.
+
+`write-then-run.mjs <first dist> <second dist>` covers what neither this tool nor the gate fuzzer does: a run after an alias write. It applies one rename or alias removal with each build, then runs every name the write touched on the stores that build left, in every scope, and fails on a run that asks on the first build and runs on the second.
 
 ## Its check
 

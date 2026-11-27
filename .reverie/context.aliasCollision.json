@@ -1,7 +1,7 @@
 {
-  "value": "An alias wins in resolveKey: a name that is both an alias and an entry resolves to the alias target. Since #292 (#279) no write can create that pair — alias set/rename, set -a, rename --set-alias, MCP and import all refuse an alias named after an existing entry in either store (INVALID_INPUT, case and filesystem folding included) — and `run` gates the name as typed as well as every alias target, so a pair cannot carry a run past a flag. Pairs stored by 1.3.0 still resolve to the alias. Still open (#291): an entry can be created under an existing alias's name, and importing a 1.3.0 export that holds such a pair after `data reset` is refused.",
+  "value": "An alias wins in resolveKey: a name that is both an alias and an entry resolves to the alias target. Since #292 (#279) no write can create that pair — alias set/rename, set -a, rename --set-alias, MCP and import all refuse an alias named after an existing entry in either store (INVALID_INPUT, case and filesystem folding included) — and `run` gates the name as typed as well as every alias target, so a pair cannot carry a run past a flag. Pairs stored by 1.3.0 still resolve to the alias. A git merge still can: two branches that each add one half bring an alias over an entry with no conflict (#300), and a rename onto an alias's name only warns (#260). Since #260 each store's alias list changes only through commands in its own scope; a project list may still hold copies of global aliases that 1.3.0 wrote, left as they are. Still open (#291): an entry can be created under an existing alias's name, and importing a 1.3.0 export that holds such a pair after `data reset` is refused.",
   "meta": {
     "created": 1775356765156,
-    "updated": 1795738159386
+    "updated": 1795814943808
   }
 }

@@ -8,7 +8,7 @@ import {
   type NameContext,
   type NameView,
   aliasListedIn,
-  aliasWriteBase,
+  aliasTarget,
   aliasesPointingAt,
   aliasesSeen,
   chainMemberContext,
@@ -184,16 +184,20 @@ describe('alias commands', () => {
     expect(aliasListedIn({}, 'toString')).toBe(true);
   });
 
-  it('a default-scope write in a project reads through to the global store, and lays the global aliases under its own (#260, kept)', () => {
+  it('a default-scope write in a project reads through to the global store; only there are global aliases left alone and reported (#260)', () => {
     expect(defaultScopeInProject(AUTO, 'project')).toBe(true);
-    expect(aliasWriteBase(AUTO, 'project', { pa: 'k.p', dup: 'k.p' }, G)).toEqual({ ga: 'k.g', gp: 'k.p', pa: 'k.p', dup: 'k.p' });
     for (const ctx of [GLOBAL, PROJECT]) {
       const store = ctx === GLOBAL ? 'global' : 'project';
       expect(defaultScopeInProject(ctx, store)).toBe(false);
-      expect(aliasWriteBase(ctx, store, P, G)).toBe(P);
     }
-    // Nothing to lay under: the store's own map.
-    expect(aliasWriteBase(AUTO, 'project', P, undefined)).toBe(P);
+  });
+
+  it('a global alias of a name, and the aliases pointing at a key or under it', () => {
+    expect(aliasTarget(G, 'dup')).toBe('k.g');
+    expect(aliasTarget(G, 'pa')).toBeUndefined();
+    expect(aliasTarget({}, 'toString')).toBeUndefined();
+    expect(aliasesPointingAt({ a: 'k', b: 'k.x', c: 'kk', d: 'other' }, 'k')).toEqual([['a', 'k'], ['b', 'k.x']]);
+    expect(aliasesPointingAt(G, 'nope')).toEqual([]);
   });
 
   it('the aliases pointing at a key or under it', () => {
