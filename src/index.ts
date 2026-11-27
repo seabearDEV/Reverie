@@ -2,7 +2,7 @@
 
 import { Command, Option } from 'commander';
 import * as commands from './commands';
-import { removeAlias, resolveKey, loadAliases, setAlias, renameAlias } from './alias';
+import { removeAlias, resolveTypedName, loadAliases, setAlias, renameAlias, aliasListed } from './alias';
 import { removeConfirm, loadConfirmKeys } from './confirm';
 import { color } from './formatting';
 import { showHelp, showExamples } from './formatting';
@@ -88,7 +88,7 @@ reverie.hook('preAction', (_thisCommand, actionCommand) => {
  * into it, so it cannot reach a global entry through one.
  */
 function resolveTyped(name: string, scope: 'global' | undefined): string {
-  return scope === 'global' ? resolveKey(name, 'global') : resolveKey(name);
+  return resolveTypedName(name, scope).key;
 }
 
 // Set command
@@ -282,7 +282,7 @@ reverie
   .option('-G, --global', 'Target global data store')
   .action(async (keys: string[], options: { yes?: boolean, dry?: boolean, decrypt?: boolean, capture?: boolean, source?: boolean, chain?: boolean, global?: boolean, passwordFile?: string }) => {
     const scope = options.global ? 'global' as const : undefined;
-    const resolvedKey = keys[0] ? resolveKey(keys[0], scope) : undefined;
+    const resolvedKey = keys[0] ? resolveTypedName(keys[0], scope).key : undefined;
     await withCliInstrumentation(
       { tool: 'reverie_run', key: resolvedKey, rawKey: keys[0], scope, params: { keys } },
       () => commands.runCommand(keys, options)
@@ -476,8 +476,7 @@ aliasCommand
           console.log(`Alias '${oldName}' renamed to '${newName}'.`);
           return { from: oldName, to: newName };
         }
-        const aliases = loadAliases(scope);
-        if (!(oldName in aliases)) {
+        if (!aliasListed(oldName, scope)) {
           printError(`Alias '${oldName}' not found.`, 'NOT_FOUND');
         } else {
           printError(`Alias '${newName}' already exists.`, 'INVALID_INPUT');

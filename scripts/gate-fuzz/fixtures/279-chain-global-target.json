@@ -1,0 +1,114 @@
+{
+  "about": "One name in both maps, the project's pointing at a plain entry and the global one at a flagged entry, reached as a chain: the chain entry's own name (CLI --chain, MCP chain: true) and a chain member. The name's global alias target gates the run in both positions (#279).",
+  "stores": {
+    "project": {
+      "entries": {
+        "p.only": "echo RVM1x >> \"$RLOG\"",
+        "p.dupchain": "dup",
+        "p.plainchain": "p.only"
+      },
+      "aliases": {
+        "dup": "p.only",
+        "cc": "p.plainchain"
+      }
+    },
+    "global": {
+      "entries": {
+        "g.flag": "echo RVM2x >> \"$RLOG\""
+      },
+      "aliases": {
+        "dup": "g.flag",
+        "cc": "g.flag"
+      },
+      "confirm": {
+        "g.flag": true
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "project",
+      "p.only"
+    ],
+    "2": [
+      "global",
+      "g.flag"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "cc"
+      ],
+      "global": false,
+      "chain": true,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "cc"
+      ],
+      "global": false,
+      "chain": true,
+      "yes": false,
+      "mode": "plain"
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "p.dupchain"
+      ],
+      "global": false,
+      "chain": true,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "p.dupchain",
+        "chain": true
+      }
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "p.dupchain",
+        "chain": true,
+        "scope": "project"
+      }
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "cc",
+        "chain": true
+      }
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "cc",
+        "chain": true,
+        "scope": "project"
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@ import type { Mock } from 'bun:test';
 import { interpolate, interpolateExec, interpolateObject } from '../utils/interpolate';
 import { getValue } from '../storage';
 import { resolveKey } from '../alias';
+import { referenceOver } from './helpers/resolverMocks';
 import { execSync } from 'child_process';
 
 vi.mock('../storage', () => {
@@ -20,10 +21,15 @@ vi.mock('../storage', () => {
   };
 });
 
-vi.mock('../alias', () => ({
-  resolveKey: vi.fn((key: string) => key),
-  loadAliases: vi.fn(() => ({})),
-}));
+vi.mock('../alias', () => {
+  const resolveKey = vi.fn((key: string) => key);
+  return {
+    resolveKey,
+    loadAliases: vi.fn(() => ({})),
+    // The resolver's wrappers, over the resolveKey mock (helpers/resolverMocks).
+    resolveReferenceName: (name: string, from: 'project' | 'global') => referenceOver(resolveKey, name, from),
+  };
+});
 
 vi.mock('child_process', () => ({
   execSync: vi.fn(),

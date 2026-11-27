@@ -1,9 +1,49 @@
 import { debug } from './utils/debug';
-import { Scope, loadAliasMap, saveAliasMap, updateAliasMap, updateStore, loadAliasMapMerged } from './store';
+import { Scope, loadAliasMap, saveAliasMap, updateAliasMap, updateStore, loadAliasMapMerged, hasProjectStore } from './store';
 import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/aliasNames';
 import { isValidEntryKey } from './utils/directoryStore';
-import { resolveScopeForWrite } from './projectResolution';
+import { resolveScopeForWrite, unusedProjectStore } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
+import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasListedIn, aliasWriteBase, aliasesPointingAt, aliasesSeen, defaultScopeInProject, referenceContext, resolveName, typedContext } from './utils/nameResolver';
+
+/**
+ * The resolver's view of the stores as they stand now (utils/nameResolver).
+ * Each part is loaded when the resolver first asks for it, and only then: a
+ * lookup with -G never touches the project store, nor a default-scope
+ * lookup outside a project its alias map. A new view for every question,
+ * so a lookup never answers from a map read before something else wrote.
+ */
+export function nameView(): NameView {
+  let has: boolean | undefined;
+  let project: AliasMap | undefined;
+  let global: AliasMap | undefined;
+  let unused: { path: string | undefined } | undefined;
+  return {
+    get hasProjectStore() { return has ??= hasProjectStore(); },
+    // Project scope with no project store throws the store's refusal (#294).
+    get projectAliases() { return project ??= loadAliasMap('project'); },
+    get globalAliases() { return global ??= loadAliasMap('global'); },
+    get unusedProject() { return (unused ??= { path: unusedProjectStore() }).path; },
+  };
+}
+
+/** What `written` means in `ctx`, as the stores stand now. */
+export function resolveNameNow(ctx: NameContext, written: string): Resolution {
+  // Each alias found is printed under --debug as it is looked up: the
+  // name's own, and the global map's answer for the gate when a run reads
+  // the gate names.
+  return resolveName(nameView(), ctx, written, (name, target) => debug(`Alias resolved: "${name}" -> "${target}"`));
+}
+
+/** What a name typed with `scope` (CLI -G, an MCP scope; undefined or 'auto': the default) means. */
+export function resolveTypedName(written: string, scope?: Scope): Resolution {
+  return resolveNameNow(typedContext(scope), written);
+}
+
+/** What a `${name}` / `$(name)` in an entry stored in `from` means (#280). */
+export function resolveReferenceName(written: string, from: StoreName): Resolution {
+  return resolveNameNow(referenceContext(from), written);
+}
 
 
 export function loadAliases(scope?: Scope  ): Record<string, string> {
@@ -35,9 +75,41 @@ export function updateAliases(
   scope?: Scope,
 ): void {
   const effectiveScope = resolveScopeForWrite(scope);
-  const layered = (!scope || scope === 'auto') && effectiveScope === 'project';
-  const below = layered ? loadAliasMap('global') : {};
-  updateAliasMap(own => fn(layered ? { ...below, ...own } : own), effectiveScope);
+  const ctx = typedContext(scope);
+  const below = defaultScopeInProject(ctx, effectiveScope) ? loadAliasMap('global') : undefined;
+  updateAliasMap(own => fn(aliasWriteBase(ctx, effectiveScope, own, below)), effectiveScope);
+}
+
+/**
+ * Whether `name` is an alias in the map `scope` shows — both maps in the
+ * default view — asked as the alias commands always have (aliasListedIn).
+ * Decides "not found" for an alias removal or rename that changed nothing.
+ */
+export function aliasListed(name: string, scope?: Scope): boolean {
+  return aliasListedIn(aliasesSeen(nameView(), typedContext(scope)), name);
+}
+
+/** The target the map `scope` shows for alias `name`, indexed as the audit row's before-value always was. */
+export function aliasTargetListed(name: string, scope?: Scope): string | undefined {
+  return aliasesSeen(nameView(), typedContext(scope))[name];
+}
+
+/**
+ * Remove alias `name` from the map `scope` shows: false when it lists no
+ * such alias. In the default scope inside a project the removal goes
+ * through updateAliases, which writes the layered view to the project
+ * (#260, kept as it is).
+ */
+export function removeAliasFromView(name: string, scope?: Scope): boolean {
+  if (!aliasListed(name, scope)) return false;
+  // #254: removed from the map as it stands under the store lock.
+  updateAliases(aliases => {
+    if (!aliasListedIn(aliases, name)) return null;
+    const next = { ...aliases };
+    delete next[name];
+    return next;
+  }, scope);
+  return true;
 }
 
 // Create or update an alias (one alias per entry — replaces any existing alias for the same target)
@@ -87,10 +159,10 @@ export function removeAlias(alias: string, scope?: Scope  ): boolean {
   // #215: an unreadable map loads as empty, and "no such alias" is the wrong
   // answer about a file that could not be read. Refuse instead.
   assertSidecarsWritable(() => effectiveScope, ['aliases']);
-  if (!(alias in loadAliasMap(effectiveScope))) return false;
+  if (!aliasListedIn(loadAliasMap(effectiveScope), alias)) return false;
   // #254: removed from the map as it stands under the lock.
   return changeAliasMap(effectiveScope, aliases => {
-    if (!(alias in aliases)) return null;
+    if (!aliasListedIn(aliases, alias)) return null;
     const next = { ...aliases };
     delete next[alias];
     return next;
@@ -102,8 +174,8 @@ export function renameAlias(oldName: string, newName: string, scope?: Scope  ): 
   const effectiveScope = resolveScopeForWrite(scope);
   assertSidecarsWritable(() => effectiveScope, ['aliases']); // #215, as removeAlias
   const rename = (aliases: Record<string, string>): Record<string, string> | null => {
-    if (!(oldName in aliases)) return null;
-    if (newName in aliases) return null;
+    if (!aliasListedIn(aliases, oldName)) return null;
+    if (aliasListedIn(aliases, newName)) return null;
     const next = { ...aliases, [newName]: aliases[oldName] };
     delete next[oldName];
     return next;
@@ -122,30 +194,10 @@ export function renameAlias(oldName: string, newName: string, scope?: Scope  ): 
   return renamed;
 }
 
-// Resolve a key that might be an alias
-// With 'auto' scope: checks project aliases first, then global
+// Resolve a key that might be an alias: the key resolveTypedName gives it.
+// With 'auto' scope: checks project aliases first, then global.
 export function resolveKey(key: string, scope?: Scope  ): string {
-  // Strip trailing colon (CLI tab-completion artifact)
-  const cleanKey = key.replace(/:$/, '');
-  // Use Object.hasOwn so prototype-chain names like "__proto__", "constructor",
-  // and "toString" don't accidentally resolve to inherited properties of the
-  // alias map. Without this guard, resolveKey("__proto__") returned
-  // Object.prototype (an object, not a string), which then crashed downstream
-  // string operations with "path.split is not a function".
-  if (!scope || scope === 'auto') {
-    const merged = loadAliasMapMerged();
-    const resolved = Object.hasOwn(merged, cleanKey) ? merged[cleanKey] : cleanKey;
-    if (resolved !== cleanKey) {
-      debug(`Alias resolved: "${cleanKey}" -> "${resolved}"`);
-    }
-    return resolved;
-  }
-  const aliases = loadAliasMap(scope);
-  const resolved = Object.hasOwn(aliases, cleanKey) ? aliases[cleanKey] : cleanKey;
-  if (resolved !== cleanKey) {
-    debug(`Alias resolved: "${cleanKey}" -> "${resolved}"`);
-  }
-  return resolved;
+  return resolveTypedName(key, scope).key;
 }
 
 // Remove any aliases whose target matches `key` or is a child of `key` (cascade delete).
@@ -161,17 +213,12 @@ export function removeAliasesForKey(key: string, scope?: Scope  ): void {
 }
 
 function removeAliasesFromScope(key: string, scope: 'project' | 'global'): void {
-  const prefix = key + '.';
   const dropPointing = (aliases: Record<string, string>): Record<string, string> | null => {
+    const pointing = aliasesPointingAt(aliases, key);
+    if (pointing.length === 0) return null;
     const next = { ...aliases };
-    let changed = false;
-    for (const [alias, target] of Object.entries(aliases)) {
-      if (target === key || target.startsWith(prefix)) {
-        delete next[alias];
-        changed = true;
-      }
-    }
-    return changed ? next : null;
+    for (const [alias] of pointing) delete next[alias];
+    return next;
   };
   // Nothing points at the key: nothing to write.
   if (dropPointing(loadAliasMap(scope)) === null) return;

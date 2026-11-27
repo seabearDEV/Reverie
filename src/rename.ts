@@ -33,6 +33,7 @@ import { StoreUnreadableError } from './utils/unreadable';
 import { storedSpellingOf } from './utils/entryIdentity';
 import { isValidEntryKey } from './utils/directoryStore';
 import { assertAliasNamesFree } from './utils/aliasNames';
+import { aliasWriteBase, defaultScopeInProject, repointAliases, typedContext, withAlias } from './utils/nameResolver';
 
 /** A rename that cannot go ahead as asked. Nothing was written. */
 export class RenameRefusal extends Error {
@@ -82,7 +83,8 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
   }
 
   const writeScope = resolveScopeForWrite(scope);
-  const fallsThrough = (!scope || scope === 'auto') && writeScope === 'project';
+  const ctx = typedContext(scope);
+  const fallsThrough = defaultScopeInProject(ctx, writeScope);
   let result: RenameResult = { moved: [], flagged: [] };
 
   try {
@@ -186,7 +188,7 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
         setNestedValue(entries, to, values[from]);
         meta[to] = now;
       }
-      const aliasView = fallsThrough && other ? { ...other.data.aliases, ...target.data.aliases } : target.data.aliases;
+      const aliasView = aliasWriteBase(ctx, writeScope, target.data.aliases, other?.data.aliases);
       let aliases = repointAliases(aliasView, source, newKey) ?? target.data.aliases;
       if (newAlias) {
         // #279: not under a name that is an entry's key once the rename is
@@ -290,37 +292,4 @@ function assertNothingUnreadableUnder(oldKey: string, target: LockedStore): void
   if (broken.length > 0) {
     throw new StoreUnreadableError(broken, 'write', `Refusing to rename '${oldKey}' while entry '${broken[0].key}' under it cannot be read`);
   }
-}
-
-/**
- * The alias map with every alias that targets `oldKey`, or a key under it,
- * pointed at the same place under `newKey` — or null when none does. One
- * alias per entry, as setAlias keeps it: an alias already on a new target
- * gives way to the one that moved there.
- */
-function repointAliases(current: Record<string, string>, oldKey: string, newKey: string): Record<string, string> | null {
-  const oldPrefix = oldKey + '.';
-  const updates: [string, string][] = [];
-  for (const [alias, target] of Object.entries(current)) {
-    if (target === oldKey) updates.push([alias, newKey]);
-    else if (target.startsWith(oldPrefix)) updates.push([alias, newKey + target.slice(oldKey.length)]);
-  }
-  if (updates.length === 0) return null;
-  const aliases = { ...current };
-  const newTargets = new Set(updates.map(([, t]) => t));
-  for (const [alias, target] of Object.entries(aliases)) {
-    if (newTargets.has(target)) delete aliases[alias];
-  }
-  for (const [alias, target] of updates) aliases[alias] = target;
-  return aliases;
-}
-
-/** `aliases` with `alias` pointing at `key`, taking the place of the alias `key` had (setAlias's rule). */
-function withAlias(aliases: Record<string, string>, alias: string, key: string): Record<string, string> {
-  const next = { ...aliases };
-  let existing: string | undefined;
-  for (const [name, target] of Object.entries(next)) if (target === key) existing = name;
-  if (existing !== undefined && existing !== alias) delete next[existing];
-  next[alias] = key;
-  return next;
 }

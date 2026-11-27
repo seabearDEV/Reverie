@@ -106,6 +106,7 @@ The hand-written worlds in `fixtures/` run before the random ones, each as a fix
 | `279-global-alias-target` | one alias name in both maps; the global target is flagged |
 | `279-chain-entry-flag` | a flagged chain entry, through `--chain` and `chain: true` |
 | `279-chain-member-alias` | a chain member named after a global flag, aliased by the project |
+| `279-chain-global-target` | one name in both maps, reached as a chain entry and as a chain member: its global target is flagged |
 | `280-global-ref-reads-project` | a global entry's `$(x)` under `-G` and in the default scope |
 | `280-reference-store-gate` | a global entry pulled in by a project entry resolves its own references in the global store |
 | `289-depth-limit-exec-cache` | the #289 reproduction |

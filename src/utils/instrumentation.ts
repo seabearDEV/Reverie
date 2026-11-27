@@ -2,7 +2,7 @@ import path from 'path';
 import { formatWithOptions } from 'node:util';
 import { Scope } from '../store';
 import { getValue, getEntriesFlat } from '../storage';
-import { loadAliases, resolveKey } from '../alias';
+import { aliasTargetListed, resolveTypedName } from '../alias';
 import { sanitizeValue, sanitizeParams, logAudit } from './audit';
 import { logToolCall, classifyOp, TelemetryEntry, TelemetryExtras, extractNamespace, keyIsEntryKey, appendMissPath } from './telemetry';
 import { recordCliWrite, trackCliMissPath } from './sessionState';
@@ -51,11 +51,10 @@ export function captureValue(tool: string, key: string | undefined, scope: Scope
     }
     // Alias operations: capture the alias target by alias name
     if (tool === 'reverie_alias_set' || tool === 'reverie_alias_remove') {
-      const aliases = loadAliases(scope);
-      return aliases[key];
+      return aliasTargetListed(key, scope);
     }
     // Resolve alias before store lookup so audit reflects the actual mutated entry
-    const resolvedKey = resolveKey(key, scope);
+    const resolvedKey = resolveTypedName(key, scope).key;
     const val = getValue(resolvedKey, scope);
     if (val === undefined) return undefined;
     return sanitizeValue(typeof val === 'object' ? JSON.stringify(val) : String(val));
@@ -69,7 +68,7 @@ export function captureValue(tool: string, key: string | undefined, scope: Scope
 export function captureCopySource(sourceKey: string | undefined, scope: Scope): string | undefined {
   if (!sourceKey) return undefined;
   try {
-    const resolved = resolveKey(sourceKey, scope);
+    const resolved = resolveTypedName(sourceKey, scope).key;
     const val = getValue(resolved, scope);
     return val !== undefined
       ? sanitizeValue(typeof val === 'object' ? JSON.stringify(val) : String(val))
