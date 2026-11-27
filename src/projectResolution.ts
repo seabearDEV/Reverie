@@ -18,7 +18,9 @@
  */
 
 import {
+  findProjectFile,
   findProjectFileWithDiagnostic,
+  clearProjectFileCache,
   ResolverDiagnostic,
 } from './utils/paths';
 import type { Scope } from './store';
@@ -64,7 +66,15 @@ export function resolveScopeForWrite(scope: Scope | undefined): Exclude<Scope, '
   if (scope === 'project' || scope === 'global') return scope;
   // scope is undefined or 'auto'
   const { path: projectPath, diagnostic } = findProjectFileWithDiagnostic();
-  if (projectPath) return 'project';
+  if (projectPath) {
+    // This probe is uncached; the store's is cached. In a long-lived process
+    // (the MCP server) a project created since the last lookup is found here
+    // but not by the store, so the pre-flights checked no store while the
+    // first save found the project and wrote it (#294): bring the cache up to
+    // date before anything reads the store.
+    if (findProjectFile() !== projectPath) clearProjectFileCache();
+    return 'project';
+  }
   throw new ProjectResolutionError(diagnostic);
 }
 
