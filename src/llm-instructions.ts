@@ -15,7 +15,7 @@ THE LOOP:
 
 NAMESPACES: project.* commands.* arch.* conventions.* context.* (gotchas) files.* deps.*. Schema + tiers: docs/schema-guide.md.
 
-SCOPE: the .reverie/ project store is the default when present; scope:"global" targets ~/.reverie/store. Writes refuse with PROJECT_UNRESOLVED when no project resolves — run reverie_init or retry with scope:"global". Reads fall through automatically.
+SCOPE: the .reverie/ project store is the default when present; scope:"global" targets ~/.reverie/store. With no project, writes and every scope:"project" call refuse (PROJECT_UNRESOLVED) — run reverie_init or use scope:"global". Unscoped reads fall through.
 
 WARNINGS ARE ACTIONABLE: "[demoted ...]"/"[trimmed ...]" = size budget (reverie_get the keys, or tier:"full"); "warning: ... written N times" = write-amplification (let entries stabilize). Entries tagged [Nd]/[untracked] are freshness-suspect — verify before trusting; reverie_stale audits this.
 
@@ -62,7 +62,7 @@ SCOPE:
 - If a .reverie/ project store directory exists, reads/writes default to the project scope.
 - Use \`--global\` (-G) to target the user's personal global store (~/.reverie/store/).
 - \`rvr get\` with no key shows project entries by default. Add \`--all\` (-A) to see both scopes.
-- If a write fails with error code PROJECT_UNRESOLVED, project resolution failed (no .reverie/ found). Either run \`rvr init\` to create a project store, or retry with \`--global\` if the entry is genuinely user-level. Reads still fall through to global automatically — only writes refuse.
+- If a write fails with error code PROJECT_UNRESOLVED, project resolution failed (no .reverie/ found). Either run \`rvr init\` to create a project store, or retry with \`--global\` if the entry is genuinely user-level. Reads still fall through to global automatically — only writes refuse. \`data export/import/reset -P\` (--project) refuse the same way with no project, reads included.
 
 GUARDRAILS:
 - \`rvr context\` may add "[demoted to index: ...]" / "[trimmed: ...]" notices when the response would exceed the size budget (default 28KB): demoted namespaces fell back to one-line gists, trimmed ones were dropped. Fetch specific entries via \`rvr get <key>\`, or run \`rvr context --tier full\` to bypass the budget. project.*, conventions.*, commands.*, deps.*, and context.next_session are never dropped.

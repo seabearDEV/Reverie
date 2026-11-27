@@ -32,7 +32,7 @@ import {
   setProjectRootOverride,
 } from "./utils/paths";
 import { fileURLToPath } from "url";
-import { findProjectFile, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope } from "./store";
+import { findProjectFile, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope, assertProjectScope } from "./store";
 import { hasConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
 import { renameKey, RenameRefusal } from "./rename";
 import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from "./config";
@@ -60,6 +60,8 @@ import { getBinaryName } from "./utils/binaryName";
 import { recordWrite, formatWriteAmpWarning, writeAmpStore } from "./utils/writeAmp";
 import { AsyncLocalStorage } from "node:async_hooks";
 
+// The scope a tool was given. scope:"project" with no project never reaches a
+// handler: the server.tool wrapper refuses it first (#294, #296).
 function toScope(scopeParam?: string): Scope {
   return (scopeParam ?? 'auto') as Scope;
 }
@@ -158,8 +160,9 @@ ensureDataDirectoryExists();
 setAbsoluteDisplayPaths(true);
 
 // Shared Zod param for the 15 tools that take a data scope. The reverie_reset
-// variant (extra "Ignored for audit/telemetry/miss-paths." note) stays inline.
-const SCOPE_PARAM = z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global)");
+// variant (extra note on the log types) stays inline. "project" with no
+// project is refused by every tool, reads included (#294, #296).
+const SCOPE_PARAM = z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global; \"project\" with no project refuses)");
 
 // Human labels for import/reset section types.
 const TYPE_LABELS = { all: "Entries, aliases, and confirm keys", entries: "Entries", aliases: "Aliases", confirm: "Confirm keys" } as const;
@@ -311,11 +314,24 @@ server.tool = ((...args: any[]) => {
     const scope = configTool ? 'global' : toScope(params.scope as string | undefined);
     const resolvedScope: 'project' | 'global' = getEffectiveScope(scope);
 
+    // #294, #296: scope:"project" with no project is refused before anything
+    // reads, writes or runs — the handler, and the alias and before-value
+    // reads below. It used to reach the global store while some checks looked
+    // at the absent project store. Thrown in the try below, so the refusal is
+    // rendered and logged as any project-resolution refusal is. The store
+    // refuses too (resolveStore), with the same answer.
+    let scopeRefusal: Error | undefined;
+    if (!configTool && params.scope === 'project') {
+      try { assertProjectScope('project'); } catch (err) { scopeRefusal = err instanceof Error ? err : new Error(String(err)); }
+    }
+
     // Resolve alias for audit trail. reverie_copy is special-cased: extractKey
     // returns dest for the audit-key field, but the alias that matters is the
     // source alias (dest is usually a new canonical key, not an alias). #94.
     let aliasResolved: string | undefined;
-    if (name === 'reverie_copy') {
+    if (scopeRefusal !== undefined) {
+      // Refused: nothing is read.
+    } else if (name === 'reverie_copy') {
       const source = params.source as string | undefined;
       if (source) {
         try {
@@ -344,7 +360,9 @@ server.tool = ((...args: any[]) => {
     // Capture before-value for writes
     let before: string | undefined;
     let copySourceValue: string | undefined;
-    if (isWrite && !BULK_OPS.has(name)) {
+    if (scopeRefusal !== undefined) {
+      // Refused: nothing is read.
+    } else if (isWrite && !BULK_OPS.has(name)) {
       before = captureValue(name, key, scope);
       if (name === 'reverie_copy') {
         copySourceValue = captureCopySource(params.source as string | undefined, scope);
@@ -361,6 +379,7 @@ server.tool = ((...args: any[]) => {
     const guardrailSignals: GuardrailSignals = {};
     const unreadableNamed = new Set<string>();
     try {
+      if (scopeRefusal !== undefined) throw scopeRefusal;
       result = await guardrailStorage.run(guardrailSignals, () => origHandler(params, extra));
       if (result && typeof result === 'object' && 'isError' in result && (result as { isError: boolean }).isError) {
         success = false;
@@ -529,7 +548,8 @@ server.tool(
       if (alias) {
         setAlias(alias, resolved, scope);
       }
-      // Surface where the write actually landed.
+      // Surface where the write actually landed. scope:"project" means the
+      // project store: with no project the call was refused (#294).
       const projectFile = findProjectFile();
       const wroteTo: 'project' | 'global' =
         scope === 'project' ? 'project' :
@@ -723,7 +743,7 @@ server.tool(
       }
       return textResponse(Object.keys(flat).join("\n"));
     } catch (err) {
-      if (err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
       return errorResponse(`Error retrieving entry: ${String(err)}`);
     }
   }
@@ -980,7 +1000,7 @@ server.tool(
       }
       return textResponse(results.join("\n"));
     } catch (err) {
-      if (err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
       return errorResponse(`Error searching: ${String(err)}`);
     }
   }
@@ -1045,7 +1065,7 @@ server.tool(
       const lines = entries.map(([a, t]) => `${a} -> ${t}`);
       return textResponse(lines.join("\n"));
     } catch (err) {
-      if (err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
       return errorResponse(`Error listing aliases: ${String(err)}`);
     }
   }
@@ -1327,7 +1347,7 @@ server.tool(
       });
       return textResponse(JSON.stringify(wrapped, null, indent));
     } catch (err) {
-      if (err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
       return errorResponse(`Error exporting: ${String(err)}`);
     }
   }
@@ -1587,7 +1607,7 @@ server.tool(
   "Wipe entries/aliases/confirm (type:'all') or clear audit/telemetry/miss-path logs. Destructive and scope-wide — reverie_export first for a backup. Single entries: reverie_remove.",
   {
     type: z.enum(["entries", "aliases", "confirm", "all", "audit", "telemetry", "miss-paths"]).describe("What to reset ('all' covers entries+aliases+confirm, not logs)"),
-    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global). Ignored for audit/telemetry/miss-paths."),
+    scope: z.enum(["project", "global"]).optional().describe("Data scope (omit for auto: project if available, else global; \"project\" with no project refuses). Logs are global; scope is not used for them."),
   },
   async ({ type, scope: scopeParam }) => {
     try {
@@ -1655,7 +1675,7 @@ server.tool(
       // writes will land.
       const headerLine = hasProject
         ? `[project: ${projectFile}]`
-        : `[project: NONE — auto-scope writes will fall through to global. Pin RVR_PROJECT in the MCP server env, or pass scope:"project"/"global" explicitly on writes.]`;
+        : `[project: NONE — writes need scope:"global" (without it they refuse, as does scope:"project"). Pin RVR_PROJECT in the MCP server env to use a project store.]`;
 
       // Size projection (#127): answer "how big is my bootstrap" without
       // paying for the bootstrap. Estimates handoff/alias/footer overhead
@@ -1740,7 +1760,7 @@ server.tool(
 
       return textResponse(lines.join("\n"));
     } catch (err) {
-      if (err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
       return errorResponse(`Error loading context: ${String(err)}`);
     }
   }
@@ -1781,7 +1801,7 @@ server.tool(
       });
       return textResponse(`${stale.length} entries not updated in ${threshold}+ days:\n${lines.join('\n')}`);
     } catch (err) {
-      if (err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
+      if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
       return errorResponse(`Error checking staleness: ${String(err)}`);
     }
   }
