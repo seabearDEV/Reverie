@@ -1,0 +1,56 @@
+{
+  "about": "A chain whose later member reaches a flagged entry through $(...): the gate walks every member's references, not only the first's, on the CLI (--chain) and over MCP (chain: true) (#158, #279).",
+  "stores": {
+    "project": {
+      "entries": {}
+    },
+    "global": {
+      "entries": {
+        "ch": "a b",
+        "a": "echo RVM1x >> \"$RLOG\"",
+        "b": "echo RVM2x $(fl) >> \"$RLOG\"",
+        "fl": "echo RVM3x >> \"$RLOG\""
+      },
+      "confirm": {
+        "fl": true
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "global",
+      "a"
+    ],
+    "2": [
+      "global",
+      "b"
+    ],
+    "3": [
+      "global",
+      "fl"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "mcp",
+      "cwd": "out",
+      "tool": "reverie_run",
+      "args": {
+        "key": "ch",
+        "chain": true
+      }
+    },
+    {
+      "surface": "cli",
+      "cwd": "out",
+      "kind": "run",
+      "keys": [
+        "ch"
+      ],
+      "global": false,
+      "chain": true,
+      "yes": false,
+      "mode": "json"
+    }
+  ]
+}

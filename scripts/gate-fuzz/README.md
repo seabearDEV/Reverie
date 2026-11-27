@@ -23,7 +23,7 @@ The rules it models:
 - Aliases resolve one hop, by exact name.
   - The default scope layers the project's map over the global one.
   - `-G` and MCP `scope: "global"` read the global map only.
-  - MCP `scope: "project"` reads the project's map only, and outside a project it falls back to the global store.
+  - MCP `scope: "project"` reads the project's map only. Outside a project it refuses (#298); the model still treats it as reading the global store, which no rule misjudges, because a refusal runs nothing.
 - A run gates every name it looks up: as typed, its alias target, and the global alias target when project aliases were in play. That covers:
   - the key, and each `a:b` segment;
   - a `--chain` or `chain: true` entry, and each member;
@@ -99,6 +99,7 @@ The hand-written worlds in `fixtures/` run before the random ones, each as a fix
 |---|---|
 | `158-reference-gate` | an unflagged entry reaches a flagged one through `$(…)` and `${…}` |
 | `158-default-body` | a `:-` body runs a flagged command when its key is missing |
+| `158-chain-member-reference` | a later chain member reaches a flagged entry through `$(…)` |
 | `241-list-value-not-true` | a project `false` under a name the global list flags |
 | `279-alias-named-after-flag` | a project alias named after a flagged key, typed and referenced |
 | `279-alias-target-gate` | an alias to a flagged key |
@@ -155,4 +156,5 @@ A rule that fires on a correct build is a fuzzer bug, or a rule that changed. Re
 - The exec output check (#242) is reached only incidentally.
 - The `confirm_token` fingerprint (#243) is exercised only with an unchanged world. A token redeemed after the world changes between preview and redeem is not generated.
 - The write mix checks store invariants and flag retention. It does not check what each write should have done.
+- No world creates a project mid-session or holds a legacy `.codexcli.json`, so the fail-closed check for a project the process found but isn't using (#298) is never reached. Changes to project resolution need their own main-versus-branch comparison of which runs ask.
 - Filesystem folding beyond case and `ſ` is not generated: ligatures, NFD and the sharp s. `scripts/gate-differential/` covers those for the list-changing commands.

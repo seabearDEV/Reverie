@@ -363,8 +363,8 @@ export function topLevel(w, inv) {
     return why ? fail(why) : { ok: true, names, roots };
   }
   // MCP reverie_run: the key is never split on ':'. Scope "project" with no
-  // project falls back to the global store (store.ts resolveStore), lookups
-  // and alias map alike; the gate still adds the global alias target.
+  // project refuses since #298; modelling it as the global store, lookups and
+  // alias map alike, is safe, because a refusal runs nothing.
   const view = inv.scope === 'project' && !w.inProject ? 'global' : (inv.scope ?? 'auto');
   const projectAliases = inv.scope !== 'global';
   const resolved = resolve(w, inv.key, view);
