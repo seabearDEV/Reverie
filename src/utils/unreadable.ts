@@ -356,7 +356,8 @@ export function listUnreadableFiles(sourceId?: string): UnreadableFile[] {
  * If it throws, the write has no resolvable target and will refuse on its own
  * with the precise error (PROJECT_UNRESOLVED) — this check stays out of the
  * way. Scans that store first. A no-op when no such store is registered (a
- * mocked store).
+ * mocked store). 'project' with no project store reports nothing either: the
+ * store refuses that write before it writes anything (#294).
  */
 export function assertSidecarsWritable(target: () => string, kinds: ('aliases' | 'confirm')[]): void {
   let sourceId: string;

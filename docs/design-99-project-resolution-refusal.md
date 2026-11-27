@@ -4,6 +4,15 @@
 **Status:** SHIPPED 2026-05-05 via [PR #104](https://github.com/seabearDEV/reverie/pull/104) (merge `d9126b4`)
 **Driving evidence:** `docs/investigation-bootstrap-overflow-2026-05-05.md`, `docs/dataset-2026-05-05-findings.md`
 **Playbook:** mirrors the #91 design-first treatment
+**Amended:** 2026-11-26 for [#294](https://github.com/seabearDEV/reverie/issues/294) and [#296](https://github.com/seabearDEV/reverie/issues/296) — see "Explicit project scope with no project" below
+
+## Explicit project scope with no project (#294, #296)
+
+This design refused `auto + null` and left an explicit `scope: "project"` with no project to "current behavior": the store fell back to the global store. That fallback was the bug in #294 and #296. The checks before a write looked at the absent project store while the write landed in the global one, so `data reset -P` outside a project emptied the global store with no backup (the project-scope backup found no project and made none), `data import -P` replaced it, and MCP `reverie_set` with an alias wrote the entry and then refused the alias.
+
+Owner decision, 2026-11-26: **an explicit project scope with no project refuses everywhere.** Every CLI command and MCP tool given `-P` / `scope: "project"` outside a project returns `PROJECT_UNRESOLVED` and changes nothing: writes, data commands, reads and `reverie_run` alike. The auto scope is unchanged (reads fall through to global, writes refuse as below), and so is `-G` / `scope: "global"`.
+
+"No project" is decided by `getProjectStore()`, the function every load and save uses, so the refusal and the write target cannot disagree. It refuses in four places, each before any side effect: `resolveStore('project')` (and `updateUnderBothLocks('project')`), the one path every load and save takes; the MCP `server.tool` wrapper, before the handler and its pre-reads; `resolveScope` in the CLI data commands, before the prompt and the backup; and `createAutoBackup`, which used to return `null` for it. The refusal is `ProjectResolutionError` with `requested: 'project'`: same code and diagnostic, a message saying the project scope was explicit and nothing was changed. `resolveScopeForWrite('project')` still returns `'project'`; the store refuses it.
 
 ## Problem
 
@@ -160,7 +169,7 @@ The diagnostic capture itself is straightforward — the four resolver steps in 
 | Input scope | findProjectFile | Expected |
 |---|---|---|
 | `'project'` | resolves | returns `'project'` |
-| `'project'` | null | returns `'project'` (caller responsible — current behavior preserved) |
+| `'project'` | null | returns `'project'` (the store then refuses it — amended for #294/#296, see above) |
 | `'global'` | resolves | returns `'global'` |
 | `'global'` | null | returns `'global'` |
 | `undefined` | resolves | returns `'project'` |
