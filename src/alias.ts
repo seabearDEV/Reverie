@@ -1,9 +1,43 @@
 import { debug } from './utils/debug';
-import { Scope, loadAliasMap, saveAliasMap, updateAliasMap, updateStore, loadAliasMapMerged } from './store';
+import { Scope, loadAliasMap, saveAliasMap, updateAliasMap, updateStore, loadAliasMapMerged, hasProjectStore } from './store';
 import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/aliasNames';
 import { isValidEntryKey } from './utils/directoryStore';
-import { resolveScopeForWrite } from './projectResolution';
+import { resolveScopeForWrite, unusedProjectStore } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
+import { type AliasMap, type NameContext, type NameView, type Resolution, resolveName, typedContext } from './utils/nameResolver';
+
+/**
+ * The resolver's view of the stores as they stand now (utils/nameResolver).
+ * Each part is loaded when the resolver first asks for it, and only then: a
+ * lookup with -G never touches the project store, nor a default-scope
+ * lookup outside a project its alias map. A new view for every question,
+ * so a lookup never answers from a map read before something else wrote.
+ */
+export function nameView(): NameView {
+  let has: boolean | undefined;
+  let project: AliasMap | undefined;
+  let global: AliasMap | undefined;
+  let unused: { path: string | undefined } | undefined;
+  return {
+    get hasProjectStore() { return has ??= hasProjectStore(); },
+    // Project scope with no project store throws the store's refusal (#294).
+    get projectAliases() { return project ??= loadAliasMap('project'); },
+    get globalAliases() { return global ??= loadAliasMap('global'); },
+    get unusedProject() { return (unused ??= { path: unusedProjectStore() }).path; },
+  };
+}
+
+/** What `written` means in `ctx`, as the stores stand now. */
+export function resolveNameNow(ctx: NameContext, written: string): Resolution {
+  const resolution = resolveName(nameView(), ctx, written);
+  if (resolution.key !== resolution.name) debug(`Alias resolved: "${resolution.name}" -> "${resolution.key}"`);
+  return resolution;
+}
+
+/** What a name typed with `scope` (CLI -G, an MCP scope; undefined or 'auto': the default) means. */
+export function resolveTypedName(written: string, scope?: Scope): Resolution {
+  return resolveNameNow(typedContext(scope), written);
+}
 
 
 export function loadAliases(scope?: Scope  ): Record<string, string> {
@@ -122,30 +156,10 @@ export function renameAlias(oldName: string, newName: string, scope?: Scope  ): 
   return renamed;
 }
 
-// Resolve a key that might be an alias
-// With 'auto' scope: checks project aliases first, then global
+// Resolve a key that might be an alias: the key resolveTypedName gives it.
+// With 'auto' scope: checks project aliases first, then global.
 export function resolveKey(key: string, scope?: Scope  ): string {
-  // Strip trailing colon (CLI tab-completion artifact)
-  const cleanKey = key.replace(/:$/, '');
-  // Use Object.hasOwn so prototype-chain names like "__proto__", "constructor",
-  // and "toString" don't accidentally resolve to inherited properties of the
-  // alias map. Without this guard, resolveKey("__proto__") returned
-  // Object.prototype (an object, not a string), which then crashed downstream
-  // string operations with "path.split is not a function".
-  if (!scope || scope === 'auto') {
-    const merged = loadAliasMapMerged();
-    const resolved = Object.hasOwn(merged, cleanKey) ? merged[cleanKey] : cleanKey;
-    if (resolved !== cleanKey) {
-      debug(`Alias resolved: "${cleanKey}" -> "${resolved}"`);
-    }
-    return resolved;
-  }
-  const aliases = loadAliasMap(scope);
-  const resolved = Object.hasOwn(aliases, cleanKey) ? aliases[cleanKey] : cleanKey;
-  if (resolved !== cleanKey) {
-    debug(`Alias resolved: "${cleanKey}" -> "${resolved}"`);
-  }
-  return resolved;
+  return resolveTypedName(key, scope).key;
 }
 
 // Remove any aliases whose target matches `key` or is a child of `key` (cascade delete).
