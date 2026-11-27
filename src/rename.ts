@@ -33,7 +33,7 @@ import { StoreUnreadableError } from './utils/unreadable';
 import { storedSpellingOf } from './utils/entryIdentity';
 import { isValidEntryKey } from './utils/directoryStore';
 import { assertAliasNamesFree } from './utils/aliasNames';
-import { aliasWriteBase, readsFallThrough, repointAliases, typedContext, withAlias } from './utils/nameResolver';
+import { aliasWriteBase, defaultScopeInProject, repointAliases, typedContext, withAlias } from './utils/nameResolver';
 
 /** A rename that cannot go ahead as asked. Nothing was written. */
 export class RenameRefusal extends Error {
@@ -84,7 +84,7 @@ export function renameKey(oldKey: string, newKey: string, scope: Scope | undefin
 
   const writeScope = resolveScopeForWrite(scope);
   const ctx = typedContext(scope);
-  const fallsThrough = readsFallThrough(ctx, writeScope);
+  const fallsThrough = defaultScopeInProject(ctx, writeScope);
   let result: RenameResult = { moved: [], flagged: [] };
 
   try {

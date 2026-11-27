@@ -4,7 +4,7 @@ import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, unusedProjectStore } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
-import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasListedIn, aliasWriteBase, aliasWriteLayers, aliasesSeen, referenceContext, resolveName, typedContext } from './utils/nameResolver';
+import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasListedIn, aliasWriteBase, aliasesPointingAt, aliasesSeen, defaultScopeInProject, referenceContext, resolveName, typedContext } from './utils/nameResolver';
 
 /**
  * The resolver's view of the stores as they stand now (utils/nameResolver).
@@ -76,7 +76,7 @@ export function updateAliases(
 ): void {
   const effectiveScope = resolveScopeForWrite(scope);
   const ctx = typedContext(scope);
-  const below = aliasWriteLayers(ctx, effectiveScope) ? loadAliasMap('global') : undefined;
+  const below = defaultScopeInProject(ctx, effectiveScope) ? loadAliasMap('global') : undefined;
   updateAliasMap(own => fn(aliasWriteBase(ctx, effectiveScope, own, below)), effectiveScope);
 }
 
@@ -159,10 +159,10 @@ export function removeAlias(alias: string, scope?: Scope  ): boolean {
   // #215: an unreadable map loads as empty, and "no such alias" is the wrong
   // answer about a file that could not be read. Refuse instead.
   assertSidecarsWritable(() => effectiveScope, ['aliases']);
-  if (!(alias in loadAliasMap(effectiveScope))) return false;
+  if (!aliasListedIn(loadAliasMap(effectiveScope), alias)) return false;
   // #254: removed from the map as it stands under the lock.
   return changeAliasMap(effectiveScope, aliases => {
-    if (!(alias in aliases)) return null;
+    if (!aliasListedIn(aliases, alias)) return null;
     const next = { ...aliases };
     delete next[alias];
     return next;
@@ -174,8 +174,8 @@ export function renameAlias(oldName: string, newName: string, scope?: Scope  ): 
   const effectiveScope = resolveScopeForWrite(scope);
   assertSidecarsWritable(() => effectiveScope, ['aliases']); // #215, as removeAlias
   const rename = (aliases: Record<string, string>): Record<string, string> | null => {
-    if (!(oldName in aliases)) return null;
-    if (newName in aliases) return null;
+    if (!aliasListedIn(aliases, oldName)) return null;
+    if (aliasListedIn(aliases, newName)) return null;
     const next = { ...aliases, [newName]: aliases[oldName] };
     delete next[oldName];
     return next;
@@ -213,17 +213,12 @@ export function removeAliasesForKey(key: string, scope?: Scope  ): void {
 }
 
 function removeAliasesFromScope(key: string, scope: 'project' | 'global'): void {
-  const prefix = key + '.';
   const dropPointing = (aliases: Record<string, string>): Record<string, string> | null => {
+    const pointing = aliasesPointingAt(aliases, key);
+    if (pointing.length === 0) return null;
     const next = { ...aliases };
-    let changed = false;
-    for (const [alias, target] of Object.entries(aliases)) {
-      if (target === key || target.startsWith(prefix)) {
-        delete next[alias];
-        changed = true;
-      }
-    }
-    return changed ? next : null;
+    for (const [alias] of pointing) delete next[alias];
+    return next;
   };
   // Nothing points at the key: nothing to write.
   if (dropPointing(loadAliasMap(scope)) === null) return;

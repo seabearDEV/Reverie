@@ -92,10 +92,11 @@ export function referenceContext(from: StoreName): NameContext {
 
 /**
  * The context of a member of a chain entry (`--chain`, `chain: true`) that
- * `chain` resolved and that was found in `chainStore`. A chain's members are
- * references in it, so a global chain runs global entries only (#280).
- * Otherwise they resolve as the chain's own name did — for MCP scope
- * "project", through the project's map.
+ * `chain` resolved and that was found in `chainStore`. A global chain's
+ * members are global names, so a global chain runs global entries only
+ * (#280). A project chain's members are not resolved as references: they
+ * take the chain's own typed context — the default view, or for MCP scope
+ * "project" the project's map alone.
  */
 export function chainMemberContext(chain: NameContext, chainStore: StoreName | undefined): NameContext {
   return chainStore === 'global' ? typedContext('global') : chain;
@@ -217,11 +218,12 @@ export function aliasListedIn(map: AliasMap, name: string): boolean {
 }
 
 /**
- * Whether a default-view read of an entry key falls through from the
- * project store to the global one for a write command in `ctx` that lands
- * in `written` (a rename's source, and its "already exists" check).
+ * A write command in the default scope whose write lands in the project:
+ * its reads of an entry key fall through to the global store (a rename's
+ * source and its "already exists" check), and its alias writes lay the
+ * global map under the project's (aliasWriteBase, #260 kept).
  */
-export function readsFallThrough(ctx: NameContext, written: StoreName): boolean {
+export function defaultScopeInProject(ctx: NameContext, written: StoreName): boolean {
   return ctx.kind === 'typed' && ctx.scope === 'auto' && written === 'project';
 }
 
@@ -230,15 +232,16 @@ export function readsFallThrough(ctx: NameContext, written: StoreName): boolean 
  * default scope inside a project, the project's map laid over the global
  * one — and all of it is written to the project, copying every global
  * alias there. Any other write starts from its own store's map. `below`:
- * the global map, read when this says it is needed (aliasWriteLayers).
+ * the global map, read when defaultScopeInProject says it is needed.
  */
 export function aliasWriteBase(ctx: NameContext, written: StoreName, own: AliasMap, below: AliasMap | undefined): AliasMap {
-  return aliasWriteLayers(ctx, written) && below !== undefined ? { ...below, ...own } : own;
+  return defaultScopeInProject(ctx, written) && below !== undefined ? { ...below, ...own } : own;
 }
 
-/** Whether an alias write in `ctx` landing in `written` lays the global map under the store's own (aliasWriteBase). */
-export function aliasWriteLayers(ctx: NameContext, written: StoreName): boolean {
-  return ctx.kind === 'typed' && ctx.scope === 'auto' && written === 'project';
+/** The aliases in `map` that point at `key` or at a key under it, as [alias, target], in map order. */
+export function aliasesPointingAt(map: AliasMap, key: string): [string, string][] {
+  const prefix = `${key}.`;
+  return Object.entries(map).filter(([, target]) => target === key || target.startsWith(prefix));
 }
 
 /**
