@@ -86,15 +86,22 @@ function expectExplicitRefusal(e: Envelope, status: number | null): void {
   expect(status).toBe(1);
 }
 
-function mcpCode(r: McpToolResult): string | undefined {
+interface McpRefusal { code?: string; requested?: string; unusable?: string }
+
+function mcpBlock(r: McpToolResult): McpRefusal {
   const block = r.content[1]?.text;
-  if (!block) return undefined;
-  return (JSON.parse(block.replace(/^```json\n/, '').replace(/\n```$/, '')) as { code?: string }).code;
+  if (!block) return {};
+  return JSON.parse(block.replace(/^```json\n/, '').replace(/\n```$/, '')) as McpRefusal;
+}
+
+function mcpCode(r: McpToolResult): string | undefined {
+  return mcpBlock(r).code;
 }
 
 function expectMcpExplicitRefusal(r: McpToolResult, what: string): void {
   expect(r.isError, what).toBe(true);
   expect(mcpCode(r), what).toBe('PROJECT_UNRESOLVED');
+  expect(mcpBlock(r).requested, what).toBe('project');
   expect(r.content[0].text, what).toContain(EXPLICIT);
 }
 
@@ -405,46 +412,156 @@ describe('MCP scope:"project" inside a project: unchanged', () => {
   });
 });
 
-// A long-lived server caches "no project". A project created after that —
-// `rvr init` in another shell — must be the one a write uses, and the one its
-// checks look at: on main both writes below went to the global store, and
-// with the store refusing only, an auto write's alias pre-flight checked no
-// store while its save found the project.
-describe('MCP: a project created while the server runs', () => {
+// A long-lived server looks for the project once and keeps the answer; the
+// write path asks again, uncached. When the two disagree — a project created
+// after a server started outside one — an unscoped write used to resolve to
+// the project there and land in the global store here: its checks and its
+// saves looked at different stores (#294). It refuses now and changes
+// nothing; unscoped reads still read the global store, as before.
+describe('MCP: a server that started outside a project, after one is created', () => {
   let session: McpSession | undefined;
   afterEach(() => { session?.close(); session = undefined; });
 
-  it('unscoped and scope:"project" writes land in it; the global store is untouched', async () => {
-    const before = globalState();
-    session = await openMcpSession({ cwd, env: env() });
-    expect((await session.call('reverie_get', { key: 'ent.a' })).content[0].text).toBe('ent.a: hello');
-    fs.mkdirSync(path.join(cwd, '.reverie'));
-    // scope:"project" first: the up-front check is what must find it.
-    const proj = await session.call('reverie_set', { key: 'n.proj', value: 'v', scope: 'project' });
-    expect(proj.isError, proj.content[0].text).toBeFalsy();
-    const auto = await session.call('reverie_set', { key: 'n.auto', value: 'v' });
-    expect(auto.isError, auto.content[0].text).toBeFalsy();
-    expect(auto.content[0].text).toContain('→ project');
-    expect(fs.existsSync(path.join(cwd, '.reverie', 'n.auto.json'))).toBe(true);
-    expect(fs.existsSync(path.join(cwd, '.reverie', 'n.proj.json'))).toBe(true);
-    expect(globalState()).toEqual(before);
-  });
-
-  it('a write refused for its unreadable alias map writes nothing there (#294)', async () => {
-    const before = globalState();
+  it('unscoped writes refuse and change nothing; reads as before; scope:"project" refuses; scope:"global" works', async () => {
     session = await openMcpSession({ cwd, env: env() });
     expect((await session.call('reverie_get', { key: 'ent.a' })).content[0].text).toBe('ent.a: hello');
     const store = path.join(cwd, '.reverie');
     fs.mkdirSync(store);
-    fs.writeFileSync(path.join(store, '_aliases.json'), '[]');
-    // The unscoped write first: its own resolution is what must find it.
-    for (const [key, scope] of [['n.auto', undefined], ['n.proj', 'project']] as const) {
-      const r = await session.call('reverie_set', { key, value: 'v', alias: 'zz', ...(scope && { scope }) });
-      expect(r.isError, key).toBe(true);
-      expect(mcpCode(r), key).toBe('STORE_UNREADABLE');
-      expect(fs.existsSync(path.join(store, `${key}.json`)), key).toBe(false);
+    fs.writeFileSync(path.join(store, '_aliases.json'), '[]');   // unreadable: the #294 trigger
+    // A project entry an unscoped copy must not overwrite, and one a remove must not reach.
+    fs.writeFileSync(path.join(store, 'ent.c.json'), JSON.stringify({ value: 'keep', meta: { created: 1, updated: 1 } }));
+    const before = { global: globalState(), project: snapshot(store) };
+
+    const unscoped: [string, Record<string, unknown>][] = [
+      ['reverie_set', { key: 'n.x', value: 'v' }],
+      ['reverie_set', { key: 'n.y', value: 'v', alias: 'zz' }],
+      ['reverie_copy', { source: 'ent.a', dest: 'ent.c' }],
+      ['reverie_remove', { key: 'y' }],
+      ['reverie_alias_set', { alias: 'q', key: 'ent.b' }],
+      ['reverie_import', { data: { 'ent.b': 'q' }, type: 'aliases' }],
+      ['reverie_reset', { type: 'entries' }],
+    ];
+    for (const [tool, args] of unscoped) {
+      const r = await session.call(tool, args);
+      const what = `${tool} ${JSON.stringify(args)}`;
+      expect(r.isError, what).toBe(true);
+      expect(mcpBlock(r), what).toMatchObject({ code: 'PROJECT_UNRESOLVED', requested: 'auto', unusable: store });
+      expect(r.content[0].text, what).toContain('restart the server');
     }
-    expect(fs.readFileSync(path.join(store, '_aliases.json'), 'utf8')).toBe('[]');
+    const explicit = await session.call('reverie_set', { key: 'n.p', value: 'v', scope: 'project' });
+    expect(explicit.isError).toBe(true);
+    expect(mcpBlock(explicit)).toMatchObject({ code: 'PROJECT_UNRESOLVED', requested: 'project', unusable: store });
+    expect({ global: globalState(), project: snapshot(store) }).toEqual(before);
+
+    // Unscoped reads: the global store, as the server has seen it all along.
+    expect((await session.call('reverie_get', { key: 'ent.a' })).content[0].text).toBe('ent.a: hello');
+    expect((await session.call('reverie_get', { key: 'y' })).content[0].text).toBe('ent.a: hello');
+    const g = await session.call('reverie_set', { key: 'n.g', value: 'v', scope: 'global' });
+    expect(g.isError, g.content[0].text).toBeFalsy();
+    expect(fs.existsSync(path.join(dataDir, 'store', 'n.g.json'))).toBe(true);
+    expect(snapshot(store)).toEqual(before.project);
+  });
+});
+
+// #294 review: a legacy `.codexcli.json` that cannot be migrated is found by
+// the resolver but gives the store nothing. The default scope reads the
+// global store, as before; a write resolves to no store and refuses.
+describe('an unmigratable legacy .codexcli.json', () => {
+  beforeEach(() => { fs.writeFileSync(path.join(cwd, '.codexcli.json'), '{bad'); });
+
+  it('CLI: reads, -G and an alias go to the global store; unscoped and -P writes refuse', () => {
+    expect(JSON.stringify(json(['get', 'ent.a']).envelope.result)).toContain('hello');
+    expect(JSON.stringify(json(['get']).envelope.result)).toContain('commands.log');
+    expect(json(['run', 'commands.log']).envelope.ok).toBe(true);
+    expect(fs.readFileSync(runLog, 'utf8')).toBe('ran\n');
+    const g = json(['set', '-G', 'k.v', 'val', '-a', 'al']);
+    expect(g.envelope.ok, JSON.stringify(g.envelope.error)).toBe(true);
+    expect(json(['find', 'hello']).envelope.ok).toBe(true);
+
+    const before = globalState();
+    const auto = json(['set', 'x.y', 'v']);
+    expect(auto.envelope.error?.code).toBe('PROJECT_UNRESOLVED');
+    expect(auto.envelope.error?.message).toContain('.codexcli.json');
+    expect(json(['data', 'reset', 'entries', '-P', '--force']).envelope.error?.code).toBe('PROJECT_UNRESOLVED');
     expect(globalState()).toEqual(before);
+    expect(fs.readFileSync(path.join(cwd, '.codexcli.json'), 'utf8')).toBe('{bad');
+  });
+
+  it('MCP: unscoped reads and the bootstrap read the global store', async () => {
+    const session = await openMcpSession({ cwd, env: env() });
+    try {
+      expect((await session.call('reverie_get', { key: 'ent.a' })).content[0].text).toBe('ent.a: hello');
+      expect((await session.call('reverie_get', {})).content[0].text).toContain('ent.b');
+      const ctx = await session.call('reverie_context', {});
+      expect(ctx.isError, ctx.content[0].text).toBeFalsy();
+      expect(ctx.content[0].text).toContain('ent.b');
+      const before = globalState();
+      expect(mcpCode(await session.call('reverie_set', { key: 'm.x', value: 'v' }))).toBe('PROJECT_UNRESOLVED');
+      expect(mcpCode(await session.call('reverie_get', { key: 'ent.a', scope: 'project' }))).toBe('PROJECT_UNRESOLVED');
+      expect(globalState()).toEqual(before);
+    } finally {
+      session.close();
+    }
+  });
+});
+
+// #294 review: init where the store it would create is not one this process
+// would use. Its seeds went to the global store; then, half-way, refused.
+describe('rvr init where its store would not be used', () => {
+  const cases: [string, Record<string, string>][] = [
+    ['RVR_NO_PROJECT', { RVR_NO_PROJECT: '1' }],
+    ['an RVR_PROJECT naming no store', { RVR_PROJECT: path.join(os.tmpdir(), 'reverie-no-such-project') }],
+  ];
+  for (const [label, extra] of cases) {
+    it(`${label}: refused before anything is created`, () => {
+      const before = globalState();
+      const r = spawnSync('bun', [CLI, '--json', 'init'], { cwd, env: env(extra), input: '' });
+      const e = JSON.parse(r.stdout.toString()) as Envelope;
+      expect(e.error?.code).toBe('PROJECT_UNRESOLVED');
+      expect(e.error?.message).toContain('Nothing was created');
+      expect(e.error?.message).not.toContain(EXPLICIT);
+      expect(r.status).toBe(1);
+      expect(fs.readdirSync(cwd)).toEqual([]);
+      expect(globalState()).toEqual(before);
+    });
+  }
+
+  it('a symlinked .reverie: refused, nothing created or seeded', () => {
+    const elsewhere = path.join(root, 'elsewhere');
+    fs.mkdirSync(elsewhere);
+    fs.symlinkSync(elsewhere, path.join(cwd, '.reverie'));
+    const before = globalState();
+    const { envelope, status } = json(['init']);
+    expect(envelope.error?.code).toBe('INVALID_INPUT');
+    expect(envelope.error?.message).toContain('symlink');
+    expect(status).toBe(1);
+    expect(fs.readdirSync(cwd)).toEqual(['.reverie']);
+    expect(fs.readdirSync(elsewhere)).toEqual([]);
+    expect(globalState()).toEqual(before);
+  });
+
+  it('a plain init still works', () => {
+    const { envelope } = json(['init', '--no-claude', '--no-agents']);
+    expect(envelope.ok, JSON.stringify(envelope.error)).toBe(true);
+    expect(fs.existsSync(path.join(cwd, '.reverie', 'context.initialized.json'))).toBe(true);
+  });
+});
+
+describe('CLI data commands: the order of their refusals', () => {
+  it('an invalid type is INVALID_INPUT before -P is looked at', () => {
+    expect(json(['data', 'reset', 'bogus', '-P', '--force']).envelope.error?.code).toBe('INVALID_INPUT');
+    expect(json(['data', 'export', 'bogus', '-P']).envelope.error?.code).toBe('INVALID_INPUT');
+    expect(json(['data', 'import', 'bogus', path.join(root, 'nope.json'), '-P']).envelope.error?.code).toBe('INVALID_INPUT');
+  });
+
+  it('the -P refusal reads the same from export, import and reset', () => {
+    const f = path.join(root, 'imp.json');
+    fs.writeFileSync(f, '{}');
+    const messages = [
+      json(['data', 'export', 'entries', '-P']),
+      json(['data', 'import', 'entries', f, '-P', '--force']),
+      json(['data', 'reset', 'entries', '-P', '--force']),
+    ].map(r => r.envelope.error?.message);
+    for (const m of messages) expect(m?.startsWith('Project scope was requested explicitly')).toBe(true);
   });
 });
