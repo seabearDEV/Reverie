@@ -2,7 +2,7 @@
 
 > **Use `scripts/gate-fuzz/` for the run gate itself.** This harness never runs the code that decides a run. `probe.mjs` rebuilds the gate expression from each build's shared modules and evaluates that. A break in `runKeys` (`src/commands/entries.ts`) or `runGated` (`src/mcp-server.ts`) is therefore invisible to it: a build whose reference gate was a no-op scored 0 hits in 120 trials (#290). It also covers no `--chain` and no MCP, and it finds only differences between two builds.
 >
-> The end-to-end fuzzer runs the built CLI and MCP server and scores on what actually ran, against its own model of the rules. It needs one build, and CI runs it. Keep this harness for what the fuzzer does not do: random sequences of the commands that change the confirmation list (`rename`, `remove`, `copy`, `confirm set`/`remove`, `alias set`), over two projects, with Unicode-form keys. The fuzzer's write mix checks only that no command other than `confirm remove` drops a flag.
+> The end-to-end fuzzer runs the built CLI and MCP server and scores on what actually ran, against its own model of the rules. It needs one build, and CI runs it. Keep this harness for what the fuzzer does not do: random sequences of the commands that change the confirmation list (`rename`, `remove`, `copy`, `confirm set`/`remove`, `alias set`), over two projects, with Unicode-form keys. The fuzzer's write mix checks only that no command other than `confirm remove` or `--no-confirm` drops a flag.
 
 A change to the confirmation gate (`src/confirm.ts`, `src/utils/entryIdentity.ts`, the `run` gates, `rename`, `remove`, `confirm set`) has one rule to meet:
 
