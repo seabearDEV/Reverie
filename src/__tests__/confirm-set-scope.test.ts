@@ -415,7 +415,9 @@ describe('where a confirmation flag is listed (#255, #256, #257)', () => {
       it('without -G, the global store\'s name: the project list gets both (N1)', () => {
         const folds = twins();
         expect(rvr('confirm', 'set', 'ops.start').status).toBe(0);
-        expect(projectFlags()).toEqual(folds ? ['ops.start', LONG] : ['ops.start']);
+        // Where nothing folds, `ops.start` is a global-only entry: its flag
+        // goes in the global list alone (#276).
+        expect(projectFlags()).toEqual(folds ? ['ops.start', LONG] : []);
         expect(globalFlags()).toEqual(folds ? [] : ['ops.start']);
       });
     });
