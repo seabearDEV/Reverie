@@ -4,7 +4,7 @@ import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, unusedProjectStore } from './projectResolution';
 import { assertSidecarsWritable } from './utils/unreadable';
-import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, referenceContext, resolveName, typedContext } from './utils/nameResolver';
+import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasesSeen, referenceContext, resolveName, typedContext } from './utils/nameResolver';
 
 /**
  * The resolver's view of the stores as they stand now (utils/nameResolver).
@@ -77,6 +77,11 @@ export function updateAliases(
   const layered = (!scope || scope === 'auto') && effectiveScope === 'project';
   const below = layered ? loadAliasMap('global') : {};
   updateAliasMap(own => fn(layered ? { ...below, ...own } : own), effectiveScope);
+}
+
+/** The target the map `scope` shows for alias `name`, indexed as the audit row's before-value always was. */
+export function aliasTargetListed(name: string, scope?: Scope): string | undefined {
+  return aliasesSeen(nameView(), typedContext(scope))[name];
 }
 
 // Create or update an alias (one alias per entry — replaces any existing alias for the same target)

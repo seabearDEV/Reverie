@@ -22,7 +22,7 @@ import {
   updateAliases,
   setAlias,
   removeAlias,
-  resolveKey,
+  resolveTypedName,
   buildKeyToAliasMap,
   removeAliasesForKey,
   renameAlias,
@@ -345,13 +345,13 @@ server.tool = ((...args: any[]) => {
       const source = params.source as string | undefined;
       if (source) {
         try {
-          const resolved = resolveKey(source, scope);
+          const resolved = resolveTypedName(source, scope).key;
           if (resolved !== source) aliasResolved = resolved;
         } catch { /* ignore — alias resolution is best-effort */ }
       }
     } else if (key && !configTool) {
       try {
-        const resolved = resolveKey(key, scope);
+        const resolved = resolveTypedName(key, scope).key;
         if (resolved !== key) aliasResolved = resolved;
       } catch { /* ignore — alias resolution is best-effort */ }
     }
@@ -532,7 +532,7 @@ server.tool(
     try {
       const scope = toScope(scopeParam);
       ensureDataDirectoryExists();
-      const resolved = resolveKey(key, scope);
+      const resolved = resolveTypedName(key, scope).key;
       // Pre-validate the alias name BEFORE any writes. Without this,
       // setValue would persist the entry, then setAlias would throw on a
       // bad alias name, leaving the store in a partial state (entry stored,
@@ -690,7 +690,7 @@ server.tool(
       }
 
       // Resolve potential alias
-      const resolvedKey = resolveKey(key, lookupScope);
+      const resolvedKey = resolveTypedName(key, lookupScope).key;
       const found = getValueWithStore(resolvedKey, lookupScope);
       const value = found?.value;
 
@@ -788,7 +788,7 @@ server.tool(
         return textResponse(`Alias removed: ${key}`);
       }
 
-      const resolvedKey = resolveKey(key, scope);
+      const resolvedKey = resolveTypedName(key, scope).key;
       // #215: a file that exists but does not parse must not be reported as
       // "not found" (getValue throws for it), and the cascade below cannot
       // see what points at this key while a sidecar is unreadable — refuse
@@ -831,7 +831,7 @@ server.tool(
     try {
       const scope = toScope(scopeParam);
       ensureDataDirectoryExists();
-      const resolvedSource = resolveKey(source, scope);
+      const resolvedSource = resolveTypedName(source, scope).key;
       const value = getValue(resolvedSource, scope);
 
       if (value === undefined) {
@@ -909,7 +909,7 @@ server.tool(
       }
 
       // Entry key rename
-      const resolvedOld = resolveKey(oldKey, scope);
+      const resolvedOld = resolveTypedName(oldKey, scope).key;
       // #215: an unreadable entry under the old key would be left behind
       // while its alias and its confirmation flag move to the new name.
       assertSubtreeReadable(() => resolveScopeForWrite(scope), resolvedOld, 'rename');
