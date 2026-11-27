@@ -624,7 +624,9 @@ export function createDirectoryStore(
   // Sidecar caches — mtime-tracked so scanAndSync() can skip the re-read when
   // nothing changed. A cached sentinel mtime of `-1` means "observed as
   // missing"; any real fs.stat mtime compares unequal, so we'll pick up a
-  // sidecar that appears later without a stale-read hazard.
+  // sidecar that appears later without a stale-read hazard. A write in place
+  // can hide behind both mtimes, so the confirmation list's readers go
+  // through loadConfirm(), which reads it from disk every time (#304).
   let aliasesCache: CachedSidecar<Record<string, string>> | null = null;
   let confirmCache: CachedSidecar<Record<string, true>> | null = null;
   // Directory mtime at the time of the last successful scanAndSync. The
@@ -853,6 +855,33 @@ export function createDirectoryStore(
   }
 
   function load(): UnifiedData {
+    scanUnderSeqlock(false);
+    return snapshot();
+  }
+
+  /**
+   * The confirmation list as it is on disk right now, in a fresh object
+   * (#304). The run gate reads the list through this. load() keeps the list
+   * it has while the store directory's mtime is unchanged, and the list's
+   * own mtime after that; a write in place (an editor save, `echo … >`)
+   * moves neither the directory, nor, when two writes share a tick, the
+   * file. A long-lived process (the MCP server) then ran a newly flagged
+   * command unasked until it restarted. So this reads the file on every
+   * call, compares no timestamp, and costs one small read on top of the
+   * scan. The read goes into the cache slot, `unreadable` included, which
+   * is what keeps the gate failing closed: confirmListUnreadable() reads it
+   * through unreadable().
+   */
+  function loadConfirm(): Record<string, true> {
+    scanUnderSeqlock(true);
+    return { ...(confirmCache?.data ?? {}) };
+  }
+
+  /**
+   * load()'s scan. With `confirmFromDisk`, each attempt also reads the
+   * confirmation list from disk (loadConfirm), inside the same epoch check.
+   */
+  function scanUnderSeqlock(confirmFromDisk: boolean): void {
     const dir = getDirPath();
 
     // Seqlock retry: snapshot the epoch before scanning, scan, then re-read
@@ -877,6 +906,9 @@ export function createDirectoryStore(
         );
       }
       scanAndSync();
+      if (confirmFromDisk) {
+        confirmCache = rereadSidecar<Record<string, true>>(path.join(dir, CONFIRM_FILE), 'confirm');
+      }
       const after = readEpoch(dir);
       if (before === after) break;
       if (attempt === MAX_LOAD_RETRIES) {
@@ -893,8 +925,6 @@ export function createDirectoryStore(
       // is almost certainly done; backing off would only add latency in
       // the common case without preventing further mismatches.
     }
-
-    return snapshot();
   }
 
   /** The cached state as UnifiedData, in fresh objects a caller may mutate. */
@@ -1549,7 +1579,7 @@ export function createDirectoryStore(
     return [...entryCache.keys()];
   }
 
-  return { load, save, update, inspect, storedKeys, clear, getOne, setOne, unreadable };
+  return { load, loadConfirm, save, update, inspect, storedKeys, clear, getOne, setOne, unreadable };
 }
 
 // ── Migration ──────────────────────────────────────────────────────────

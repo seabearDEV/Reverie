@@ -50,7 +50,18 @@ export type Scope = 'project' | 'global' | 'auto';
 // ── ScopedStore ────────────────────────────────────────────────────────
 
 export interface ScopedStore {
+  /**
+   * The store, from caches kept by mtime: an entry file or sidecar written
+   * in place can be missed by a long-lived process. Its `confirm` is no
+   * source for a gate decision; that is loadConfirm().
+   */
   load(): UnifiedData;
+  /**
+   * The confirmation list as it is on disk right now (#304): read on every
+   * call, never kept by a timestamp. Scans first, as load() does, so
+   * unreadable() is current, an unreadable list included.
+   */
+  loadConfirm(): Record<string, true>;
   /**
    * Replace the whole store with `data`. Only for a new state that does not
    * depend on the current one (reset, import replace): anything another
@@ -367,8 +378,9 @@ export function saveAliasMap(data: Record<string, string>, scope?: Scope  ): voi
   updateAliasMap(() => data, scope);
 }
 
+/** One store's confirmation list, read from disk (#304: see ScopedStore.loadConfirm). */
 export function loadConfirmMap(scope?: Scope  ): Record<string, true> {
-  return resolveStore(scope).load().confirm;
+  return resolveStore(scope).loadConfirm();
 }
 
 /**
@@ -595,16 +607,18 @@ export function loadAliasMapMerged(): Record<string, string> {
  * `null` replaced the global `true`, and the user's flag stopped gating that
  * key inside the clone. Only `true` is taken from each list, so nothing in
  * one can turn the other's flag off (owner rule, 2026-11-25). No prototype:
- * a key such as `constructor` must not read as present.
+ * a key such as `constructor` must not read as present. Each list is read
+ * from disk on every call (#304), so the run gate sees a flag written in
+ * place while the process runs.
  */
 export function loadConfirmMapMerged(): Record<string, true> {
   const merged = Object.create(null) as Record<string, true>;
   const take = (list: Record<string, unknown>) => {
     for (const [key, flag] of Object.entries(list)) if (flag === true) merged[key] = true;
   };
-  take(getGlobalStore().load().confirm);
+  take(getGlobalStore().loadConfirm());
   const project = getProjectStore();
-  if (project) take(project.load().confirm);
+  if (project) take(project.loadConfirm());
   return merged;
 }
 

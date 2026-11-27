@@ -1,7 +1,7 @@
 {
-  "value": "Bun migration COMPLETE 2026-05-08, both passes: (1) bun-only dev/prod runtime, (2) test runner vitest → bun:test. Run tests via `bun run test` — the `--isolate` flag is MANDATORY (357 pass without it vs 1392 with) and is wired into the package.json script (bunfig.toml can't express it as a TOML key). Porting patterns catalogued in [[context.bunTestCompat]]; dev/run workflow in [[context.devWorkflow]]. Only @types/node remains (fs/path types) — no runtime Node anywhere. Full migration detail in git history.",
+  "value": "Bun migration COMPLETE 2026-05-08, both passes: (1) bun-only dev/prod runtime, (2) test runner vitest → bun:test. Run tests via `bun run test` — per-file isolation is MANDATORY (357 pass without it vs 1392 with); the package.json script gets it from `--parallel`, which implies `--isolate` (bunfig.toml can't express either as a TOML key). Porting patterns catalogued in [[context.bunTestCompat]]; dev/run workflow in [[context.devWorkflow]]. Only @types/node remains (fs/path types) — no runtime Node anywhere. Full migration detail in git history.",
   "meta": {
     "created": 1778128355986,
-    "updated": 1780948215785
+    "updated": 1795820715119
   }
 }

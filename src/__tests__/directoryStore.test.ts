@@ -776,6 +776,70 @@ describe('sidecar mtime cache', () => {
   });
 });
 
+// ── The confirmation list, read from disk on every loadConfirm (#304) ──
+
+describe('loadConfirm reads the confirmation list from disk (#304)', () => {
+  // A write in place keeps the inode and leaves the directory mtime alone,
+  // and two writes in one mtime tick leave the file's own mtime alone too.
+  // Pinning both mtimes to a whole second before priming, and back after the
+  // write, makes a fix that compares either timestamp fail here.
+  const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000);
+
+  function primed(confirm: Record<string, true>) {
+    const dir = path.join(tmpRoot, 'store');
+    const store = makeStore(dir);
+    store.save({ entries: { k: 'echo k', other: 'echo other' }, aliases: {}, confirm });
+    const confirmPath = path.join(dir, '_confirm.json');
+    fs.utimesSync(confirmPath, pinned, pinned);
+    fs.utimesSync(dir, pinned, pinned);
+    store.load(); // prime every cache
+    expect(store.loadConfirm()).toEqual(confirm);
+    return { dir, store, confirmPath };
+  }
+
+  /** Rewrite `file` in place, then put both mtimes back where they were. */
+  function writeInPlace(dir: string, file: string, text: string): void {
+    const ino = fs.statSync(file).ino;
+    fs.writeFileSync(file, text);
+    fs.utimesSync(file, pinned, pinned);
+    fs.utimesSync(dir, pinned, pinned);
+    expect(fs.statSync(file).ino).toBe(ino);
+    expect(fs.statSync(file).mtimeMs).toBe(pinned.getTime());
+    expect(fs.statSync(dir).mtimeMs).toBe(pinned.getTime());
+  }
+
+  it('sees a flag added in place while the directory and file mtimes stay put', () => {
+    const { dir, store, confirmPath } = primed({ other: true });
+    expect(store.loadConfirm()).toEqual({ other: true });
+
+    writeInPlace(dir, confirmPath, JSON.stringify({ other: true, k: true }));
+    expect(store.loadConfirm()).toEqual({ other: true, k: true });
+  });
+
+  it('does not trust the list by its own mtime when the directory is rescanned', () => {
+    const { dir, store, confirmPath } = primed({ other: true });
+
+    writeInPlace(dir, confirmPath, JSON.stringify({ other: true, k: true }));
+    // The directory moves, so the full scan runs; the file's mtime does not.
+    const later = new Date(pinned.getTime() + 5_000);
+    fs.utimesSync(dir, later, later);
+    expect(store.loadConfirm()).toEqual({ other: true, k: true });
+  });
+
+  it('reports a list broken in place as unreadable at once, and clears it once repaired in place', () => {
+    const { dir, store, confirmPath } = primed({ other: true });
+    expect(store.unreadable()).toEqual([]);
+
+    writeInPlace(dir, confirmPath, '<<<<<<< HEAD\n{"other": true}\n=======\n{}\n>>>>>>> theirs\n');
+    expect(store.loadConfirm()).toEqual({});
+    expect(store.unreadable().map(f => f.kind)).toEqual(['confirm']);
+
+    writeInPlace(dir, confirmPath, JSON.stringify({ other: true, k: true }));
+    expect(store.loadConfirm()).toEqual({ other: true, k: true });
+    expect(store.unreadable()).toEqual([]);
+  });
+});
+
 // ── Hand-edit warning README ───────────────────────────────────────────
 
 describe('_README.md hand-edit nudge', () => {

@@ -1108,7 +1108,7 @@ A successful response will include `"serverInfo":{"name":"reverie"}` in the JSON
 ```bash
 bun install        # Install dependencies
 bun run build      # Build the project
-bun run test       # Run all tests (not `bun test`: the script adds the required --isolate)
+bun run test       # Run all tests (not `bun test`: the script runs files in parallel workers, which also isolates them)
 bun run test:watch # Run tests in watch mode
 bun run dev:watch  # Watch mode — recompiles on file changes
 bun run lint       # Run ESLint
