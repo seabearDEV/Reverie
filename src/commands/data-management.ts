@@ -13,6 +13,7 @@ import { maskEncryptedValues } from '../utils/crypto';
 import { debug } from '../utils/debug';
 import { createAutoBackup } from '../utils/autoBackup';
 import { assertNotTestCheckout } from '../utils/directoryStore';
+import { findProjectStoreDir } from '../utils/paths';
 import { findProjectFile, clearProjectFileCache, updateAll, getEffectiveScope, assertProjectScope } from '../store';
 import { ProjectResolutionError } from '../projectResolution';
 import { wrapExport, tryUnwrapImport } from '../utils/envelope';
@@ -593,10 +594,20 @@ export function handleProjectFile(options: {
   // entries, CLAUDE.md, AGENTS.md — may land in the checkout.
   if (!options.dryRun) assertNotTestCheckout(target);
 
-  // Single stat call to determine the target's state.
-  let targetStat: ReturnType<typeof fs.statSync> | null = null;
+  // A store this process would not use is refused before anything is
+  // created: its seeds went to the global store, and since #296 they would
+  // be refused half-way, after the directory was made.
+  const unused = initTargetUnused(cwd, target);
+  if (unused) {
+    printError(unused, 'PROJECT_UNRESOLVED');
+    return;
+  }
+
+  // Single stat call to determine the target's state. lstat: a symlinked
+  // store directory is never used (#159), so init must not build on one.
+  let targetStat: ReturnType<typeof fs.lstatSync> | null = null;
   try {
-    targetStat = fs.statSync(target);
+    targetStat = fs.lstatSync(target);
   } catch { /* ENOENT — target doesn't exist yet */ }
 
   // Check for the edge case where target exists but is not a directory
@@ -627,6 +638,17 @@ export function handleProjectFile(options: {
 
   // Scan codebase and populate entries (unless --no-scan)
   const shouldScan = options.scan !== false;
+  // What the checks above cannot foresee (the walk stops at the global data
+  // directory, say): the seeds would be refused one by one. Say what happened.
+  if (shouldScan && !options.dryRun) {
+    try {
+      assertProjectScope('project');
+    } catch (err) {
+      if (!(err instanceof ProjectResolutionError)) throw err;
+      printError(`${existed ? 'Found' : 'Created'} ${target}, but this process does not resolve it as the project store, so nothing was seeded. Check RVR_PROJECT and RVR_NO_PROJECT, and run \`${getBinaryName()} init\` where the store resolves.`, 'PROJECT_UNRESOLVED');
+      return;
+    }
+  }
   if (shouldScan) {
     if (options.dryRun) {
       const discovered = scanCodebase(cwd);
@@ -750,6 +772,24 @@ function mergeScaffoldEntries(discovered: ScaffoldEntry[]): number {
   }
 
   return count;
+}
+
+/**
+ * Why the store init would create in `cwd` would not be the project store
+ * this process uses, or undefined. Checked before init creates anything.
+ */
+function initTargetUnused(cwd: string, target: string): string | undefined {
+  if (process.env.RVR_NO_PROJECT) {
+    return `Cannot initialize: RVR_NO_PROJECT is set, so no project store is used and the one init would create in ${cwd} would be ignored. Unset RVR_NO_PROJECT and retry. Nothing was created.`;
+  }
+  const envPath = process.env.RVR_PROJECT;
+  if (envPath) {
+    const resolved = path.resolve(envPath);
+    if (resolved !== target && resolved !== cwd && !findProjectStoreDir()) {
+      return `Cannot initialize: RVR_PROJECT is set to ${envPath}, which holds no project store, so the one init would create in ${cwd} would not be used. Unset RVR_PROJECT, or point it at ${target}, and retry. Nothing was created.`;
+    }
+  }
+  return undefined;
 }
 
 function scaffoldProject(): void {
