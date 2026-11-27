@@ -404,3 +404,47 @@ describe('MCP scope:"project" inside a project: unchanged', () => {
     expect(fs.existsSync(runLog)).toBe(false);
   });
 });
+
+// A long-lived server caches "no project". A project created after that —
+// `rvr init` in another shell — must be the one a write uses, and the one its
+// checks look at: on main both writes below went to the global store, and
+// with the store refusing only, an auto write's alias pre-flight checked no
+// store while its save found the project.
+describe('MCP: a project created while the server runs', () => {
+  let session: McpSession | undefined;
+  afterEach(() => { session?.close(); session = undefined; });
+
+  it('unscoped and scope:"project" writes land in it; the global store is untouched', async () => {
+    const before = globalState();
+    session = await openMcpSession({ cwd, env: env() });
+    expect((await session.call('reverie_get', { key: 'ent.a' })).content[0].text).toBe('ent.a: hello');
+    fs.mkdirSync(path.join(cwd, '.reverie'));
+    // scope:"project" first: the up-front check is what must find it.
+    const proj = await session.call('reverie_set', { key: 'n.proj', value: 'v', scope: 'project' });
+    expect(proj.isError, proj.content[0].text).toBeFalsy();
+    const auto = await session.call('reverie_set', { key: 'n.auto', value: 'v' });
+    expect(auto.isError, auto.content[0].text).toBeFalsy();
+    expect(auto.content[0].text).toContain('→ project');
+    expect(fs.existsSync(path.join(cwd, '.reverie', 'n.auto.json'))).toBe(true);
+    expect(fs.existsSync(path.join(cwd, '.reverie', 'n.proj.json'))).toBe(true);
+    expect(globalState()).toEqual(before);
+  });
+
+  it('a write refused for its unreadable alias map writes nothing there (#294)', async () => {
+    const before = globalState();
+    session = await openMcpSession({ cwd, env: env() });
+    expect((await session.call('reverie_get', { key: 'ent.a' })).content[0].text).toBe('ent.a: hello');
+    const store = path.join(cwd, '.reverie');
+    fs.mkdirSync(store);
+    fs.writeFileSync(path.join(store, '_aliases.json'), '[]');
+    // The unscoped write first: its own resolution is what must find it.
+    for (const [key, scope] of [['n.auto', undefined], ['n.proj', 'project']] as const) {
+      const r = await session.call('reverie_set', { key, value: 'v', alias: 'zz', ...(scope && { scope }) });
+      expect(r.isError, key).toBe(true);
+      expect(mcpCode(r), key).toBe('STORE_UNREADABLE');
+      expect(fs.existsSync(path.join(store, `${key}.json`)), key).toBe(false);
+    }
+    expect(fs.readFileSync(path.join(store, '_aliases.json'), 'utf8')).toBe('[]');
+    expect(globalState()).toEqual(before);
+  });
+});
