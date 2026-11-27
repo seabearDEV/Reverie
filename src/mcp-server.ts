@@ -26,7 +26,10 @@ import {
   buildKeyToAliasMap,
   removeAliasesForKey,
   renameAlias,
+  nameView,
+  resolveNameNow,
 } from "./alias";
+import { chainMemberContext, typedContext } from "./utils/nameResolver";
 import {
   ensureDataDirectoryExists,
   setProjectRootOverride,
@@ -43,14 +46,14 @@ import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
-import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, gateNamesFor, interpolateForRead, unresolvedWarning, unresolvedOverflowNote } from "./utils/interpolate";
+import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, interpolateForRead, unresolvedWarning, unresolvedOverflowNote } from "./utils/interpolate";
 import type { UnresolvedOnRead, EntryStore } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace, keyIsEntryKey } from "./utils/telemetry";
 import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
 import type { ErrorCode } from "./utils/output";
-import { resolveScopeForWrite, ProjectResolutionError, unusedProjectStore, unusedProjectReason } from "./projectResolution";
+import { resolveScopeForWrite, ProjectResolutionError, unusedProjectReason } from "./projectResolution";
 import { isStoreIoError } from "./utils/storeWriteError";
 import type { CodexValue } from "./types";
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapListed, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, readForWrite, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
@@ -1121,7 +1124,7 @@ function runGated(
   if (!needsConfirm && confirmListUnreadable()) needsConfirm = true;
   // #294 review: so is a project this server found but is not using (one
   // created after it started, say). Its list was never read. The ask names it.
-  const unusedProject = unusedProjectStore();
+  const unusedProject = nameView().unusedProject;
   if (unusedProject !== undefined) needsConfirm = true;
 
   if (opts.dry) return textResponse(`$ ${command}`);
@@ -1192,15 +1195,17 @@ server.tool(
   },
   async ({ key, dry, force, confirm_token, chain, scope: scopeParam }) => {
     const scope = toScope(scopeParam);
-    const resolvedKey = resolveKey(key, scope);
-    const found = getValueWithStore(resolvedKey, scope);
+    // What the names of this call mean (utils/nameResolver).
+    const named = typedContext(scope);
+    const top = resolveNameNow(named, key);
+    const found = getValueWithStore(top.key, scope);
     const value = found?.value;
 
     if (found === undefined || value === undefined) {
       return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
     }
     // #279: the key as typed is gated as well as the key its alias names.
-    const gateNames = gateNamesFor(key, resolvedKey, scope !== 'global');
+    const gateNames = [...top.gateNames];
     if (typeof value !== "string") {
       return errorResponse(`Value at '${key}' is not a string command.`);
     }
@@ -1218,18 +1223,18 @@ server.tool(
       // (display) and exec pass (interpolateExec) separately below.
       // #280: the keys a chain entry lists are references in it, so they
       // resolve in its store — a global chain runs global entries only.
-      const memberScope = found.store === 'global' ? 'global' : scope;
+      const members = chainMemberContext(named, found.store);
       const runs: RunValue[] = [];
       for (const ck of chainKeys) {
-        const rk = resolveKey(ck, memberScope);
-        const member = getValueWithStore(rk, memberScope);
-        const cv = member?.value;
-        if (member === undefined || cv === undefined) return errorResponse(`Chain key '${ck}' not found.`, 'NOT_FOUND');
+        const member = resolveNameNow(members, ck);
+        const memberFound = getValueWithStore(member.key, member.scope);
+        const cv = memberFound?.value;
+        if (memberFound === undefined || cv === undefined) return errorResponse(`Chain key '${ck}' not found.`, 'NOT_FOUND');
         if (typeof cv !== 'string') return errorResponse(`Chain key '${ck}' is not a string command.`);
         if (isEncrypted(cv)) return errorResponse(`Chain key '${ck}' is encrypted.`);
         // #279: each member as typed and as its alias resolves.
-        gateNames.push(...gateNamesFor(ck, rk, memberScope !== 'global'));
-        runs.push({ value: cv, from: member.store });
+        gateNames.push(...member.gateNames);
+        runs.push({ value: cv, from: memberFound.store });
       }
 
       // Confirm if ANY key on the chain — or the chain entry itself — is

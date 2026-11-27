@@ -1,5 +1,7 @@
  
 
+import { mockNameView, resolutionOver } from './helpers/resolverMocks';
+
 type ToolHandler = (params: any) => Promise<any>;
 // Was vi.hoisted (#112) — bun:test has no equivalent, but doesn't need
 // one because vi.mock factories run in source order, after this binding.
@@ -9,6 +11,8 @@ const mockFiles: Record<string, boolean> = {};
 const mockWrittenFiles: Record<string, string> = {};
 const mockData: Record<string, any> = {};
 const mockAliases: Record<string, string> = {};
+// The suite's alias lookup, shared by its resolveKey mock and the resolver wrappers' mocks.
+const mockResolveKeyOf = (k: string): string => mockAliases[k] ?? k;
 const mockConfig: Record<string, any> = { colors: true, theme: 'default' };
 const mockConfirmKeys: Record<string, true> = {};
 const mockMetaData: Record<string, number> = {};
@@ -164,6 +168,9 @@ vi.mock('../alias', () => ({
     const aliases = { ...mockAliases };
     return aliases[k] ?? k;
   }),
+  // The resolver's wrappers, over this suite's resolveKey (helpers/resolverMocks).
+  resolveNameNow: (ctx: Parameters<typeof resolutionOver>[1], k: string) => resolutionOver(mockResolveKeyOf, ctx, k),
+  nameView: () => mockNameView(),
   buildKeyToAliasMap: vi.fn(() => ({})),
   removeAlias: vi.fn((alias: string) => {
     if (!(alias in mockAliases)) return false;

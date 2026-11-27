@@ -13,16 +13,17 @@ import { displayTree } from '../formatting';
 import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
-import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, resolveKey, renameAlias } from '../alias';
+import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, renameAlias, nameView, resolveNameNow } from '../alias';
+import { chainMemberContext, typedContext } from '../utils/nameResolver';
 import { hasConfirm, setConfirm, removeConfirm, flagsListedUnder, flagsGating } from '../confirm';
-import { resolveScopeForWrite, unusedProjectStore, unusedProjectReason } from '../projectResolution';
+import { resolveScopeForWrite, unusedProjectReason } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
 import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
-import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, gateNamesFor, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, UNRESOLVED_WARNING_CODE, type UnresolvedOnRead, type EntryStore } from '../utils/interpolate';
+import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, UNRESOLVED_WARNING_CODE, type UnresolvedOnRead, type EntryStore } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
 import { isJsonMode, setResult, failJson, addWarning, recordErrorCode, type ErrorCode } from '../utils/output';
 import { markValueStored } from '../utils/writeAmp';
@@ -93,6 +94,8 @@ export async function runCommand(keys: string[], options: RunOptions): Promise<v
 async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]): Promise<void> {
   debug('runCommand called', { keys, options });
   const scope = toScope(options.global);
+  // What the names typed here mean (utils/nameResolver): -G or the default.
+  const named = typedContext(scope);
   try {
     // --chain: resolve the first key's value as a space-separated list of key references
     if (options.chain) {
@@ -102,8 +105,8 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
         return;
       }
       const chainKey = keys[0];
-      const resolvedChainKey = resolveKey(chainKey, scope);
-      const chainFound = getValueWithStore(resolvedChainKey, scope);
+      const chain = resolveNameNow(named, chainKey);
+      const chainFound = getValueWithStore(chain.key, scope);
       const chainValue = chainFound?.value;
       if (chainValue === undefined) {
         printError(`Entry '${chainKey}' not found.`, 'NOT_FOUND');
@@ -127,8 +130,9 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
       // keys a chain entry lists are references in it, so they resolve in its
       // store — a global chain runs global entries only. #279: the chain
       // entry's own flag gates the run, under the name typed as well.
-      return runKeys(chainKeys, { ...options, chain: false, global: options.global === true || chainFound?.store === 'global' },
-        [...gateAlso, ...gateNamesFor(chainKey, resolvedChainKey, scope !== 'global')]);
+      const members = chainMemberContext(named, chainFound?.store);
+      return runKeys(chainKeys, { ...options, chain: false, global: members.kind === 'typed' && members.scope === 'global' },
+        [...gateAlso, ...chain.gateNames]);
     }
 
     const commands: string[] = [];
@@ -154,9 +158,10 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
       const rawSegments: { value: string; from: EntryStore }[] = [];
 
       for (const segment of segments) {
-        const resolvedKey = resolveKey(segment, scope);
+        const segmentNamed = resolveNameNow(named, segment);
+        const resolvedKey = segmentNamed.key;
         resolvedKeys.push(resolvedKey);
-        gateNames.push(...gateNamesFor(segment, resolvedKey, scope !== 'global'));
+        gateNames.push(...segmentNamed.gateNames);
         const found = getValueWithStore(resolvedKey, scope);
         const from: EntryStore = found?.store ?? 'project';
         let value = found?.value;
@@ -234,7 +239,7 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
     // #294 review: fail closed too while the resolver finds a project this
     // process has no store for (next to a legacy .codexcli.json that cannot
     // be migrated): its confirmation list was never read.
-    const unusedProject = unusedProjectStore();
+    const unusedProject = nameView().unusedProject;
     const reasons = [
       ...(unchecked === undefined ? [] : [`not every reference it reaches could be checked for a confirmation flag (${unchecked})`]),
       ...(unusedProject === undefined ? [] : [unusedProjectReason(unusedProject)]),
