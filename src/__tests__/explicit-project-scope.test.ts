@@ -472,7 +472,19 @@ describe('an unmigratable legacy .codexcli.json', () => {
   it('CLI: reads, -G and an alias go to the global store; unscoped and -P writes refuse', () => {
     expect(JSON.stringify(json(['get', 'ent.a']).envelope.result)).toContain('hello');
     expect(JSON.stringify(json(['get']).envelope.result)).toContain('commands.log');
-    expect(json(['run', 'commands.log']).envelope.ok).toBe(true);
+    // Every run asks, -G included: the project's confirmation list was never
+    // read (stricter than main, which ran the global entry unasked).
+    for (const args of [['run', 'commands.log'], ['run', '-G', 'commands.log']]) {
+      const asked = json(args);
+      expect(asked.envelope.error?.code, args.join(' ')).toBe('REQUIRES_CONFIRMATION');
+      expect(asked.envelope.error?.message).toContain('this process is not using');
+      expect(asked.envelope.error?.message).toContain('.codexcli.json');
+    }
+    const text = rvr(['run', 'commands.log']);
+    expect(text.status).toBe(1);
+    expect(text.stderr).toContain('this process is not using');
+    expect(fs.existsSync(runLog)).toBe(false);
+    expect(json(['run', 'commands.log', '--yes']).envelope.ok).toBe(true);
     expect(fs.readFileSync(runLog, 'utf8')).toBe('ran\n');
     const g = json(['set', '-G', 'k.v', 'val', '-a', 'al']);
     expect(g.envelope.ok, JSON.stringify(g.envelope.error)).toBe(true);
@@ -498,10 +510,59 @@ describe('an unmigratable legacy .codexcli.json', () => {
       const before = globalState();
       expect(mcpCode(await session.call('reverie_set', { key: 'm.x', value: 'v' }))).toBe('PROJECT_UNRESOLVED');
       expect(mcpCode(await session.call('reverie_get', { key: 'ent.a', scope: 'project' }))).toBe('PROJECT_UNRESOLVED');
+      expect((await session.call('reverie_run', { key: 'commands.log' })).content[0].text).toContain('this process is not using');
+      expect(fs.existsSync(runLog)).toBe(false);
       expect(globalState()).toEqual(before);
     } finally {
       session.close();
     }
+  });
+});
+
+// G1 (#294 review): a server that started outside a project, after a project
+// is created there that flags a command. The server never read that list, so
+// "no flag" proves nothing: every run asks — unscoped and scope:"global", by
+// name, alias, reference or chain — and runs only when approved. Main asked
+// or ran it unasked depending on what the server had looked up first.
+describe('MCP runs on a server that started outside a project, after one is created (G1)', () => {
+  let session: McpSession | undefined;
+  afterEach(() => { session?.close(); session = undefined; });
+
+  it('every run asks, naming the project; force or a confirm_token runs it', async () => {
+    expect(rvr(['set', '-G', 'build', `echo global >> ${runLog}`, '-a', 'b']).status).toBe(0);
+    expect(rvr(['set', '-G', 'wrap', '${build}']).status).toBe(0);
+    expect(rvr(['set', '-G', 'chain', 'build']).status).toBe(0);
+    session = await openMcpSession({ cwd, env: env() });
+    expect((await session.call('reverie_stats', {})).isError).toBeFalsy();
+    // From a shell: a project, its own build, flagged in its list.
+    expect(rvr(['init', '--no-scan', '--no-claude', '--no-agents']).status).toBe(0);
+    expect(rvr(['set', 'build', `echo project >> ${runLog}`]).status).toBe(0);
+    expect(rvr(['confirm', 'set', 'build']).status).toBe(0);
+    expect(fs.readFileSync(path.join(cwd, '.reverie', '_confirm.json'), 'utf8')).toContain('build');
+
+    const store = path.join(cwd, '.reverie');
+    const runs: Record<string, unknown>[] = [{ key: 'build' }, { key: 'b' }, { key: 'wrap' }, { key: 'chain', chain: true }];
+    for (const args of runs) {
+      for (const scope of [undefined, 'global'] as const) {
+        const r = await session.call('reverie_run', { ...args, ...(scope && { scope }) });
+        const what = `${JSON.stringify(args)} ${scope ?? 'unscoped'}`;
+        expect(r.content[0].text, what).toContain('requires confirmation before execution');
+        expect(r.content[0].text, what).toContain(`A project store was found at ${store} that this process is not using`);
+        expect(r.content[0].text, what).toContain('restart');
+        expect(fs.existsSync(runLog), what).toBe(false);
+      }
+    }
+
+    const forced = await session.call('reverie_run', { key: 'build', force: true });
+    expect(forced.isError, forced.content[0].text).toBeFalsy();
+    expect(fs.readFileSync(runLog, 'utf8')).toBe('global\n');
+
+    const ask = await session.call('reverie_run', { key: 'wrap', scope: 'global' });
+    const token = /confirm_token: "([0-9a-f]+)"/.exec(ask.content[0].text)?.[1];
+    expect(token).toBeDefined();
+    const approved = await session.call('reverie_run', { key: 'wrap', scope: 'global', confirm_token: token });
+    expect(approved.isError, approved.content[0].text).toBeFalsy();
+    expect(fs.readFileSync(runLog, 'utf8')).toBe('global\nglobal\n');
   });
 });
 
