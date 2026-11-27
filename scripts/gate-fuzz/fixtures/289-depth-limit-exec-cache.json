@@ -1,0 +1,93 @@
+{
+  "about": "The #289 reproduction: the collect walk stops at the depth limit, exec runs on through its cache to a flagged command.",
+  "stores": {
+    "project": {
+      "entries": {
+        "top": "echo RVM1x ${s} ${d1} $(fl) >> \"$RLOG\"",
+        "s": "$(x)",
+        "x": "echo RVM2x ${y1} >> \"$RLOG\"",
+        "y1": "${y2}",
+        "y2": "${y3}",
+        "y3": "${y4}",
+        "y4": "${y5}",
+        "y5": "yw",
+        "d1": "${d2}",
+        "d2": "${d3}",
+        "d3": "${d4}",
+        "d4": "${d5}",
+        "d5": "${d6}",
+        "d6": "${d7}",
+        "d7": "${d8}",
+        "d8": "$(x)"
+      }
+    },
+    "global": {
+      "entries": {
+        "fl": "echo RVM3x >> \"$RLOG\""
+      },
+      "confirm": {
+        "fl": true
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "project",
+      "top"
+    ],
+    "2": [
+      "project",
+      "x"
+    ],
+    "3": [
+      "global",
+      "fl"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "top"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "top"
+      }
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "top"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "plain"
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "top"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "source"
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "about": "A chain lists a name the user flagged globally, and the project aliases that name to its own command (#279, chain member).",
+  "stores": {
+    "project": {
+      "entries": {
+        "ch": "fl",
+        "a": "echo RVM1x >> \"$RLOG\""
+      },
+      "aliases": {
+        "fl": "a"
+      }
+    },
+    "global": {
+      "entries": {
+        "fl": "echo RVM2x >> \"$RLOG\""
+      },
+      "confirm": {
+        "fl": true
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "project",
+      "a"
+    ],
+    "2": [
+      "global",
+      "fl"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "ch"
+      ],
+      "global": false,
+      "chain": true,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "ch",
+        "chain": true
+      }
+    }
+  ]
+}

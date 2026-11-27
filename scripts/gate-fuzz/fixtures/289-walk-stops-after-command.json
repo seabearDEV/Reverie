@@ -1,0 +1,51 @@
+{
+  "about": "The walk stops after a command already ran (${nope}); the run must ask first (#289 fail-closed).",
+  "stores": {
+    "project": {
+      "entries": {
+        "top": "echo RVM1x $(a) $(b) >> \"$RLOG\"",
+        "a": "echo RVM2x >> \"$RLOG\"",
+        "b": "echo RVM3x ${nope} >> \"$RLOG\""
+      }
+    },
+    "global": {
+      "entries": {}
+    }
+  },
+  "markers": {
+    "1": [
+      "project",
+      "top"
+    ],
+    "2": [
+      "project",
+      "a"
+    ],
+    "3": [
+      "project",
+      "b"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "top"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "top"
+      }
+    }
+  ]
+}

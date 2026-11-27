@@ -33,14 +33,46 @@ cheap, catches known classes and regressions:
   inverted `get does NOT execute` (commands.test), and the non-TTY confirm
   fail-closed test. A future refactor that re-opens a fixed vuln fails CI.
 
+- **End-to-end fuzzer for the run gate** (`scripts/gate-fuzz/`, README there;
+  `gate-fuzz.yml`). It drives the built CLI and MCP server through random
+  two-store worlds, and every generated command writes a marker to a log. An
+  invocation fails the check when it was not approved and ran a command the
+  documented rules say it must ask about. Not approved means a CLI run without
+  `--yes`, or an MCP call without `force` and without a valid
+  `confirm_token`. The rules come from the fuzzer's own model, never from `src/`. It also
+  checks:
+  - that a global-scope run never runs a project entry;
+  - that reads never execute;
+  - that refused or failed commands leave both stores unchanged, with an even
+    epoch and no lock;
+  - that no command other than `confirm remove` or `set --no-confirm` removes
+    a flag;
+  - that an approved canary run logs its marker in every world, so a build
+    whose runs the fuzzer cannot see fails instead of passing.
+
+  It needs one build. CI runs the quick mode on every pull request that
+  touches `src/` or the fuzzer, and the long mode weekly. Locally,
+  `bun run fuzz:gate` takes about 3 minutes and `bun run fuzz:gate:long`
+  about 30. Before a minor release, the long mode must be green on the
+  release commit: run it, or point to that commit's weekly run. A violation
+  prints a one-line replay and a shrunk world. A scratch version of it, used
+  in a review, found #289, a gate bypass that the differential check below
+  did not see (#290). This one reproduces #289, #280 and both halves of #279
+  (an alias named after a flagged key, and a flagged chain entry) on a build
+  from before their fix.
 - **Differential check for the run gate** (`scripts/gate-differential/`, README
-  there). A change to the confirmation gate, or to how `rename`, `remove` or
-  `confirm set` touch the confirmation list, has to keep every entry the
-  previous build gates gated. The scripts run the same random command
-  sequences through both builds and compare what each gates. Run it before
-  merging such a change. It is not in CI: it needs two builds and takes
-  minutes. It found three regressions in #234 that tests, mutation checks and
-  the author's own review had passed.
+  there). A change to how `rename`, `remove` or `confirm set` touch the
+  confirmation list has to keep every entry the previous build gates gated.
+  The scripts run the same random command sequences through both builds and
+  compare what each gates. Run it before merging such a change. It is not in
+  CI: it needs two builds and takes minutes. It found three regressions in
+  #234 that tests, mutation checks and the author's own review had passed.
+
+  **Blind spot (#290):** it evaluates the gate by rebuilding the gate
+  expression from the build's shared modules. It never runs the code that
+  decides a run (`runKeys`, `runGated`), and it covers no chains and no MCP.
+  It reported 0 hits against a build whose reference gate was a no-op. Use it
+  for list changes; the fuzzer above is the check on the run gate itself.
 
 Note: no npm publishing (`project.distributionChannels`), so npm supply-chain
 exposure is limited to the dev/build dependency tree, not a published artifact.

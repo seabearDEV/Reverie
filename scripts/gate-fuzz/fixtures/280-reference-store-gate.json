@@ -1,0 +1,65 @@
+{
+  "about": "A project entry pulls in a global entry through ${…}; that entry's own references resolve in the global store, where they reach a flagged command (#280, the gate side).",
+  "stores": {
+    "project": {
+      "entries": {
+        "p": "echo RVM1x ${g1} >> \"$RLOG\"",
+        "c": "echo RVM2x >> \"$RLOG\""
+      }
+    },
+    "global": {
+      "entries": {
+        "g1": "echo RVM3x ${c}",
+        "c": "echo RVM4x $(fl)",
+        "fl": "echo RVM5x >> \"$RLOG\""
+      },
+      "confirm": {
+        "fl": true
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "project",
+      "p"
+    ],
+    "2": [
+      "project",
+      "c"
+    ],
+    "3": [
+      "global",
+      "g1"
+    ],
+    "4": [
+      "global",
+      "c"
+    ],
+    "5": [
+      "global",
+      "fl"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "p"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "p"
+      }
+    }
+  ]
+}

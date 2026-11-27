@@ -1,0 +1,59 @@
+{
+  "about": "The project list holds a value that is not true under a name the global list flags: the global flag still gates inside the project (#241).",
+  "stores": {
+    "project": {
+      "entries": {},
+      "confirm": {
+        "fl": false
+      }
+    },
+    "global": {
+      "entries": {
+        "fl": "echo RVM1x >> \"$RLOG\""
+      },
+      "confirm": {
+        "fl": true
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "global",
+      "fl"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "fl"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "fl"
+      ],
+      "global": true,
+      "chain": false,
+      "yes": false,
+      "mode": "plain"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "fl"
+      }
+    }
+  ]
+}

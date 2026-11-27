@@ -1,0 +1,90 @@
+{
+  "about": "One alias name in both maps: the project's points at a plain entry, the global one at a flagged entry. The name's global alias target is looked up too, typed or referenced, in the default scope and MCP scope project (#279).",
+  "stores": {
+    "project": {
+      "entries": {
+        "a": "echo RVM1x >> \"$RLOG\"",
+        "p": "echo RVM2x $(al1) >> \"$RLOG\""
+      },
+      "aliases": {
+        "al1": "a"
+      }
+    },
+    "global": {
+      "entries": {
+        "gfl": "echo RVM3x >> \"$RLOG\""
+      },
+      "aliases": {
+        "al1": "gfl"
+      },
+      "confirm": {
+        "gfl": true
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "project",
+      "a"
+    ],
+    "2": [
+      "project",
+      "p"
+    ],
+    "3": [
+      "global",
+      "gfl"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "al1"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "p"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "plain"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "al1"
+      }
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "al1",
+        "scope": "project"
+      }
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "p"
+      }
+    }
+  ]
+}

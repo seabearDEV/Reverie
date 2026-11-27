@@ -1,0 +1,7 @@
+{
+  "value": "Reading scripts/gate-fuzz (#290). A red run is a finding: file it, never loosen a rule to get green (the first long run found #294). R0 guards against a green run that tested nothing: every world's approved canary run must log its marker, and a run of 20+ worlds fails if no unapproved invocation ran anything. R1 (a flagged entry ran) needs no model, so a hit there is real. R3r and R4r judge by reach and ignore depth, order and the exec cache; that is sound because a completed collect walk looks up exactly those names. R5 is a walk that stopped after something ran. R8 leaves scaffolding (_epoch.json, _README.md, .gitignore) out of its byte-identical check, because a refused write on an unscaffolded store creates them (#295); it checks for an even epoch and no lock instead. R7 (a read executed something) and R9 (a flag vanished) have never fired on any build, so they are unproven. Coverage that lives only in a fixture, not the generator: M19, the gate walk resolving a global entry's reference in the project (fixture 280-reference-store-gate). The model still assumes MCP scope project outside a project falls back to the global store; since #298 that refuses, which every rule treats as safe. A replay spec is code: replay only specs your own run wrote.",
+  "meta": {
+    "created": 1795748045565,
+    "updated": 1795791892410
+  }
+}

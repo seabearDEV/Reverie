@@ -1,0 +1,75 @@
+{
+  "about": "An unflagged entry reaches a flagged one through $(…) and ${…}: the reference gate (runKeys and runGated).",
+  "stores": {
+    "project": {
+      "entries": {
+        "top": "echo RVM1x $(fl) >> \"$RLOG\"",
+        "top2": "echo RVM2x ${fl} >> \"$RLOG\""
+      }
+    },
+    "global": {
+      "entries": {
+        "fl": "echo RVM3x >> \"$RLOG\""
+      },
+      "confirm": {
+        "fl": true
+      }
+    }
+  },
+  "markers": {
+    "1": [
+      "project",
+      "top"
+    ],
+    "2": [
+      "project",
+      "top2"
+    ],
+    "3": [
+      "global",
+      "fl"
+    ]
+  },
+  "invocations": [
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "top"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "cli",
+      "cwd": "proj",
+      "kind": "run",
+      "keys": [
+        "top2"
+      ],
+      "global": false,
+      "chain": false,
+      "yes": false,
+      "mode": "json"
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "top"
+      }
+    },
+    {
+      "surface": "mcp",
+      "cwd": "proj",
+      "tool": "reverie_run",
+      "args": {
+        "key": "top2"
+      }
+    }
+  ]
+}
