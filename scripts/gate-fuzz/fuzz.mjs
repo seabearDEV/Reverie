@@ -21,13 +21,14 @@
 //   --no-shrink        don't shrink failing worlds
 //   --out <dir>        where failing world specs go (default: a temp dir, printed)
 //   --keep             keep the worlds' temp directories
+//   --print-spec       with --world/--replay: also print the world spec (JSON)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { generateWorld } from './lib/gen.mjs';
-import { runWorld, tally } from './lib/run.mjs';
+import { prerequisites, runWorld, subsetSpec, tally } from './lib/run.mjs';
 import { assertSafeRoot } from './lib/world.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -41,8 +42,8 @@ function parseArgs(argv) {
     const a = argv[i];
     const val = () => argv[++i];
     switch (a) {
-      case '--quick': o.worlds ??= QUICK_WORLDS; o.mode = 'quick'; break;
-      case '--long': o.worlds ??= LONG_WORLDS; o.mode = 'long'; break;
+      case '--quick': o.worlds ??= QUICK_WORLDS; break;
+      case '--long': o.worlds ??= LONG_WORLDS; break;
       case '--dist': o.dist = val(); break;
       case '--seed': o.seed = Number(val()); break;
       case '--worlds': o.worlds = Number(val()); break;
@@ -57,12 +58,13 @@ function parseArgs(argv) {
       case '--report': o.report = val(); break;
       case '--out': o.out = val(); break;
       case '--keep': o.keep = true; break;
+      case '--print-spec': o.printSpec = true; break;
       case '--worker': o.worker = true; break;
       case '--stride': o.stride = Number(val()); break;
       case '--work': o.work = val(); break;
       case '--cache': o.cache = val(); break;
       case '-h': case '--help':
-        console.log(fs.readFileSync(new URL(import.meta.url), 'utf8').split('\n').filter(l => l.startsWith('//')).slice(0, 22).map(l => l.slice(3)).join('\n'));
+        console.log(fs.readFileSync(new URL(import.meta.url), 'utf8').split('\n').filter(l => l.startsWith('//')).slice(0, 23).map(l => l.slice(3)).join('\n'));
         process.exit(0);
         break;
       default: throw new Error(`unknown argument ${a}`);
@@ -83,8 +85,9 @@ const replayCmd = (o, extra) => `bun scripts/gate-fuzz/fuzz.mjs --dist ${shown(o
 /** One world on the build under test (and on --against, if given). Returns a JSON-able record. */
 async function doWorld(o, spec, work) {
   const root = path.join(work, `w${spec.index}`);
-  const only = o.inv === undefined ? undefined : new Set([o.inv]);
-  const records = await runWorld(spec, o.dist, root, { cacheDir: o.cache, only });
+  // --inv k replays k, and what it depends on (its token's issuer, the writes before it); only k is judged and shown.
+  const only = o.inv === undefined ? undefined : new Set([...prerequisites(spec, o.inv), o.inv]);
+  const records = (await runWorld(spec, o.dist, root, { cacheDir: o.cache, only })).filter(r => o.inv === undefined || r.i === o.inv);
   const stats = {};
   tally(stats, records, spec);
   const violations = records.filter(r => r.violations.length).map(r => ({
@@ -94,7 +97,7 @@ async function doWorld(o, spec, work) {
   }));
   const diffs = [];
   if (o.against) {
-    const other = await runWorld(spec, o.against, `${root}-against`, { cacheDir: o.cache, only });
+    const other = (await runWorld(spec, o.against, `${root}-against`, { cacheDir: o.cache, only })).filter(r => o.inv === undefined || r.i === o.inv);
     const byI = new Map(other.map(r => [r.i, r]));
     for (const r of records) {
       const b = byI.get(r.i);
@@ -111,13 +114,14 @@ async function doWorld(o, spec, work) {
 
 /** Greedy shrink: drop entries, aliases, flags, irregular sidecars and references while the same rule still fires. */
 async function shrink(o, spec, invIndex, rules, work) {
-  const inv = spec.invocations[invIndex];
-  if (inv.token && typeof inv.token === 'object') return null;   // token replays need their issuer: not shrunk
-  const base = { ...spec, invocations: [inv] };
+  // The invocation runs last, after what it depends on; only it is judged.
+  const base = subsetSpec(spec, [...prerequisites(spec, invIndex), invIndex]);
+  const target = base.invocations.length - 1;
   const still = async s => {
     const recs = await runWorld(s, o.dist, path.join(work, `shrink${spec.index}`), { cacheDir: o.cache });
-    return recs[0]?.violations.some(v => rules.includes(v.rule));
+    return recs.find(r => r.i === target)?.violations.some(v => rules.includes(v.rule));
   };
+  if (!(await still(base))) return null;   // does not replay on its own: no shrunk world
   let cur = JSON.parse(JSON.stringify(base));
   let attempts = 0;
   const steps = s => {
@@ -147,7 +151,7 @@ async function shrink(o, spec, invIndex, rules, work) {
     }
   }
   fs.rmSync(path.join(work, `shrink${spec.index}`), { recursive: true, force: true });
-  return cur;
+  return { spec: cur, inv: target };
 }
 
 function printViolation(o, v, shrunkFile) {
@@ -161,7 +165,7 @@ function printViolation(o, v, shrunkFile) {
   console.log(`  result: ${v.result.kind} ${v.result.code}; ran markers ${JSON.stringify(v.result.markers)}`);
   for (const d of v.details) console.log(`  ${d.rule}: ${d.detail}`);
   console.log(`  replay: ${replayCmd(o, o.replay ? `--replay ${o.replay} --inv ${v.inv}` : `--seed ${o.seed} --world ${v.world} --inv ${v.inv}`)}`);
-  if (shrunkFile) console.log(`  shrunk: ${replayCmd(o, `--replay ${shrunkFile} --inv 0`)}`);
+  if (shrunkFile) console.log(`  shrunk: ${replayCmd(o, `--replay ${shrunkFile} --inv ${v.shrunkInv ?? 0}`)}`);
 }
 
 function mergeStats(into, s) {
@@ -190,8 +194,9 @@ async function worker(o) {
       const small = await shrink(o, spec, v.inv, v.rules, work);
       if (small) {
         const file = path.join(o.out, `seed${o.seed}-world${spec.index}-inv${v.inv}.json`);
-        fs.writeFileSync(file, JSON.stringify(small, null, 2));
+        fs.writeFileSync(file, JSON.stringify(small.spec, null, 2));
         v.shrunk = file;
+        v.shrunkInv = small.inv;
       }
     }
     process.stdout.write(JSON.stringify({ world: i, stats: rec.stats, violations: rec.violations, diffs: rec.diffs }) + '\n');
@@ -222,7 +227,7 @@ async function main() {
         for (const v of r.violations) console.log(`    ${v.rule}: ${v.detail}`);
       }
       for (const d of rec.diffs) console.log(`DIFF inv ${d.inv}: the other build asks, this one ran ${JSON.stringify(d.this.markers)}`);
-      if (process.env.GATE_FUZZ_SPEC) console.log(JSON.stringify(spec, null, 2));
+      if (o.printSpec) console.log(JSON.stringify(spec, null, 2));
       process.exitCode = rec.violations.length ? 1 : 0;
       return;
     }
@@ -245,7 +250,6 @@ async function main() {
 
     const out = o.out ? path.resolve(o.out) : fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'rvr-gate-fuzz-failures-'));
     fs.mkdirSync(out, { recursive: true });
-    o.outDir = out;
     const jobs = Math.max(1, Math.min(o.jobs ?? Math.min(os.availableParallelism?.() ?? os.cpus().length, 8), o.worlds));
     console.log(`gate-fuzz: ${o.worlds} worlds from index ${o.start}, seed ${o.seed}, ${jobs} jobs, build ${o.dist}${o.against ? `, against ${o.against}` : ''}`);
     const stats = {};

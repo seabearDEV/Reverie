@@ -1,5 +1,4 @@
 // Run one world's invocations on a build and judge each one.
-import path from 'node:path';
 import { cliArgs } from './gen.mjs';
 import { runCli, runMcpSession } from './drive.mjs';
 import { diffLines, judge, judgeWrite, isRead } from './oracle.mjs';
@@ -79,6 +78,33 @@ async function runWrites(spec, dist, root, out, wanted, cacheDir) {
   }
 }
 
+/**
+ * What invocation `k` needs to have run before it to replay the same way: a
+ * token redeem needs the call that issued the token (and any earlier redeem
+ * of it); a write needs the writes before it, which it compounds on. A CLI
+ * run and an MCP call without a token stand alone.
+ */
+export function prerequisites(spec, k) {
+  const inv = spec.invocations[k];
+  if (inv.kind === 'write') return spec.invocations.map((x, i) => i).filter(i => i < k && spec.invocations[i].kind === 'write');
+  if (inv.surface === 'mcp' && inv.token && typeof inv.token === 'object') {
+    const from = inv.token.from;
+    return [from, ...spec.invocations.map((x, i) => i).filter(i => i < k && i !== from && spec.invocations[i].token?.from === from)].sort((a, b) => a - b);
+  }
+  return [];
+}
+
+/** A copy of `spec` holding only the invocations at `indexes`, token references renumbered. */
+export function subsetSpec(spec, indexes) {
+  const map = new Map(indexes.map((g, l) => [g, l]));
+  const invocations = indexes.map(g => {
+    const inv = JSON.parse(JSON.stringify(spec.invocations[g]));
+    if (inv.token && typeof inv.token === 'object') inv.token = map.has(inv.token.from) ? { from: map.get(inv.token.from) } : 'bogus';
+    return inv;
+  });
+  return { ...spec, invocations };
+}
+
 /** Counters that show what the generator reached on this build. */
 export function tally(stats, records, spec) {
   stats.worlds = (stats.worlds ?? 0) + 1;
@@ -105,4 +131,3 @@ export function tally(stats, records, spec) {
   }
 }
 
-export const relDist = dist => path.relative(process.cwd(), dist) || '.';

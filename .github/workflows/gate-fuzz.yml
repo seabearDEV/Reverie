@@ -6,8 +6,9 @@
 #
 # Quick mode on pull requests that touch the code or the fuzzer, with a fixed
 # seed so a red run replays exactly. Long mode weekly, with a new seed each
-# week so the worlds keep changing. A failure uploads the report and the
-# shrunk failing worlds; each violation in the log has a one-line replay.
+# week (the run number) so the worlds keep changing. A failure uploads the
+# report and the shrunk failing worlds; each violation in the log has a
+# one-line replay.
 name: Gate fuzz
 
 on:
@@ -66,10 +67,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # The long mode's 3,000 worlds (one seed) as four shards of 750, in parallel.
   long:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'long')
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        start: [0, 750, 1500, 2250]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -79,16 +85,17 @@ jobs:
 
       - run: bun run build
 
-      - name: Gate fuzz (long)
-        run: bun scripts/gate-fuzz/fuzz.mjs --long --seed "${SEED:-$RUN_NUMBER}" --report gate-fuzz-report.json --out gate-fuzz-failures
+      - name: Gate fuzz (long, worlds ${{ matrix.start }}+750)
+        run: bun scripts/gate-fuzz/fuzz.mjs --seed "${SEED:-$RUN_NUMBER}" --start "$START" --worlds 750 --report gate-fuzz-report.json --out gate-fuzz-failures
         env:
           SEED: ${{ inputs.seed }}
           RUN_NUMBER: ${{ github.run_number }}
+          START: ${{ matrix.start }}
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
-          name: gate-fuzz-long
+          name: gate-fuzz-long-${{ matrix.start }}
           path: |
             gate-fuzz-report.json
             gate-fuzz-failures/
