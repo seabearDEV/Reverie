@@ -97,6 +97,25 @@ export function resolveScopeForWrite(scope: Scope | undefined): Exclude<Scope, '
 }
 
 /**
+ * A project the resolver finds (uncached) that the store has no store for —
+ * the case resolveScopeForWrite refuses an auto write for — or undefined.
+ * The run gates fail closed on it: that project's confirmation list was
+ * never read, so "no flag" proves nothing (an MCP server that started
+ * outside a project would otherwise run, unasked, a command the project
+ * created since gates).
+ */
+export function unusedProjectStore(): string | undefined {
+  if (storeHasProject === undefined) return undefined;
+  const { path: found } = findProjectFileWithDiagnostic();
+  return found && !storeHasProject() ? found : undefined;
+}
+
+/** Why a run is gated while unusedProjectStore() names `found`. */
+export function unusedProjectReason(found: string): string {
+  return `a project store was found at ${found} that this process is not using, so its confirmation flags were not checked (restart a long-lived MCP server so it uses it, or fix or move a legacy .codexcli.json that could not be migrated)`;
+}
+
+/**
  * Re-probe the resolver and return the diagnostic without throwing. Useful
  * for callers that want to attach `rescuedByExplicitGlobal` telemetry on a
  * write that succeeded with explicit `scope: 'global'` despite project

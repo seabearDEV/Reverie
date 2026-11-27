@@ -50,7 +50,7 @@ import { resolveAgentIdentity } from "./utils/agentIdentity";
 import { logAudit, queryAuditLog, sanitizeParams, getAuditPath } from "./utils/audit";
 import { formatStatsReport } from "./commands/statsReport";
 import type { ErrorCode } from "./utils/output";
-import { resolveScopeForWrite, ProjectResolutionError } from "./projectResolution";
+import { resolveScopeForWrite, ProjectResolutionError, unusedProjectStore, unusedProjectReason } from "./projectResolution";
 import { isStoreIoError } from "./utils/storeWriteError";
 import type { CodexValue } from "./types";
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapListed, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, readForWrite, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
@@ -1119,12 +1119,18 @@ function runGated(
   // is gated until it is resolved. A flag was looked up above, which is the
   // scan this check reads.
   if (!needsConfirm && confirmListUnreadable()) needsConfirm = true;
+  // #294 review: so is a project this server found but is not using (one
+  // created after it started, say). Its list was never read. The ask names it.
+  const unusedProject = unusedProjectStore();
+  if (unusedProject !== undefined) needsConfirm = true;
 
   if (opts.dry) return textResponse(`$ ${command}`);
 
   if (needsConfirm && !opts.force) {
     const fingerprint = runFingerprint(command, runs);
-    const why = unchecked === undefined ? '' : `Not every reference it reaches could be checked for a confirmation flag (${unchecked}).\n`;
+    const unusedWhy = unusedProject === undefined ? '' : unusedProjectReason(unusedProject);
+    const why = (unchecked === undefined ? '' : `Not every reference it reaches could be checked for a confirmation flag (${unchecked}).\n`)
+      + (unusedWhy === '' ? '' : `${unusedWhy.charAt(0).toUpperCase()}${unusedWhy.slice(1)}.\n`);
     const prompt = () =>
       `⚠ This command requires confirmation before execution:\n$ ${command}\n${why}\nTo execute, call reverie_run again with confirm_token: "${createConfirmToken(key, command, fingerprint)}"`;
     if (opts.confirm_token) {

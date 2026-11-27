@@ -15,7 +15,7 @@ import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
 import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, resolveKey, renameAlias } from '../alias';
 import { hasConfirm, setConfirm, removeConfirm, flagsListedUnder, flagsGating } from '../confirm';
-import { resolveScopeForWrite } from '../projectResolution';
+import { resolveScopeForWrite, unusedProjectStore, unusedProjectReason } from '../projectResolution';
 import { debug } from '../utils/debug';
 import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
 import { GetOptions } from '../types';
@@ -231,13 +231,21 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
     // #289: fail closed when the walk stopped past a command exec would run:
     // what follows was not checked. The reason goes in the refusal.
     const unchecked = walkUnchecked(trace) ? trace.incomplete : undefined;
-    const refusal = unchecked === undefined
+    // #294 review: fail closed too while the resolver finds a project this
+    // process has no store for (next to a legacy .codexcli.json that cannot
+    // be migrated): its confirmation list was never read.
+    const unusedProject = unusedProjectStore();
+    const reasons = [
+      ...(unchecked === undefined ? [] : [`not every reference it reaches could be checked for a confirmation flag (${unchecked})`]),
+      ...(unusedProject === undefined ? [] : [unusedProjectReason(unusedProject)]),
+    ];
+    const refusal = reasons.length === 0
       ? 'Entry requires confirmation.'
-      : `Entry requires confirmation: not every reference it reaches could be checked for a confirmation flag (${unchecked}).`;
+      : `Entry requires confirmation: ${reasons.join('; ')}.`;
     // #215: fail closed. An unreadable confirmation list loads as empty, so
     // while one is unreadable every entry is gated. hasConfirm runs first —
     // it does the scan the second check reads.
-    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || unchecked !== undefined || confirmListUnreadable();
+    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || unchecked !== undefined || confirmListUnreadable() || unusedProject !== undefined;
 
     // SECURITY: produce the real shell command ONLY when actually executing —
     // this is the single place `$(key)` exec refs run. Callers invoke it past
@@ -312,6 +320,7 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
     if (needsConfirm && !options.yes) {
       if (process.stdin.isTTY) {
         if (unchecked !== undefined) console.error(`warning: not every reference this command reaches could be checked for a confirmation flag (${unchecked}).`);
+        if (unusedProject !== undefined) console.error(`warning: ${unusedProjectReason(unusedProject)}.`);
         const answer = await askConfirmation('Run this? [y/N] ', options.source ? process.stderr : undefined);
         if (answer.toLowerCase() !== 'y') {
           if (options.source) {
