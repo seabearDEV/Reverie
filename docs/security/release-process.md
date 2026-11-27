@@ -51,8 +51,10 @@ cheap, catches known classes and regressions:
   `bun run fuzz:gate` takes about 3 minutes and `bun run fuzz:gate:long`
   about 30. Before a minor release, the long mode must be green on the
   release commit: run it, or point to that commit's weekly run. A violation
-  prints a one-line replay and a shrunk world. It found #289, a gate bypass
-  that the differential check below did not see (#290).
+  prints a one-line replay and a shrunk world. A scratch version of it, used
+  in a review, found #289, a gate bypass that the differential check below
+  did not see (#290). This one reproduces #289, #279 and #280 on a build from
+  before their fix.
 - **Differential check for the run gate** (`scripts/gate-differential/`, README
   there). A change to how `rename`, `remove` or `confirm set` touch the
   confirmation list has to keep every entry the previous build gates gated.
