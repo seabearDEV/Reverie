@@ -7,7 +7,9 @@ bun run build
 bun scripts/scope-differential/diff.mjs --against <other dist> --jobs 4
 ```
 
-The usual use is a main-versus-branch check for a change that should not change behaviour: build main into a scratch folder (`git archive <main> | tar -x -C <dir>`, then `bun install && bun run build` there) and pass its `dist`. It exits 0 when nothing differs, 1 when something does, 2 when it could not run every invocation.
+The usual use is a main-versus-branch check for a change that should not change behaviour: build main into a scratch folder (`git archive <main> | tar -x -C <dir>`, then `bun install && bun run build` there) and pass its `dist`. It exits 0 when nothing differs, 1 when something does, 2 when it could not run every invocation or no value write landed on a build (below).
+
+CI runs it on every pull request that touches `src/` or these scripts (`.github/workflows/scope-differential.yml`): the pull request's build against its base's, as four parallel shards, with `write-then-run.mjs` alongside. A pull request meant to change what a command does adds an expect module for it (below), named `expect-<issue>.mjs`. The job passes the one expect module the pull request adds or changes. A module already on the base is not used, so it cannot excuse a later change, and two new or changed modules fail the job.
 
 ## What it runs
 
@@ -53,8 +55,9 @@ Once per world, in each scope and from both directories:
 
 - CLI: `get` (listing), `get -A`, `find`, `context`, `alias list`, a batch `set a=… b=…`, and `data export` and `data import` of aliases (merge, replace, preview; with `-P` too).
 - MCP: `reverie_get` (listing, `aliases_only`), `reverie_find`, `reverie_alias_list`, `reverie_context`, `reverie_export`, and `reverie_import` of aliases (merge, replace, preview).
+- A rename of `k.p` and of `k.g` onto each alias name in the world: `rename` (default scope and `-G`) and `reverie_rename` (each scope). The alias still means its target, and the rename says the entry is hidden behind it.
 
-That is 12,324 invocations per build. Nothing runs a stored command: `run` is only ever `--dry`, `reverie_run` only `dry: true`, and every value is an `echo` anyway. `edit` gets an `$EDITOR` that appends a fixed text.
+That is 12,844 invocations per build. Nothing runs a stored command: `run` is only ever `--dry`, `reverie_run` only `dry: true`, and every value is an `echo` anyway. `edit` gets an `$EDITOR` that appends a fixed text.
 
 ## What it compares
 
@@ -63,6 +66,8 @@ Each invocation runs alone in a fresh copy of its world, on one build and then o
 - the output: the CLI's JSON envelope, stderr and exit code, or the MCP tool's text;
 - every file of both stores and their lock siblings, `_epoch.json` and the scaffolding included, as a content hash or a link target;
 - the rows the invocation added to `audit.jsonl` and `telemetry.jsonl`. Some commands resolve a name only for the audit row, so those rows are checked as well.
+
+**The write canary.** A build whose every write is refused shows no difference from another such build: running the harness from a copy of the repo does that (`context.confirmGate` in the store). So a run that selects every world (a whole run or a shard, without `--filter` or `--world`) fails with exit 2 when no `set <name> v.new` or `reverie_set` landed on one of the builds. It prints how many landed on each. `write-then-run.mjs` does the same for its writes and for the runs after them.
 
 Before comparing, the world's path is replaced by `<ROOT>`. Timestamps a write puts in an entry file become `T`, and the rows lose `ts`, `duration` and `session`. Two runs of one build give the same record, so main against main shows no differences.
 
@@ -74,6 +79,7 @@ Before comparing, the world's path is replaced by `<ROOT>`. Timestamps a write p
 --jobs <n>         parallel workers (default: min(cores, 4))
 --world <names>    only these worlds (comma-separated)
 --filter <text>    only invocations whose id contains this text, e.g. '|proj|cli rename'
+--shard <k>/<n>    only the k-th of n parts: every n-th invocation, so each part spans every world
 --report <file>    every difference, as JSON
 --dump <file>      every record of both builds, as JSON lines (large)
 --show <n>         how many differences to print in full (default 30)

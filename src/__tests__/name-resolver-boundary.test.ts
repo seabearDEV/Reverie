@@ -4,10 +4,10 @@
 // differently. This scan keeps it that way: the raw alias-map loaders are
 // used by alias.ts alone, under any kind of import; no other file looks a
 // name up in a map it loaded; and every read of an `.aliases` property is
-// one listed below with the reason — it lists a map (a display, an export)
-// or writes one (the store, an import, the alias commands under their
-// lock). A new one fails here until it is one of those, or asks the
-// resolver instead.
+// one listed below, counted per file, with the reason — it lists a map (a
+// display, an export) or writes one (the store, an import, the alias
+// commands under their lock). A new one fails here until it is one of
+// those, or asks the resolver instead.
 //
 // It matches text, not types: a tripwire, not a proof. Comments and string
 // literals are blanked first, so prose cannot trip it and cannot hide code.
@@ -65,25 +65,40 @@ function storeNamespaceImporters(src: Source[]): string[] {
 
 /**
  * Lookups in an alias map a file loaded itself — `Object.hasOwn(m, …)`,
- * `… in m`, `m[…]`, where `m` holds what a loader returned — or the same on
- * the loader's result directly.
+ * `hasOwnProperty.call(m, …)`, `… in m`, `m[…]`, `m?.[…]`, a destructuring
+ * of `m`, `Object.entries(m).find(…)`, where `m` holds what a loader
+ * returned — or the same on the loader's result directly.
  */
 function inlineLookups(src: Source[]): string[] {
   const loaders = MAP_SOURCES.join('|');
+  const callStart = `(?:\\w+\\.)?(?:${loaders})\\s*\\(`;                                // a loader's call, up to its "("
+  const call = `${callStart}(?:[^()]|\\([^()]*\\))*\\)`;                          // the whole call, one level of nested parens
+  const hasOwn = `\\bhasOwn(?:Property)?(?:\\s*\\.\\s*(?:call|apply))?\\s*\\(\\s*`; // Object.hasOwn( or ….hasOwnProperty.call(
+  const index = `\\s*(?:\\?\\.\\s*)?\\[`;                                            // [ or ?.[
+  const search = `\\s*\\.\\s*(?:find|findIndex|findLast|findLastIndex|some|every|includes|indexOf)\\s*\\(`;
   const out: string[] = [];
   for (const f of src) {
     if (f.rel === 'utils/nameResolver.ts') continue;   // the resolver itself
-    // The variable a loader's result is assigned to, in the same statement and block.
-    const assigned = new RegExp(`(?:const|let|var)\\s+(\\w+)\\s*(?::[^=;{}]+)?=\\s*[^;\\n{}]*?\\b(?:${loaders})\\s*\\(`, 'g');
-    const vars = [...new Set([...f.code.matchAll(assigned)].map(m => m[1]))];
+    // The variable a loader's result is assigned to: in its declaration, in
+    // the same statement and block, or by a later plain assignment.
+    const declared = new RegExp(`(?:const|let|var)\\s+(\\w+)\\s*(?::[^=;{}]+)?=\\s*[^;\\n{}]*?\\b(?:${loaders})\\s*\\(`, 'g');
+    const reassigned = new RegExp(`(?<![\\w$.])(\\w+)\\s*=(?![=>])\\s*[^;\\n{}]*?\\b(?:${loaders})\\s*\\(`, 'g');
+    const vars = [...new Set([...f.code.matchAll(declared), ...f.code.matchAll(reassigned)].map(m => m[1]))];
     const patterns: [string, RegExp][] = [
-      ['direct hasOwn', new RegExp(`hasOwn\\(\\s*(?:\\w+\\.)?(?:${loaders})\\s*\\(`)],
-      ['direct in', new RegExp(`\\bin\\s+(?:\\w+\\.)?(?:${loaders})\\s*\\(`)],
-      ['direct index', new RegExp(`\\b(?:${loaders})\\s*\\((?:[^()]|\\([^()]*\\))*\\)\\s*\\[`)],
+      // What comes before the call needs only its start, so any arguments match.
+      ['direct hasOwn', new RegExp(`${hasOwn}${callStart}`)],
+      ['direct in', new RegExp(`\\bin\\s+${callStart}`)],
+      ['direct destructuring', new RegExp(`(?:const|let|var)\\s*\\{[^}]*\\}\\s*(?::[^=;]+)?=\\s*${callStart}`)],
+      // What comes after it needs the whole call.
+      ['direct index', new RegExp(`\\b${call}${index}`)],
+      ['direct search', new RegExp(`Object\\.(?:entries|keys|values)\\(\\s*${call}\\s*\\)${search}`)],
       ...vars.flatMap((v): [string, RegExp][] => [
-        [`hasOwn(${v}, …)`, new RegExp(`hasOwn\\(\\s*${v}\\b`)],
+        [`hasOwn(${v}, …)`, new RegExp(`${hasOwn}${v}\\b`)],
+        [`${v}.hasOwnProperty(…)`, new RegExp(`(?<![\\w$.])${v}\\s*(?:\\?\\.|\\.)\\s*hasOwnProperty\\s*\\(`)],
         [`… in ${v}`, new RegExp(`\\bin\\s+${v}\\b`)],
-        [`${v}[…]`, new RegExp(`(?<![\\w$.])${v}\\s*\\[`)],
+        [`${v}[…]`, new RegExp(`(?<![\\w$.])${v}${index}`)],
+        [`{ … } = ${v}`, new RegExp(`(?:const|let|var)\\s*\\{[^}]*\\}\\s*(?::[^=;]+)?=\\s*${v}\\b(?!\\s*[.([])`)],
+        [`Object.entries(${v}).find(…)`, new RegExp(`Object\\.(?:entries|keys|values)\\(\\s*${v}\\s*\\)${search}`)],
       ]),
     ];
     for (const [what, re] of patterns) if (re.test(f.code)) out.push(`${f.rel}: ${what}`);
@@ -91,11 +106,20 @@ function inlineLookups(src: Source[]): string[] {
   return out.sort();
 }
 
-/** Every `x.aliases` (`x.y.aliases`, …) read, as `file: expression`. */
+/**
+ * Every `x.aliases` (`x.y.aliases`, …) read, as `file: expression`, with
+ * `×n` when the file reads it more than once: a further read of a listed
+ * expression is a new read.
+ */
 function aliasesReads(src: Source[]): string[] {
-  const out = new Set<string>();
-  for (const f of src) for (const m of f.code.matchAll(/\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.aliases\b/g)) out.add(`${f.rel}: ${m[1]}.aliases`);
-  return [...out].sort();
+  const count = new Map<string, number>();
+  for (const f of src) {
+    for (const m of f.code.matchAll(/\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.aliases\b/g)) {
+      const k = `${f.rel}: ${m[1]}.aliases`;
+      count.set(k, (count.get(k) ?? 0) + 1);
+    }
+  }
+  return [...count].map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).sort();
 }
 
 describe('one name resolver', () => {
@@ -131,34 +155,60 @@ describe('one name resolver', () => {
 
   it('every `.aliases` read is one of these', () => {
     expect(aliasesReads(files)).toEqual([
-      'alias.ts: current.aliases',                            // the alias commands' writes, under the store lock
-      'commands/context.ts: opts.aliases',                    // the bootstrap's alias block, handed in
-      'commands/context.ts: payload.aliases',                 // the same, rendered
+      'alias.ts: current.aliases ×2',                         // the alias commands' writes, under the store lock
+      'commands/context.ts: opts.aliases ×2',                 // the bootstrap's alias block, handed in
+      'commands/context.ts: payload.aliases ×2',              // the same, rendered
       'commands/context.ts: result.aliases',                  // the --json result
       'commands/data-management.ts: current.aliases',         // import: the merge base under the lock
       'commands/data-management.ts: envelopePayload.aliases', // import: the file's section
       'commands/data-management.ts: validData.aliases',       // import: the file's section
-      'commands/entries.ts: options.aliases',                 // the -a flag
-      'commands/manifest.ts: cmd.aliases',                    // a command's other names
-      'commands/search.ts: options.aliases',                  // the -a flag
+      'commands/entries.ts: options.aliases ×2',              // the -a flag
+      'commands/manifest.ts: cmd.aliases ×2',                 // a command's other names
+      'commands/search.ts: options.aliases ×4',               // the -a flag
       'commands/search.ts: result.aliases',                   // the --json result
       'index.ts: options.aliases',                            // the -a flag
       'mcp-server.ts: current.aliases',                       // import: the merge base under the lock
-      'mcp-server.ts: envelopePayload.aliases',               // import: the file's section
-      'mcp-server.ts: obj.aliases',                           // import: the file's section
+      'mcp-server.ts: envelopePayload.aliases ×4',            // import: the file's section
+      'mcp-server.ts: obj.aliases ×4',                        // import: the file's section
       'mcp-server.ts: payload.aliases',                       // export: the section written
-      'rename.ts: other.data.aliases',                        // #260: the global aliases a default-scope rename leaves, to name them
-      'rename.ts: target.data.aliases',                       // the re-point, through repointAliases
+      'rename.ts: other.data.aliases ×2',                     // #260: the global aliases a default-scope rename leaves, to name them
+      'rename.ts: target.data.aliases ×2',                    // the re-point, through repointAliases
       'storage.ts: current.aliases',                          // set -a: the alias written with the value (#268)
       'storage.ts: next.aliases',                             // the same
-      'store.ts: current.aliases',                            // the store
+      'store.ts: current.aliases ×2',                         // the store
       'store.ts: parsed.aliases',                             // the store, loading a legacy file
-      'store.ts: sections.aliases',                           // the store, writing an import
-      'utils/directoryStore.ts: data.aliases',                // the store's files
+      'store.ts: sections.aliases ×2',                        // the store, writing an import
+      'utils/directoryStore.ts: data.aliases ×4',             // the store's files
       'utils/directoryStore.ts: parsed.aliases',              // the store's files, migrating
-      'utils/importSections.ts: current.aliases',             // import: the merge, and whether an imported alias is new
+      'utils/importSections.ts: current.aliases ×2',          // import: the merge, and whether an imported alias is new
       'utils/importSections.ts: next.aliases',                // import: the merged section
-      'utils/importSections.ts: sections.aliases',            // import: the file's section
+      'utils/importSections.ts: sections.aliases ×4',         // import: the file's section
     ]);
+  });
+});
+
+// #305 L5: lookups the scan used to miss. Each one looks a name up in a map
+// the file loaded, written in a way the patterns above did not match.
+describe('the scan sees a lookup however it is written', () => {
+  const scan = (code: string) => inlineLookups([{ rel: 'x.ts', code: codeOf(code) }]);
+  const cases: [string, string][] = [
+    ['an optional-chained index', 'const seen = aliasesSeen(view, ctx);\nconst t = seen?.[key];'],
+    ["an optional-chained index on a loader's result", 'const t = loadAliases(scope)?.[key];'],
+    ['a destructured computed key', 'const { [key]: t } = loadAliases(scope);'],
+    ['hasOwnProperty.call', 'const seen = aliasesSeen(view, ctx);\nif (Object.prototype.hasOwnProperty.call(seen, key)) use();'],
+    ['Object.entries(…).find', 'const hit = Object.entries(loadAliases(scope)).find(([a]) => a === key);'],
+    ['an assignment split over two statements', 'let seen;\nseen = loadAliases(scope);\nconst t = seen[key];'],
+    // The same forms on the other side: a map variable, the method call, another search.
+    ['a destructured key of a map variable', 'const seen = aliasesSeen(view, ctx);\nconst { [key]: t } = seen;'],
+    ['seen.hasOwnProperty(…)', 'const seen = aliasesSeen(view, ctx);\nif (seen.hasOwnProperty(key)) use();'],
+    ['Object.keys(…).includes', 'const seen = aliasesSeen(view, ctx);\nif (Object.keys(seen).includes(key)) use();'],
+    // Review of #310: forms the old scan caught whatever the loader's arguments.
+    ['hasOwn on a loader called with nested calls', 'if (Object.hasOwn(loadAliases(scopeFor(getOpts())), key)) use();'],
+    ['in on a loader called with nested calls', 'if (key in loadAliases(scopeFor(getOpts()))) use();'],
+  ];
+  for (const [what, code] of cases) it(`catches ${what}`, () => { expect(scan(code)).not.toEqual([]); });
+
+  it('counts the reads of an `.aliases` expression, so a second read of a listed one is new', () => {
+    expect(aliasesReads([{ rel: 'x.ts', code: codeOf('list(current.aliases);\nconst t = current.aliases[key];') }])).toEqual(['x.ts: current.aliases ×2']);
   });
 });

@@ -12,6 +12,8 @@
 //   --jobs <n>         parallel workers (default: min(cores, 4))
 //   --world <names>    only these worlds (comma-separated)
 //   --filter <text>    only invocations whose id contains this text
+//   --shard <k>/<n>    only the k-th of n equal parts (every n-th invocation),
+//                      for parallel CI jobs
 //   --report <file>    write every difference as JSON
 //   --dump <file>      write every record (both builds) as JSON lines
 //   --show <n>         print the first n differences in full (default 30)
@@ -44,6 +46,13 @@ function parseArgs(argv) {
       case '--jobs': o.jobs = num(); break;
       case '--world': o.worlds = val().split(','); break;
       case '--filter': o.filter = val(); break;
+      case '--shard': {
+        const v = val();
+        const m = /^(\d+)\/(\d+)$/.exec(v);
+        if (!m || Number(m[1]) < 1 || Number(m[1]) > Number(m[2])) throw new Error(`--shard takes k/n with 1 <= k <= n, not ${JSON.stringify(v)}`);
+        o.shard = { k: Number(m[1]), n: Number(m[2]) };
+        break;
+      }
       case '--report': o.report = val(); break;
       case '--dump': o.dump = val(); break;
       case '--show': o.show = num(); break;
@@ -54,7 +63,7 @@ function parseArgs(argv) {
       case '--slot': o.slot = num(); break;
       case '--of': o.of = num(); break;
       case '-h': case '--help':
-        console.log(fs.readFileSync(SELF, 'utf8').split('\n').filter(l => l.startsWith('//')).slice(0, 22).map(l => l.slice(3)).join('\n'));
+        console.log(fs.readFileSync(SELF, 'utf8').split('\n').filter(l => l.startsWith('//')).slice(0, 24).map(l => l.slice(3)).join('\n'));
         process.exit(0);
         break;
       default: throw new Error(`unknown argument ${a}`);
@@ -71,8 +80,23 @@ function parseArgs(argv) {
 
 // --filter is plain text, not a regex: an id is full of regex syntax ('|',
 // '{', '('), and the text of an id selects exactly that invocation.
+// --shard takes every n-th of what is left, so the parts cover every world.
 function selected(o) {
-  return allInvocations({ worlds: o.worlds ?? WORLDS }).filter(inv => !o.filter || inv.id.includes(o.filter));
+  return allInvocations({ worlds: o.worlds ?? WORLDS })
+    .filter(inv => !o.filter || inv.id.includes(o.filter))
+    .filter((_, i) => !o.shard || i % o.shard.n === o.shard.k - 1);
+}
+
+/**
+ * Whether a record shows a value write that landed: `set <name> v.new` on
+ * the CLI, `reverie_set` without an alias over MCP. Undefined for any other
+ * invocation. A build whose every write is refused (the harness run from a
+ * copy, see context.confirmGate) shows no difference from another such build.
+ */
+function landed(inv, rec) {
+  if (inv.surface === 'cli' && inv.argv[0] === 'set' && inv.argv[2] === 'v.new' && !inv.argv.includes('-a')) return rec.result.stdout?.ok === true;
+  if (inv.surface === 'mcp' && inv.tool === 'reverie_set' && !inv.args.alias) return !rec.result.isError;
+  return undefined;
 }
 
 async function worker(o) {
@@ -87,7 +111,8 @@ async function worker(o) {
     const b = o.against ? await runInvocation(o.against, root, inv, cache) : undefined;
     const diffs = b ? compareRecords(a, b) : [];
     const expected = expectation && diffs.length ? expectation(inv, a, b, diffs) : null;
-    process.stdout.write(JSON.stringify({ i, id: inv.id, diffs, ...(expected ? { expected } : {}), ...(o.dump ? { a, b } : {}) }) + '\n');
+    const wrote = landed(inv, a) === undefined ? undefined : [landed(inv, a), b ? landed(inv, b) : null];
+    process.stdout.write(JSON.stringify({ i, id: inv.id, diffs, ...(expected ? { expected } : {}), ...(wrote ? { wrote } : {}), ...(o.dump ? { a, b } : {}) }) + '\n');
   }
   fs.rmSync(root, { recursive: true, force: true });
 }
@@ -130,6 +155,7 @@ async function main() {
     if (o.against) args.push('--against', o.against);
     if (o.worlds) args.push('--world', o.worlds.join(','));
     if (o.filter) args.push('--filter', o.filter);
+    if (o.shard) args.push('--shard', `${o.shard.k}/${o.shard.n}`);
     if (o.dump) args.push('--dump', '-');
     if (o.expect) args.push('--expect', o.expect);
     const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'inherit'] });
@@ -137,7 +163,7 @@ async function main() {
     readline.createInterface({ input: child.stdout }).on('line', line => {
       const rec = JSON.parse(line);
       if (dump) dump.write(line + '\n');
-      results.push({ i: rec.i, id: rec.id, diffs: rec.diffs, expected: rec.expected });
+      results.push({ i: rec.i, id: rec.id, diffs: rec.diffs, expected: rec.expected, wrote: rec.wrote });
       if (results.length % 500 === 0) process.stderr.write(`  ${results.length}/${invs.length}\n`);
     });
     child.on('exit', code => { children.delete(child); code === 0 ? resolve() : reject(new Error(`worker ${slot} exited with ${code}`)); });
@@ -178,9 +204,18 @@ async function main() {
     console.log('\nexpected differences, by rule:');
     for (const [rule, n] of Object.entries(byRule).sort()) console.log(`  ${rule.padEnd(60)} ${String(n).padStart(6)}`);
   }
+  // The write canary: in a whole run (or a shard of one), some value writes
+  // must land on each build, or "0 differing" may mean both refused them all.
+  const writes = results.filter(r => r.wrote);
+  const landedOn = side => writes.filter(r => r.wrote[side]).length;
+  const canary = o.against && !o.filter && !o.worlds && writes.length > 0;
+  if (writes.length) console.log(`\nvalue writes that landed: ${landedOn(0)}/${writes.length} on ${o.dist}${o.against ? `, ${landedOn(1)}/${writes.length} on ${o.against}` : ''}`);
+  const refusedAll = canary ? [[0, o.dist], [1, o.against]].filter(([side]) => landedOn(side) === 0).map(([, d]) => d) : [];
+  for (const d of refusedAll) console.log(`WRITE CANARY: no value write landed on ${d}, so its records prove nothing. Run the harness from the repo, not a copy (context.confirmGate).`);
   const secs = Math.round((Date.now() - started) / 1000);
   console.log(`\n${results.length} invocations, ${differing.length} differing${o.expect ? `, ${unexpected.length} unexpected` : ''} (${secs}s)`);
   if (results.length !== invs.length) { console.log(`MISSING ${invs.length - results.length} invocations`); process.exitCode = 2; }
+  else if (refusedAll.length) process.exitCode = 2;
   else if ((o.expect ? unexpected : differing).length > 0) process.exitCode = 1;
 }
 

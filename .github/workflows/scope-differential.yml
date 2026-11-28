@@ -1,0 +1,94 @@
+# The scope differential on pull requests (#305). Compares the pull
+# request's build with its base's (scripts/scope-differential/README.md):
+# diff.mjs, which entry every command that takes a name acts on, as four
+# shards; and write-then-run.mjs, which fails on a run after an alias write
+# that the base asks about and the pull request runs. Both run from the pull
+# request's checkout (the default merge ref), against a build of the base
+# checked out in base/.
+#
+# A pull request meant to change what a command does adds an expect module,
+# scripts/scope-differential/expect-<issue>.mjs, naming the differences it
+# makes. The job passes the one module the pull request adds or changes as
+# --expect. A module already on the base is not used, so it cannot excuse a
+# later change.
+name: Scope differential
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/scope-differential/**'
+      - 'scripts/gate-fuzz/lib/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig.json'
+      - '.github/workflows/scope-differential.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ['diff 1/4', 'diff 2/4', 'diff 3/4', 'diff 4/4', 'write-then-run']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # After the first checkout, which cleans the workspace.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      - name: Build the base
+        working-directory: base
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Scope differential (${{ matrix.part }})
+        if: startsWith(matrix.part, 'diff ')
+        env:
+          PART: ${{ matrix.part }}
+        run: |
+          set -euo pipefail
+          expect=()
+          for f in scripts/scope-differential/expect-*.mjs; do
+            [ -e "$f" ] || continue
+            cmp -s "$f" "base/$f" || expect+=("$f")
+          done
+          if [ "${#expect[@]}" -gt 1 ]; then
+            echo "::error::This pull request adds or changes ${#expect[@]} expect modules (${expect[*]}); diff.mjs takes one."
+            exit 2
+          fi
+          args=(--dist dist --against base/dist --shard "${PART#diff }" --report scope-differential-report.json)
+          if [ "${#expect[@]}" -eq 1 ]; then
+            echo "Expect module: ${expect[0]}"
+            args+=(--expect "${expect[0]}")
+          fi
+          bun scripts/scope-differential/diff.mjs "${args[@]}"
+
+      - name: Write then run
+        if: matrix.part == 'write-then-run'
+        run: bun scripts/scope-differential/write-then-run.mjs base/dist dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: scope-differential-${{ strategy.job-index }}
+          path: scope-differential-report.json
+          if-no-files-found: ignore
+          retention-days: 14

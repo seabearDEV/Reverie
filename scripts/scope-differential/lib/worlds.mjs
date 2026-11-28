@@ -203,6 +203,14 @@ function mcpPerWorld(layout) {
   ];
 }
 
+/**
+ * [source, alias name] for a rename onto an alias's name (#305 L4): the
+ * alias still means its target, and the rename says the entry is hidden.
+ */
+function renamesOntoAliases(layout) {
+  return aliasNames(layout).flatMap(a => ['k.p', 'k.g'].filter(src => src !== a).map(src => [src, a]));
+}
+
 /** Every invocation, in a fixed order. Each has a stable id. */
 export function allInvocations({ worlds = WORLDS } = {}) {
   const out = [];
@@ -222,6 +230,10 @@ export function allInvocations({ worlds = WORLDS } = {}) {
         if (project) cli([...argv, '-P']);
       }
       for (const [tool, args] of mcpPerWorld(layout)) for (const s of MCP_SCOPES) mcp(tool, s ? { ...args, scope: s } : args);
+      for (const [src, a] of renamesOntoAliases(layout)) {
+        for (const s of CLI_SCOPES) cli(['rename', src, a, ...s]);
+        for (const s of MCP_SCOPES) mcp('reverie_rename', s ? { oldKey: src, newKey: a, scope: s } : { oldKey: src, newKey: a });
+      }
     }
   }
   return out;

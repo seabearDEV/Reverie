@@ -212,8 +212,10 @@ describe('Commands', () => {
   const originalConsoleError = console.error;
 
   beforeEach(() => {
-    // Reset mocks before each test
-    vi.resetAllMocks();
+    // Clear call history before each test, keeping the factories' impls.
+    // (vi.resetAllMocks() did the same before Bun 1.4; since then it wipes
+    // the impls too, and every store mock returns undefined.)
+    vi.clearAllMocks();
     clearStoreCaches();
     clearConfigCache();
     console.log = vi.fn();
@@ -1926,8 +1928,8 @@ describe('Commands', () => {
   });
 
   describe('error catch blocks', () => {
-    // bun:test's vi.resetAllMocks() in beforeEach clears call history
-    // but NOT impl, and mockReset wipes it without restoring the
+    // vi.clearAllMocks() in beforeEach clears call history but NOT
+    // impl, and mockReset wipes it without restoring the
     // factory default. Capture the factory-set impl up front and put
     // it back so the change doesn't leak into the next describe block
     // (#112).

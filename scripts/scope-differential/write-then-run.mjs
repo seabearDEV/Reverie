@@ -12,6 +12,9 @@
 // Uses the gate fuzzer's world builder and drivers: temp HOME, RVR_DATA_DIR,
 // TMPDIR and cwd under a temp root, PATH=/usr/bin:/bin. Every entry is an echo
 // that logs a marker; the runs are not approved, so a flagged one must ask.
+// It fails (exit 2) when no write landed, or nothing ran, on either build:
+// then "0 weakenings" would prove nothing (a harness run from a copy refuses
+// every write, see context.confirmGate).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -94,12 +97,17 @@ async function outcomes(dist, root, shape, write) {
 }
 
 let weak = 0, diffs = 0, runs = 0;
+const landed = [0, 0], ran = [0, 0];
 for (const [si, shape] of SHAPES.entries()) {
   for (const [wi, write] of shape.writes.entries()) {
     const root = path.join(work, `s${si}w${wi}`);
     const a = await outcomes(mainDist, root, shape, write);
     const b = await outcomes(fixDist, root, shape, write);
     fs.rmSync(root, { recursive: true, force: true });
+    for (const [side, o] of [a, b].entries()) {
+      if (o.write.endsWith(' OK')) landed[side]++;
+      if (Object.values(o.runs).some(r => r.startsWith('ran'))) ran[side]++;
+    }
     console.log(`\n# ${shape.name} — ${write.cli ? 'cli ' + write.cli.join(' ') : 'mcp ' + write.mcp[0] + ' ' + JSON.stringify(write.mcp[1])}`);
     console.log(`  write  main: ${a.write}  P${a.aliases[0]} G${a.aliases[1]}`);
     console.log(`  write  fix:  ${b.write}  P${b.aliases[0]} G${b.aliases[1]}`);
@@ -114,5 +122,9 @@ for (const [si, shape] of SHAPES.entries()) {
   }
 }
 fs.rmSync(work, { recursive: true, force: true });
+const writes = SHAPES.reduce((n, sh) => n + sh.writes.length, 0);
+console.log(`\nwrites that landed: ${landed[0]}/${writes} on the first build, ${landed[1]}/${writes} on the second; writes followed by a run that ran: ${ran[0]} and ${ran[1]}`);
+const idle = [mainDist, fixDist].filter((_, side) => landed[side] === 0 || ran[side] === 0);
+for (const d of idle) console.log(`WRITE CANARY: on ${d} no write landed or nothing ran, so this proves nothing. Run the harness from the repo, not a copy (context.confirmGate).`);
 console.log(`\n${runs} runs after a write: ${diffs} differ, ${weak} weakenings`);
-process.exit(weak > 0 ? 1 : 0);
+process.exit(weak > 0 ? 1 : idle.length ? 2 : 0);

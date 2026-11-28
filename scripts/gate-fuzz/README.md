@@ -7,7 +7,7 @@ bun run fuzz:gate          # build, then the quick mode: fixtures + 300 worlds, 
 bun run fuzz:gate:long     # build, then 3,000 worlds
 ```
 
-CI runs the quick mode on pull requests that touch `src/` or the fuzzer, with seed 1. It runs the long mode weekly, as four parallel shards of 750 worlds seeded with the run number (`.github/workflows/gate-fuzz.yml`).
+CI runs the quick mode on pull requests that touch `src/` or the fuzzer, with seed 1, as three parallel shards of 100 worlds (each also runs the fixtures). It runs the long mode weekly, as four parallel shards of 750 worlds seeded with the run number (`.github/workflows/gate-fuzz.yml`).
 
 ## How it scores
 
