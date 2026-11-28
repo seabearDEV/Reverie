@@ -124,6 +124,7 @@ afterEach(() => {
   for (const f of [globalFile('_aliases.json'), projectFile('_aliases.json')]) {
     try { fs.chmodSync(f, 0o644); } catch { /* absent or a link */ }
   }
+  try { fs.chmodSync(path.join(dataDir, 'store'), 0o755); } catch { /* absent */ }
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -267,6 +268,42 @@ describe('L8 (#303 item 1): while the global alias map cannot be read, a run tha
     expect(text(await s.call('reverie_run', { key: 'g.plain', scope: 'global' }))).toContain('$ echo G-PLAIN');
     expect(ran()).toEqual(['P-ONLY', 'G-PLAIN']);
   }, SLOW_TEST_MS);
+
+  // Review of this PR: the per-call rescan cleared the caches, the listing
+  // failed, and the call's own reads then took the fast skip over the empty
+  // caches — the global store read as empty, and the gate lost the global
+  // alias to the flagged entry.
+  it.skipIf(isRoot)('MCP: a global store directory that stops being listable never reads as empty', async () => {
+    const s = await server();
+    expect(text(await s.call('reverie_run', { key: 'dup' }))).toContain(ASKS);
+    fs.chmodSync(path.join(dataDir, 'store'), 0o300);
+    const r = await s.call('reverie_run', { key: 'dup' });
+    expect(text(r)).not.toContain('$ echo P-ONLY');
+    expect(ran()).toEqual([]);
+    const listed = await s.call('reverie_alias_list', { scope: 'global' });
+    expect(listed.isError).toBe(true);
+    expect(text(listed)).not.toContain('No aliases defined');
+    fs.chmodSync(path.join(dataDir, 'store'), 0o755);
+    expect(text(await s.call('reverie_run', { key: 'dup' }))).toContain(ASKS);
+    expect(ran()).toEqual([]);
+  }, SLOW_TEST_MS);
+
+  it.skipIf(isRoot)('MCP: a server started while the global store directory cannot be listed runs nothing unasked', async () => {
+    fs.chmodSync(path.join(dataDir, 'store'), 0o300);
+    const s = await server();
+    for (let i = 0; i < 2; i++) expect(text(await s.call('reverie_run', { key: 'dup' }))).not.toContain('$ echo P-ONLY');
+    expect(ran()).toEqual([]);
+  }, SLOW_TEST_MS);
+});
+
+describe('L7 review: each call\'s warnings still name every unreadable file of both stores', () => {
+  it('a global-scope call names a broken project entry file', async () => {
+    fs.writeFileSync(projectFile('b.json'), '{not json');
+    const s = await server();
+    const r = text(await s.call('reverie_set', { key: 'gk', value: 'v', scope: 'global' }));
+    expect(r).toContain('b.json is not a valid store file');
+    expect(text(await s.call('reverie_get', { key: 'gk', scope: 'global' }))).toContain('b.json is not a valid store file');
+  }, SLOW_TEST_MS);
 });
 
 describe('L9 (#303 item 2): an alias target that is not a string makes the alias map unreadable, not a crash', () => {
@@ -361,6 +398,11 @@ describe('L13: get of a name an unreadable alias map might hold is STORE_UNREADA
     expect(json(['get', 'a']).ok).toBe(true);
     expect(json(['get', '-G', 'nothere']).error?.code).toBe('NOT_FOUND');
     expect(json(['get', '-G', 'gal']).ok).toBe(true);
+    // -G reads the global map only, in text mode too.
+    const g = rvr(['get', '-G', 'nothere']);
+    expect(g.status).toBe(1);
+    expect(g.stderr).toContain("Entry 'nothere' not found.");
+    expect(g.stderr).not.toContain('Cannot read the alias map');
   });
 
   it('the global map conflicted: get in the default scope and with -G', () => {
@@ -376,7 +418,18 @@ describe('L13: get of a name an unreadable alias map might hold is STORE_UNREADA
     const r = await s.call('reverie_get', { key: 'al' });
     expect(r.isError).toBe(true);
     expect(text(r)).toContain('Cannot read the alias map');
-    expect((await s.call('reverie_get', { key: 'nothere', scope: 'global' })).isError).toBe(true);
-    expect(text(await s.call('reverie_get', { key: 'nothere', scope: 'global' }))).toContain('not found');
+    // Scope "global" reads the global map only.
+    const g = text(await s.call('reverie_get', { key: 'nothere', scope: 'global' }));
+    expect(g.split('\n')[0]).toBe("Key 'nothere' not found.");
+    expect(g).not.toContain('Cannot read the alias map');
+  }, SLOW_TEST_MS);
+
+  it('MCP scope "project" reads the project map only', async () => {
+    fs.writeFileSync(globalFile('_aliases.json'), '<<<<<<< HEAD\n{"gal": "gk"}\n=======\n{}\n>>>>>>> theirs\n');
+    const s = await server();
+    const p = text(await s.call('reverie_get', { key: 'nothere', scope: 'project' }));
+    expect(p.split('\n')[0]).toBe("Key 'nothere' not found.");
+    expect(p).not.toContain('Cannot read the alias map');
+    expect(text(await s.call('reverie_get', { key: 'nothere' }))).toContain('Cannot read the alias map');
   }, SLOW_TEST_MS);
 });

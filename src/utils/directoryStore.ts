@@ -744,12 +744,17 @@ export function createDirectoryStore(
     // still authoritative. Skip the readdir + per-entry stat loop — unless a
     // file recorded as unreadable has since been repaired in place, which
     // the directory mtime cannot show.
+    // Recorded as the fast skip's mark only once the scan below completes. A
+    // scan that throws part-way (a directory that cannot be listed) must not
+    // let the next one skip over caches it never filled: the store would read
+    // as empty, its aliases and entries gone without a word (#305 PR 3).
+    let scannedMtimeMs: number;
     try {
       const dirStat = fs.statSync(dir);
       if (dirMtimeMs !== -1 && dirStat.mtimeMs === dirMtimeMs && !unreadableFileChanged()) {
         return;
       }
-      dirMtimeMs = dirStat.mtimeMs;
+      scannedMtimeMs = dirStat.mtimeMs;
     } catch (err) {
       if (isENOENT(err)) {
         entryCache.clear();
@@ -844,6 +849,7 @@ export function createDirectoryStore(
       'confirm',
       confirmCache
     );
+    dirMtimeMs = scannedMtimeMs;
   }
 
   /**

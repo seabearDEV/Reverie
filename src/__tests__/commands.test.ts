@@ -205,6 +205,7 @@ vi.mock('../commands/helpers', () => ({
 
 import { askPassword } from '../commands/helpers';
 import { saveEntries, saveAliasMap } from '../store';
+import { registerUnreadableSource } from '../utils/unreadable';
 
 describe('Commands', () => {
   // Mock console methods
@@ -218,6 +219,12 @@ describe('Commands', () => {
     vi.clearAllMocks();
     clearStoreCaches();
     clearConfigCache();
+    // The store is mocked, so it has no unreadable files. The real store
+    // module's sources would scan its directories through the mocked fs,
+    // which cannot answer a scan (#305 PR 3: a failed scan no longer leaves
+    // the next one to skip).
+    registerUnreadableSource('project', () => []);
+    registerUnreadableSource('global', () => []);
     console.log = vi.fn();
     console.error = vi.fn();
 

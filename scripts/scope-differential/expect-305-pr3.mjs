@@ -6,10 +6,10 @@
 //   L6 (#268)  `remove` / `reverie_remove` takes the entry and the aliases
 //              pointing at it in one store write. The build before wrote the
 //              alias list in a second write, so the only trace is that
-//              store's commit counter: the result, the logs and every other
-//              file the same, both alias lists the same as the build before
-//              left them — and that store's list really changed, or there
-//              was no second write to save.
+//              store's commit counter, exactly one commit lower: the result,
+//              the logs and every other file the same, both alias lists the
+//              same as the build before left them — and that store's list
+//              really changed, or there was no second write to save.
 //   L13        `get` / `reverie_get` of a name that is no entry, while an
 //              alias map the lookup reads does not parse, fails with
 //              STORE_UNREADABLE naming that map instead of NOT_FOUND. The
@@ -17,11 +17,20 @@
 //              project, the global one with -G / scope "global" or outside
 //              the project, the project's for MCP scope "project".
 // Each predicate checks what changed as well as where, word for word.
+import crypto from 'crypto';
 import { layoutNamed } from './lib/worlds.mjs';
 
 const STORE_OF_EPOCH = { 'proj/.reverie/_epoch.json': 'project', 'data/store/_epoch.json': 'global' };
 
 const parse = s => { try { return JSON.parse(s); } catch { return undefined; } };
+
+/** The record of an `_epoch.json` holding `n`, as lib/exec.mjs hashes the bytes the store writes. */
+const epochFile = n => `F ${crypto.createHash('sha1').update(`${JSON.stringify({ epoch: n })}\n`).digest('hex').slice(0, 16)}`;
+/** The even n whose `_epoch.json` record is `rec`, or undefined. A world's counters stay far below the bound. */
+function epochOf(rec) {
+  for (let n = 0; n <= 10_000; n += 2) if (epochFile(n) === rec) return n;
+  return undefined;
+}
 const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
 /** An alias map as the record's sidecars hold it, keys sorted, or the irregular marker. */
 const mapOf = s => {
@@ -48,6 +57,9 @@ function oneWrite(inv, a, b, diffs) {
   if (files.length !== 1) return null;
   const store = STORE_OF_EPOCH[files[0].path];
   if (store === undefined || files[0].a === null || files[0].b === null) return null;
+  // Exactly one commit fewer: the counter moves by two per write.
+  const ea = epochOf(files[0].a), eb = epochOf(files[0].b);
+  if (ea === undefined || eb === undefined || eb - ea !== 2) return null;
   if (!same(a.sidecars, b.sidecars)) return null;
   const before = initialMap(inv.world, store);
   if (before === undefined) return null;
