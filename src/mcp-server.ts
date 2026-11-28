@@ -569,7 +569,10 @@ server.tool(
       } catch { /* an entry that cannot be read: setValue refuses it */ }
       if (!exists) {
         const maps = unreadableAliasMapsFor(scope);
-        if (maps.length > 0) throw unreadableAliasSetRefusal(resolved, maps);
+        if (maps.length > 0) {
+          resolveScopeForWrite(scope);   // an unresolved project stays the answer
+          throw unreadableAliasSetRefusal(resolved, maps);
+        }
       }
       setValue(resolved, storedValue, scope);
       if (alias) {

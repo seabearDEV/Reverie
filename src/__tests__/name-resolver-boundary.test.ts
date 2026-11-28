@@ -178,7 +178,7 @@ describe('one name resolver', () => {
       'store.ts: current.aliases ×2',                         // the store
       'store.ts: parsed.aliases',                             // the store, loading a legacy file
       'store.ts: sections.aliases ×2',                        // the store, writing an import
-      'utils/directoryStore.ts: data.aliases ×4',             // the store's files
+      'utils/directoryStore.ts: data.aliases ×5',             // the store's files; the aliases a failed delete puts back (#305 L21)
       'utils/directoryStore.ts: parsed.aliases',              // the store's files, migrating
       'utils/importSections.ts: current.aliases ×2',          // import: the merge, and whether an imported alias is new
       'utils/importSections.ts: next.aliases',                // import: the merged section

@@ -741,13 +741,6 @@ export async function setEntry(key: string, value: string | undefined, force = f
     }
 
     const existing = getValueForWrite(key, scope);
-    // #305 L15: no entry under this name while an alias map the lookup read
-    // cannot be read: the name may be an alias there, and the value would
-    // land under the alias's name.
-    if (existing === undefined) {
-      const maps = unreadableAliasMapsFor(scope);
-      if (maps.length > 0) throw unreadableAliasSetRefusal(key, maps);
-    }
     if (existing !== undefined && !force && process.stdin.isTTY) {
       const displayVal = typeof existing === 'object'
         ? JSON.stringify(existing)
@@ -774,6 +767,19 @@ export async function setEntry(key: string, value: string | undefined, force = f
     if (alias) sidecars.push('aliases');
     if (confirm !== undefined) sidecars.push('confirm');
     if (sidecars.length > 0) assertSidecarsWritable(() => resolveScopeForWrite(scope), sidecars);
+
+    // #305 L15: no entry under this name while an alias map the lookup read
+    // cannot be read: the name may be an alias there, and the value would
+    // land under the alias's name. After the write's own refusals — a
+    // project that cannot be resolved, a sidecar it cannot write — so those
+    // stay the answer they were.
+    if (existing === undefined) {
+      const maps = unreadableAliasMapsFor(scope);
+      if (maps.length > 0) {
+        resolveScopeForWrite(scope);
+        throw unreadableAliasSetRefusal(key, maps);
+      }
+    }
 
     let flagRemoved = false;
     if (sidecars.length === 0) {

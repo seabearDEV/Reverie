@@ -127,6 +127,18 @@ describe('L15 (#270 item 1): set of a name an unreadable alias map may hold is r
     expect(exists(globalFile('ga.json'))).toBe(false);
   });
 
+  it("the write's own refusals stay the answer: an unresolved project, an alias map -a would write", () => {
+    fs.writeFileSync(projectFile('_aliases.json'), '{"a": "k.target"}');
+    fs.mkdirSync(path.dirname(globalFile('_aliases.json')), { recursive: true });
+    fs.writeFileSync(globalFile('_aliases.json'), '{"ga": ');
+    const out = path.join(root, 'out');
+    fs.mkdirSync(out);
+    expect(json(['set', 'nope', 'v'], out).error?.code).toBe('PROJECT_UNRESOLVED');
+    const r = json(['set', 'nope', 'v', '-a', 'al', '-G']);
+    expect(r.error?.code).toBe('STORE_UNREADABLE');
+    expect(r.error?.message).toMatch(/^Refusing to write the alias map/);
+  });
+
   it('reverie_set: refused, and no entry named after the alias', async () => {
     const s = await server();
     const r = await s.call('reverie_set', { key: 'a', value: 'newval' });
