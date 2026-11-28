@@ -26,10 +26,12 @@ import {
   globalAliasLeft,
   globalAliasRemovalMessage,
   buildKeyToAliasMap,
-  removeAliasesForKey,
   renameAlias,
   nameView,
   resolveNameNow,
+  unreadableAliasMapsFor,
+  unreadableGlobalAliasesFor,
+  unreadableGlobalAliasesReason,
 } from "./alias";
 import { chainMemberContext, typedContext } from "./utils/nameResolver";
 import {
@@ -37,7 +39,7 @@ import {
   setProjectRootOverride,
 } from "./utils/paths";
 import { fileURLToPath } from "url";
-import { findProjectFile, hasProjectStore, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope, assertProjectScope } from "./store";
+import { findProjectFile, hasProjectStore, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope, assertProjectScope, forgetStoreScans } from "./store";
 import { hasConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
 import { renameKey, RenameRefusal, renameNotes } from "./rename";
 import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from "./config";
@@ -58,7 +60,7 @@ import type { ErrorCode } from "./utils/output";
 import { resolveScopeForWrite, ProjectResolutionError, unusedProjectReason } from "./projectResolution";
 import { isStoreIoError } from "./utils/storeWriteError";
 import type { CodexValue } from "./types";
-import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapListed, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, readForWrite, setAbsoluteDisplayPaths, unreadableWarning } from "./utils/unreadable";
+import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapListed, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, readForWrite, setAbsoluteDisplayPaths, unreadableWarning, type UnreadableFile } from "./utils/unreadable";
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
@@ -317,6 +319,9 @@ server.tool = ((...args: any[]) => {
   const origHandler = args[args.length - 1] as (params: Record<string, unknown>, extra: unknown) => Promise<unknown>;
   args[args.length - 1] = async (params: Record<string, unknown>, extra: unknown) => {
     const startTime = Date.now();
+    // #270, #303: every call reads the stores from disk, as a CLI command
+    // does: a file written in place since the last call is seen.
+    forgetStoreScans();
     const key = extractKey(name, params);
 
     // The config tools' key is a setting, not an entry (#206): the settings
@@ -697,6 +702,9 @@ server.tool(
       const value = found?.value;
 
       if (found === undefined || value === undefined) {
+        // #305 L13: the name may be an alias in a map that cannot be read.
+        const maps = unreadableAliasMapsFor(lookupScope);
+        if (maps.length > 0) throw new StoreUnreadableError(maps, 'read');
         return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
       }
 
@@ -798,10 +806,9 @@ server.tool(
       if (!removed) {
         return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
       }
-      // Cascade delete: remove any aliases for this key or its children. The
-      // confirmation flags stay (#244): a flag gates its name in every
-      // project, and only reverie's confirm removal clears one.
-      removeAliasesForKey(resolvedKey, scope);
+      // The aliases for this key or its children went with it, in the same
+      // store write (#268). The confirmation flags stay (#244): a flag gates
+      // its name in every project, and only reverie's confirm removal clears one.
       const kept = flagsListedUnder(resolvedKey, scope);
       return textResponse(kept.length > 0
         ? `Removed: ${resolvedKey}\nConfirmation flags kept (a flag gates its name in every project): ${kept.join(', ')}`
@@ -1096,7 +1103,7 @@ function runGated(
   key: string,
   runs: RunValue[],
   gateNames: string[],
-  opts: { dry?: boolean | undefined; force?: boolean | undefined; confirm_token?: string | undefined },
+  opts: { dry?: boolean | undefined; force?: boolean | undefined; confirm_token?: string | undefined; aliasesUnread?: UnreadableFile | undefined },
 ) {
   // Safe (non-exec) display command for dry output and the confirm prompt.
   // SECURITY: building the preview must not execute `$(key)` exec refs, so
@@ -1133,14 +1140,19 @@ function runGated(
   // created after it started, say). Its list was never read. The ask names it.
   const unusedProject = nameView().unusedProject;
   if (unusedProject !== undefined) needsConfirm = true;
+  // #303 item 1: so is a run that read project aliases while the global
+  // alias map cannot be read. The caller decides it (unreadableGlobalAliasesFor).
+  if (opts.aliasesUnread !== undefined) needsConfirm = true;
 
   if (opts.dry) return textResponse(`$ ${command}`);
 
   if (needsConfirm && !opts.force) {
     const fingerprint = runFingerprint(command, runs);
     const unusedWhy = unusedProject === undefined ? '' : unusedProjectReason(unusedProject);
+    const aliasesWhy = opts.aliasesUnread === undefined ? '' : unreadableGlobalAliasesReason(opts.aliasesUnread);
     const why = (unchecked === undefined ? '' : `Not every reference it reaches could be checked for a confirmation flag (${unchecked}).\n`)
-      + (unusedWhy === '' ? '' : `${unusedWhy.charAt(0).toUpperCase()}${unusedWhy.slice(1)}.\n`);
+      + (unusedWhy === '' ? '' : `${unusedWhy.charAt(0).toUpperCase()}${unusedWhy.slice(1)}.\n`)
+      + (aliasesWhy === '' ? '' : `${aliasesWhy.charAt(0).toUpperCase()}${aliasesWhy.slice(1)}.\n`);
     const prompt = () =>
       `⚠ This command requires confirmation before execution:\n$ ${command}\n${why}\nTo execute, call reverie_run again with confirm_token: "${createConfirmToken(key, command, fingerprint)}"`;
     if (opts.confirm_token) {
@@ -1213,6 +1225,9 @@ server.tool(
     }
     // #279: the key as typed is gated as well as the key its alias names.
     const gateNames = [...top.gateNames];
+    // #303 item 1: decided for the call's own lookup, which a chain's
+    // members follow (a global chain's members are global names).
+    const aliasesUnread = unreadableGlobalAliasesFor(named);
     if (typeof value !== "string") {
       return errorResponse(`Value at '${key}' is not a string command.`);
     }
@@ -1246,14 +1261,14 @@ server.tool(
 
       // Confirm if ANY key on the chain — or the chain entry itself — is
       // confirm-flagged.
-      return runGated(key, runs, gateNames, { dry, force, confirm_token });
+      return runGated(key, runs, gateNames, { dry, force, confirm_token, aliasesUnread });
     }
 
     if (isEncrypted(value)) {
       return errorResponse(`Value at '${key}' is encrypted. Decryption is not supported via MCP.`);
     }
 
-    return runGated(key, [{ value, from: found.store }], gateNames, { dry, force, confirm_token });
+    return runGated(key, [{ value, from: found.store }], gateNames, { dry, force, confirm_token, aliasesUnread });
   }
 );
 

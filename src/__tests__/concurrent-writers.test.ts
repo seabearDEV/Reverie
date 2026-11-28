@@ -140,7 +140,9 @@ describe('#254: a write by another process survives', () => {
       seed({ entries: { a: { x: '1' }, keep: { me: '1' } }, aliases: { ax: 'a.x' }, confirm: { 'a.x': true } });
       const bKeys = await interleave(() => removeEntry('a', true, true), bMixed);
       const d = onDisk();
-      expect(bKeys.length).toBeGreaterThanOrEqual(3);
+      // B writes after A's read and at A's one lock: the entry and its
+      // aliases go in one write (#268).
+      expect(bKeys.length).toBeGreaterThanOrEqual(2);
       for (const k of bKeys) expect(survived(d, k)).toBe(true);
       expect(entryKeys(d)).not.toContain('a.x');
       expect(d.aliases.ax).toBeUndefined();

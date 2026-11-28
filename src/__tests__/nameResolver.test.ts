@@ -61,8 +61,8 @@ describe('resolveName: key and scope by context', () => {
     ['default: trailing colon dropped', AUTO, 'pa:', 'k.p', 'auto', ['hasProjectStore', 'globalAliases', 'projectAliases']],
     ['-G: global map only (#284)', GLOBAL, 'pa', 'pa', 'global', ['globalAliases']],
     ['-G: global alias', GLOBAL, 'dup', 'k.g', 'global', ['globalAliases']],
-    ['MCP project: project map only', PROJECT, 'ga', 'ga', 'project', ['projectAliases']],
-    ['MCP project: project alias', PROJECT, 'dup', 'k.p', 'project', ['projectAliases']],
+    ['MCP project: project map for the key, the global map for the gate (L12)', PROJECT, 'ga', 'ga', 'project', ['projectAliases', 'globalAliases']],
+    ['MCP project: project alias', PROJECT, 'dup', 'k.p', 'project', ['projectAliases', 'globalAliases']],
     ['reference in a project entry: the default view', REF_P, 'dup', 'k.p', 'auto', ['hasProjectStore', 'globalAliases', 'projectAliases']],
     ['reference in a global entry: global only (#280)', REF_G, 'pa', 'pa', 'global', ['globalAliases']],
     ['reference in a global entry: global alias', REF_G, 'dup', 'k.g', 'global', ['globalAliases']],
@@ -117,12 +117,23 @@ describe('resolveName: the gate names (#279)', () => {
     expect(resolveName(view(P, G).view, ctx, name).gateNames).toEqual(names);
   });
 
-  it('are read lazily: a lookup that never asks for them does not read the global map for them', () => {
-    const v = view(P, G);
-    const r = resolveName(v.view, PROJECT, 'dup');
-    expect(v.read.has('globalAliases')).toBe(false);
-    expect(r.gateNames).toEqual(['dup', 'k.p', 'k.g']);
-    expect(v.read.has('globalAliases')).toBe(true);
+  it('are decided with the lookup: a map that changes after it does not change them (#305 L12)', () => {
+    // The getter used to read the global map the first time the gate names
+    // were asked for: a lookup and its gate names could see two states.
+    for (const ctx of [AUTO, PROJECT, REF_P]) {
+      let global: AliasMap = G;
+      const read = new Set<string>();
+      const live: NameView = {
+        get hasProjectStore() { return true; },
+        get projectAliases() { return P; },
+        get globalAliases() { read.add('global'); return global; },
+        get unusedProject() { return undefined; },
+      };
+      const r = resolveName(live, ctx, 'dup');
+      expect(read.has('global')).toBe(true);
+      global = { dup: 'k.other' };
+      expect(r.gateNames).toEqual(['dup', 'k.p', 'k.g']);
+    }
   });
 
   it('drop a second trailing colon for the global lookup, as resolveKey always did', () => {

@@ -74,8 +74,7 @@ export interface Resolution {
    * When project aliases took part, also the key the global map alone gives
    * the name, so that a project alias cannot take a name away from the
    * user's own global alias to a flagged command. Each extra name only gates
-   * more. Read lazily: only a run asks, and the extra name reads the global
-   * map.
+   * more. Decided with the key, from the same maps (#305 L12).
    */
   readonly gateNames: readonly string[];
 }
@@ -117,6 +116,15 @@ function plan(ctx: NameContext): { maps: 'layered' | 'project' | 'global'; scope
 }
 
 /**
+ * Does a lookup in `ctx` read project aliases — is it not global-only? The
+ * resolver's own reading of "project aliases were in play", which decides
+ * whether a lookup's gate names include the global map's answer (#279).
+ */
+export function readsProjectAliases(ctx: NameContext): boolean {
+  return plan(ctx).maps !== 'global';
+}
+
+/**
  * The alias map a lookup in `ctx` reads: the project's laid over the
  * global one in the default view (the global one alone outside a project),
  * one store's map otherwise.
@@ -127,6 +135,14 @@ export function aliasesSeen(view: NameView, ctx: NameContext): AliasMap {
   if (maps === 'project') return view.projectAliases;
   if (!view.hasProjectStore) return view.globalAliases;
   return { ...view.globalAliases, ...view.projectAliases };
+}
+
+/** The stores whose alias maps a lookup in `ctx` reads: aliasesSeen's maps. */
+export function aliasStoresSeen(view: NameView, ctx: NameContext): StoreName[] {
+  const { maps } = plan(ctx);
+  if (maps === 'global') return ['global'];
+  if (maps === 'project') return ['project'];
+  return view.hasProjectStore ? ['project', 'global'] : ['global'];
 }
 
 /** The target `map` gives `name` — an own property only, never one inherited from Object.prototype — or `name`. */
@@ -167,15 +183,23 @@ export type OnAliasLookup = (name: string, target: string) => void;
  * global lookup with a trailing colon dropped once more, as it always has.
  */
 export function gateNamesOf(written: string, key: string, globalAliases?: AliasMap, onLookup?: OnAliasLookup): string[] {
+  const { names, globalLookup } = decideGateNames(written, key, globalAliases);
+  if (globalLookup) onLookup?.(...globalLookup);
+  return names;
+}
+
+/** gateNamesOf's names, and the global lookup it reports when that found an alias. */
+function decideGateNames(written: string, key: string, globalAliases?: AliasMap): { names: string[]; globalLookup?: [string, string] } {
   const name = dropColon(written);
   const names = new Set([name, key]);
+  let globalLookup: [string, string] | undefined;
   if (globalAliases !== undefined) {
     const looked = dropColon(name);
     const globalKey = lookUp(globalAliases, looked);
-    if (globalKey !== looked) onLookup?.(looked, globalKey);
+    if (globalKey !== looked) globalLookup = [looked, globalKey];
     names.add(globalKey);
   }
-  return [...names];
+  return globalLookup ? { names: [...names], globalLookup } : { names: [...names] };
 }
 
 /**
@@ -192,13 +216,18 @@ export function resolveName(view: NameView, ctx: NameContext, written: string, o
   // holds outside a project too, where the default view is the global map
   // and the extra name is the key itself.
   const projectAliases = maps !== 'global';
-  let gateNames: string[] | undefined;
+  // Decided now, with the key (#305 L12): read later, the global map could
+  // have changed between the lookup and its gate names. Only the report of
+  // the global lookup waits until a run asks for them, as --debug prints it.
+  const { names: gateNames, globalLookup } = decideGateNames(written, key, projectAliases ? view.globalAliases : undefined);
+  let reported = false;
   return {
     name,
     key,
     scope,
     get gateNames() {
-      gateNames ??= gateNamesOf(written, key, projectAliases ? view.globalAliases : undefined, onLookup);
+      if (!reported && globalLookup) onLookup?.(...globalLookup);
+      reported = true;
       return gateNames;
     },
   };

@@ -357,6 +357,9 @@ function readStoreFile(filePath: string): string {
  * exists and cannot be read (#283): a symlink, a directory, no permission.
  * That used to read as an empty map, and a cloned repository shipping
  * `_aliases.json` as a directory made a commit fail at its last write.
+ * An alias map with a target that is not a string is not a valid store file
+ * either (#303): every reader of a target takes it for a key, and `get` and
+ * `run` crashed on one.
  */
 function readSidecar<T>(filePath: string, kind: 'aliases' | 'confirm'): { data: T; unreadable?: UnreadableFile } {
   let raw: string;
@@ -370,7 +373,8 @@ function readSidecar<T>(filePath: string, kind: 'aliases' | 'confirm'): { data: 
   if (!raw.trim()) return { data: {} as T };
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      && (kind !== 'aliases' || Object.values(parsed).every(target => typeof target === 'string'))) {
       return { data: parsed as T };
     }
   } catch { /* classified below */ }

@@ -648,6 +648,23 @@ export function clearStoreCaches(): void {
   clearProjectFileCache();
 }
 
+/**
+ * Drop what each store kept from its earlier scans, keeping the stores
+ * themselves: the next read scans every file from disk, as a new process
+ * does. The MCP server calls this at the start of every tool call (#270,
+ * #303). Between calls it checked only the store directory's mtime and then
+ * each file's, and a file written in place (an editor save, `echo … >`, a
+ * permission change) moves neither the directory nor, inside one tick or
+ * under a pinned mtime, the file: the server kept serving an entry broken
+ * in place, or an alias map's old targets, until it restarted. The CLI
+ * starts each command from nothing, so it never needs this. Within a call
+ * the caches work as before.
+ */
+export function forgetStoreScans(): void {
+  globalStore?.clear();
+  projectStore?.clear();
+}
+
 // ── Meta (staleness tracking) ─────────────────────────────────────────
 
 export function loadMeta(scope?: Scope  ): Record<string, number> {

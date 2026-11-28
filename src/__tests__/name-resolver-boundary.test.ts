@@ -173,7 +173,7 @@ describe('one name resolver', () => {
       'mcp-server.ts: payload.aliases',                       // export: the section written
       'rename.ts: other.data.aliases ×2',                     // #260: the global aliases a default-scope rename leaves, to name them
       'rename.ts: target.data.aliases ×2',                    // the re-point, through repointAliases
-      'storage.ts: current.aliases',                          // set -a: the alias written with the value (#268)
+      'storage.ts: current.aliases ×2',                       // set -a: the alias written with the value; remove: the aliases dropped with the entry (#268)
       'storage.ts: next.aliases',                             // the same
       'store.ts: current.aliases ×2',                         // the store
       'store.ts: parsed.aliases',                             // the store, loading a legacy file
