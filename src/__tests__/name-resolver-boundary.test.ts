@@ -71,7 +71,8 @@ function storeNamespaceImporters(src: Source[]): string[] {
  */
 function inlineLookups(src: Source[]): string[] {
   const loaders = MAP_SOURCES.join('|');
-  const call = `(?:\\w+\\.)?(?:${loaders})\\s*\\((?:[^()]|\\([^()]*\\))*\\)`;   // a loader's call, one level of nested parens
+  const callStart = `(?:\\w+\\.)?(?:${loaders})\\s*\\(`;                                // a loader's call, up to its "("
+  const call = `${callStart}(?:[^()]|\\([^()]*\\))*\\)`;                          // the whole call, one level of nested parens
   const hasOwn = `\\bhasOwn(?:Property)?(?:\\s*\\.\\s*(?:call|apply))?\\s*\\(\\s*`; // Object.hasOwn( or ….hasOwnProperty.call(
   const index = `\\s*(?:\\?\\.\\s*)?\\[`;                                            // [ or ?.[
   const search = `\\s*\\.\\s*(?:find|findIndex|findLast|findLastIndex|some|every|includes|indexOf)\\s*\\(`;
@@ -84,10 +85,12 @@ function inlineLookups(src: Source[]): string[] {
     const reassigned = new RegExp(`(?<![\\w$.])(\\w+)\\s*=(?![=>])\\s*[^;\\n{}]*?\\b(?:${loaders})\\s*\\(`, 'g');
     const vars = [...new Set([...f.code.matchAll(declared), ...f.code.matchAll(reassigned)].map(m => m[1]))];
     const patterns: [string, RegExp][] = [
-      ['direct hasOwn', new RegExp(`${hasOwn}${call}`)],
-      ['direct in', new RegExp(`\\bin\\s+${call}`)],
+      // What comes before the call needs only its start, so any arguments match.
+      ['direct hasOwn', new RegExp(`${hasOwn}${callStart}`)],
+      ['direct in', new RegExp(`\\bin\\s+${callStart}`)],
+      ['direct destructuring', new RegExp(`(?:const|let|var)\\s*\\{[^}]*\\}\\s*(?::[^=;]+)?=\\s*${callStart}`)],
+      // What comes after it needs the whole call.
       ['direct index', new RegExp(`\\b${call}${index}`)],
-      ['direct destructuring', new RegExp(`(?:const|let|var)\\s*\\{[^}]*\\}\\s*(?::[^=;]+)?=\\s*${call}`)],
       ['direct search', new RegExp(`Object\\.(?:entries|keys|values)\\(\\s*${call}\\s*\\)${search}`)],
       ...vars.flatMap((v): [string, RegExp][] => [
         [`hasOwn(${v}, …)`, new RegExp(`${hasOwn}${v}\\b`)],
@@ -199,6 +202,9 @@ describe('the scan sees a lookup however it is written', () => {
     ['a destructured key of a map variable', 'const seen = aliasesSeen(view, ctx);\nconst { [key]: t } = seen;'],
     ['seen.hasOwnProperty(…)', 'const seen = aliasesSeen(view, ctx);\nif (seen.hasOwnProperty(key)) use();'],
     ['Object.keys(…).includes', 'const seen = aliasesSeen(view, ctx);\nif (Object.keys(seen).includes(key)) use();'],
+    // Review of #310: forms the old scan caught whatever the loader's arguments.
+    ['hasOwn on a loader called with nested calls', 'if (Object.hasOwn(loadAliases(scopeFor(getOpts())), key)) use();'],
+    ['in on a loader called with nested calls', 'if (key in loadAliases(scopeFor(getOpts()))) use();'],
   ];
   for (const [what, code] of cases) it(`catches ${what}`, () => { expect(scan(code)).not.toEqual([]); });
 
