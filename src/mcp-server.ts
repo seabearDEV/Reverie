@@ -39,7 +39,7 @@ import {
   setProjectRootOverride,
 } from "./utils/paths";
 import { fileURLToPath } from "url";
-import { findProjectFile, hasProjectStore, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope, assertProjectScope, forgetStoreScans } from "./store";
+import { findProjectFile, hasProjectStore, updateEntries, updateAll, loadMeta, loadMetaMerged, getStalenessTag, getEffectiveScope, assertProjectScope, rescanStores } from "./store";
 import { hasConfirm, loadConfirmKeys, saveConfirmKeys, flagsListedUnder } from "./confirm";
 import { renameKey, RenameRefusal, renameNotes } from "./rename";
 import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from "./config";
@@ -321,7 +321,7 @@ server.tool = ((...args: any[]) => {
     const startTime = Date.now();
     // #270, #303: every call reads the stores from disk, as a CLI command
     // does: a file written in place since the last call is seen.
-    forgetStoreScans();
+    rescanStores();
     const key = extractKey(name, params);
 
     // The config tools' key is a setting, not an entry (#206): the settings

@@ -253,7 +253,7 @@ vi.mock('../store', () => {
     hasProjectStore: vi.fn(() => false),
     clearProjectFileCache: vi.fn(),
     clearStoreCaches: vi.fn(),
-    forgetStoreScans: vi.fn(),
+    rescanStores: vi.fn(),
     loadEntries: vi.fn(() => ({ ...mockData })),
     saveEntries: vi.fn((d: any) => {
       Object.keys(mockData).forEach(k => delete mockData[k]);
