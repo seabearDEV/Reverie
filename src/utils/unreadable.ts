@@ -12,6 +12,7 @@
 // depend on this file.
 
 import path from 'path';
+import { getBinaryName } from './binaryName';
 
 export type UnreadableKind = 'entry' | 'aliases' | 'confirm';
 
@@ -88,7 +89,7 @@ export function describeUnreadable(f: UnreadableFile): string {
  */
 export function resolutionHint(f: UnreadableFile): string {
   if (f.reason === 'conflict') return conflictHint(displayPath(f.path));
-  return f.reason === 'read' ? readHint(`Replace ${displayPath(f.path)}`, 'it') : restoreHint(`Restore ${displayPath(f.path)}`, 'that file');
+  return f.reason === 'read' ? readHint(`Replace ${displayPath(f.path)}`, 'it') : restoreHint(`Restore ${displayPath(f.path)}`, removalCommand(f));
 }
 
 function conflictHint(p: string): string {
@@ -96,13 +97,30 @@ function conflictHint(p: string): string {
 }
 
 /**
- * For a file that is simply not valid (truncated, emptied, hand-edited).
- * "Delete it by hand" is spelled out because the store offers no way to:
- * `rm` refuses a file it cannot read, as it does for a conflict, and reset
- * leaves it in place.
+ * For a file that is simply not valid (truncated, emptied, hand-edited):
+ * restore it, or remove it through the store (#305 L17, owner decision
+ * 2026-11-28) — `rm` removes an invalid entry file, `data reset` replaces an
+ * invalid sidecar (L16). Neither touches a conflict: that is the user's call.
  */
-function restoreHint(lead: string, it: string): string {
-  return `${lead} from version control or a backup, or delete ${it} by hand (the store will not remove a file it cannot read).`;
+function restoreHint(lead: string, removal: string): string {
+  return `${lead} from version control or a backup, or remove it: ${removal}.`;
+}
+
+/** Whether the global store listed `f` (its fix needs -G). No I/O. */
+function inGlobalStore(f: UnreadableFile): boolean {
+  try {
+    return sources.get('global')?.list().some(g => g.path === f.path) ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/** The command that removes the invalid file `f` through the store. */
+function removalCommand(f: UnreadableFile): string {
+  const bin = getBinaryName();
+  const g = inGlobalStore(f) ? ' -G' : '';
+  if (f.kind === 'entry') return `\`${bin} rm${g} ${f.key ?? path.basename(f.path, '.json')}\``;
+  return `\`${bin} data reset ${f.kind}${g}\`, which empties it`;
 }
 
 /**
@@ -122,7 +140,7 @@ function readHint(lead: string, it: string): string {
 function sharedHints(files: UnreadableFile[]): string[] {
   const hints: [UnreadableReason, string, string][] = [
     ['conflict', 'With conflict markers', conflictHint('<file>')],
-    ['parse', 'Not a valid store file', restoreHint('Restore each', 'it')],
+    ['parse', 'Not a valid store file', restoreHint('Restore each', `\`${getBinaryName()} rm <key>\` for an entry, \`${getBinaryName()} data reset aliases\` or \`confirm\` for the alias map or the confirmation list (with -G in the global store)`)],
     ['read', 'Not a regular file', readHint('Replace each', 'it')],
   ];
   const present = hints.filter(([reason]) => files.some(f => f.reason === reason));
@@ -429,6 +447,36 @@ export function assertSubtreeReadable(target: () => string, key: string, verb: '
   if (broken.length > 0) {
     throw new StoreUnreadableError(broken, 'write', `Refusing to ${verb} '${key}' while ${subject(broken[0])} under it cannot be read`);
   }
+}
+
+/**
+ * #305 L15: a set of `key`, which names no entry, while the alias maps the
+ * lookup read (`maps`) cannot be read. `key` may be an alias in one of them,
+ * and the write would land under the alias's name: refused, as `get` of
+ * such a name is (L13). The fix for the map is the user's; then retry.
+ */
+export function unreadableAliasSetRefusal(key: string, maps: UnreadableFile[]): StoreUnreadableError {
+  return new StoreUnreadableError(maps, 'write', `Refusing to set '${key}', which may be an alias in an alias map that cannot be read`);
+}
+
+/**
+ * #305 L17: `key`'s own entry file in the store `target()` names, when it is
+ * simply not valid (truncated, emptied) — the one unreadable file `rm`
+ * removes. A conflict or a path that is no regular file is not returned:
+ * those stay refused. From a scan made now; undefined when the target cannot
+ * be resolved (the command's own resolution reports that).
+ */
+export function invalidEntryFile(target: () => string, key: string): UnreadableFile | undefined {
+  let sourceId: string;
+  try {
+    sourceId = target();
+  } catch {
+    return undefined;
+  }
+  const source = sources.get(sourceId);
+  if (!source) return undefined;
+  source.refresh?.();
+  return source.list().find(f => f.kind === 'entry' && f.key === key && f.reason === 'parse');
 }
 
 /**

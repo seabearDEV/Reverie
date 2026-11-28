@@ -1,8 +1,8 @@
-import { loadData, saveData, getValue, setValue, handleError, Scope, validateImportEntries, validateImportAliases, validateImportConfirm } from '../storage';
+import { loadData, getValue, setValue, handleError, Scope, validateImportEntries, validateImportAliases, validateImportConfirm } from '../storage';
 import { color } from '../formatting';
 import fs from 'fs';
-import { loadAliases, saveAliases } from '../alias';
-import { loadConfirmKeys, saveConfirmKeys } from '../confirm';
+import { loadAliases } from '../alias';
+import { loadConfirmKeys } from '../confirm';
 import { ExportOptions, ImportOptions, ResetOptions } from '../types';
 import path from 'path';
 import { validateDataType, validateResetType, confirmOrAbort, getInvalidDataTypeMessage, getInvalidResetTypeMessage, printSuccess, printError, printWarning } from './helpers';
@@ -20,8 +20,8 @@ import { wrapExport, tryUnwrapImport } from '../utils/envelope';
 import { version as pkgVersion } from '../../package.json';
 import { getConfigSetting } from '../config';
 import { getBinaryName } from '../utils/binaryName';
-import { StoreUnreadableError, describeUnreadable, markUnreadableShown } from '../utils/unreadable';
-import { KeyCollisionError } from '../utils/keyCollision';
+import { StoreUnreadableError, describeUnreadable, markUnreadableShown, displayPath } from '../utils/unreadable';
+import { KeyCollisionError, entriesUnderEntries, storedKeysOf } from '../utils/keyCollision';
 
 function resolveImportMaxBytes(): number {
   const configured = Number(getConfigSetting('import_max_bytes'));
@@ -329,7 +329,7 @@ export async function importData(type: string, file: string, options: ImportOpti
         printError(err instanceof Error ? err.message : String(err), 'INVALID_INPUT');
         return;
       }
-      showImportPreview({ entries: entriesSection, aliases: aliasesSection, confirm: confirmSection }, !!options.merge);
+      showImportPreview({ entries: entriesSection, aliases: aliasesSection, confirm: confirmSection }, !!options.merge, getEffectiveScope(scope));
       return;
     }
 
@@ -374,7 +374,9 @@ export async function importData(type: string, file: string, options: ImportOpti
     // death or disk error mid-apply, the store never ends up with new
     // entries and stale aliases / confirm (or vice versa).
     const otherKeys = aliasesSection ? otherStoreEntryKeys(getEffectiveScope(scope)) : [];
-    updateAll(current => computeImportSections(
+    let hiddenRemoved: string[] = [];
+    updateAll(current => {
+      const next = computeImportSections(
       {
         entries: entriesSection,
         aliases: aliasesSection as Record<string, string> | undefined,
@@ -398,9 +400,16 @@ export async function importData(type: string, file: string, options: ImportOpti
         // the one written.
         otherEntryKeys: () => otherKeys,
       },
-    ), scope);
+      );
+      hiddenRemoved = next.removed ?? [];
+      return next;
+    }, scope);
 
     if (entriesSection) printSuccess(`Entries ${options.merge ? 'merged' : 'imported'} successfully`);
+    // #305 L20: the entries hidden under another entry that the replace deleted.
+    if (hiddenRemoved.length > 0) {
+      printWarning(`The replace also removed ${hiddenRemoved.length === 1 ? 'an entry' : `${hiddenRemoved.length} entries`} stored under another entry, which a listing does not show: ${hiddenRemoved.join(', ')}`);
+    }
     if (aliasesSection) printSuccess(`Aliases ${options.merge ? 'merged' : 'imported'} successfully`);
     if (confirmSection) printSuccess(`Confirm keys ${options.merge ? 'merged' : 'imported'} successfully`);
   } catch (error) {
@@ -445,22 +454,34 @@ export async function resetData(type: string, options: ResetOptions): Promise<vo
       return;
     }
 
-    // Reset entries
-    if (type === 'entries' || type === 'all') {
-      saveData({}, scope);
-      printSuccess('Entries have been reset to an empty state');
-    }
-
-    // Reset aliases
-    if (type === 'aliases' || type === 'all') {
-      saveAliases({}, scope);
-      printSuccess('Aliases have been reset to an empty state');
-    }
-
-    // Reset confirm keys
-    if (type === 'confirm' || type === 'all') {
-      saveConfirmKeys({}, scope);
-      printSuccess('Confirm keys have been reset to an empty state');
+    // #305 L16 (owner decision 2026-11-28): a reset empties each section it
+    // names, files the store cannot read included — the backup above holds
+    // their bytes. It left them: invalid and conflicted entry files stayed,
+    // and a broken alias map or confirmation list was reported reset and
+    // kept as it was. A directory in an entry's place stays, and is named.
+    const entries = type === 'entries' || type === 'all';
+    const aliases = type === 'aliases' || type === 'all';
+    const confirm = type === 'confirm' || type === 'all';
+    const kept: string[] = [];
+    updateAll(current => {
+      kept.length = 0;
+      kept.push(...current.stray.filter(s => s.directory).map(s => s.path));
+      const unreadable = [
+        ...current.unreadable.flatMap(f => (f.kind === 'entry' && f.key !== undefined ? [f.key] : [])),
+        ...current.stray.filter(s => !s.directory).map(s => s.key),
+      ];
+      return {
+        ...(entries && { entries: {}, removeUnreadable: unreadable }),
+        ...(aliases && { aliases: {} }),
+        ...(confirm && { confirm: {} }),
+        replaceUnreadable: [...(aliases ? ['aliases' as const] : []), ...(confirm ? ['confirm' as const] : [])],
+      };
+    }, scope);
+    if (entries) printSuccess('Entries have been reset to an empty state');
+    if (aliases) printSuccess('Aliases have been reset to an empty state');
+    if (confirm) printSuccess('Confirm keys have been reset to an empty state');
+    if (entries) {
+      for (const p of kept) printWarning(`${displayPath(p)} was left: it is a directory in an entry's place, and the store does not remove a directory.`);
     }
   } catch (error) {
     handleError('Error resetting data:', error);
@@ -503,7 +524,7 @@ function showImportPreview(sections: {
   entries?: Record<string, unknown> | undefined;
   aliases?: Record<string, unknown> | undefined;
   confirm?: Record<string, unknown> | undefined;
-}, merge: boolean): void {
+}, merge: boolean, written: 'project' | 'global'): void {
   const { entries: entriesSection, aliases: aliasesSection, confirm: confirmSection } = sections;
   let hasChanges = false;
 
@@ -511,6 +532,16 @@ function showImportPreview(sections: {
     const currentFlat = flattenObject(loadData());
     const importFlat = flattenObject(expandFlatKeys(entriesSection));
     const lines = computeDiff(currentFlat, importFlat, merge);
+    if (!merge) {
+      // #305 L20: a replace also deletes each entry stored under another
+      // entry (#267) that the file does not hold. The tree above cannot show
+      // them, so the preview said "No changes would be made" for a replace
+      // that deleted one. Read from the store the import writes.
+      loadData(written);
+      for (const [key, under] of [...entriesUnderEntries(storedKeysOf(written))].sort(([a], [b]) => a.localeCompare(b))) {
+        if (!Object.hasOwn(importFlat, key)) lines.push(color.red(`  [remove] ${key} (hidden under '${under}')`));
+      }
+    }
     console.log(color.bold(`Entries (${merge ? 'merge' : 'replace'}):`));
     if (lines.length > 0) {
       lines.forEach(l => console.log(l));

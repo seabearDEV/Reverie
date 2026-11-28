@@ -1,6 +1,6 @@
 import { color } from './formatting';
 import { getNestedValue, setNestedValue, removeNestedValue, flattenObject, removeFlatKeysUnder } from './utils/objectPath';
-import { KeyCollisionError, assertKeyWritable, findCollidingPairs } from './utils/keyCollision';
+import { KeyCollisionError, assertKeyWritable, findCollidingPairs, storedSpellingOf } from './utils/keyCollision';
 import { LockTimeoutError } from './utils/fileLock';
 import { StoreWriteError, isStoreIoError } from './utils/storeWriteError';
 import { CodexData, CodexValue } from './types';
@@ -348,8 +348,17 @@ export function setValueWithMeta(
  * true if anything was removed.
  * With 'auto' scope: removes from whichever scope contains it (project preferred).
  */
-export function removeValue(key: string, scope?: Scope  ): boolean {
-  if (!isValidEntryKey(key)) {
+export interface RemoveOptions {
+  /**
+   * #305 L17: `key`'s own file is not valid (truncated, emptied) and is no
+   * conflict — the caller checked (invalidEntryFile). The removal deletes
+   * that file, with the aliases pointing at the key.
+   */
+  invalidFile?: boolean;
+}
+
+export function removeValue(typedKey: string, scope?: Scope, options: RemoveOptions = {}): boolean {
+  if (!isValidEntryKey(typedKey)) {
     // An invalid key cannot match any real entry — return false instead of
     // throwing, so callers that probe with user input get a clean "not found"
     // rather than a stack trace.
@@ -360,10 +369,16 @@ export function removeValue(key: string, scope?: Scope  ): boolean {
   // dropped so a misconfigured workspace cannot silently delete from global.
   // Users who need to remove a global entry must pass -G (CLI) / scope:'global' (MCP).
   const effectiveScope = resolveScopeForWrite(scope);
+  const tree = loadEntries(effectiveScope);
+  // #305 L23: the key as the store lists it. `get` reads through the path,
+  // so on a filesystem that folds names it finds `ns.x` typed as `NS.X`; the
+  // removal below compares names, found nothing, and the command said the
+  // entry was in the other store.
+  const key = storedSpellingOf(effectiveScope, typedKey) ?? typedKey;
   // Nothing under this key: nothing to write. #267: an entry stored under
   // another entry (`ns.k.sub` beside `ns.k`) is not in the tree, but `get`
   // reads it from its file, and so does this check.
-  if (!removeNestedValue(loadEntries(effectiveScope), key) && getEntryFast(key, effectiveScope) === undefined) return false;
+  if (!options.invalidFile && !removeNestedValue(tree, key) && getEntryFast(key, effectiveScope) === undefined) return false;
   // #254: the removal itself, decided again under the lock — the tree
   // loaded above is already stale, and saving it would delete every entry
   // another process wrote since.
@@ -374,7 +389,7 @@ export function removeValue(key: string, scope?: Scope  ): boolean {
     // it, the ones the tree cannot show included: `rm ns.k` takes a hidden
     // `ns.k.sub` along, and `rm ns.k.sub` removes that file alone.
     const hidden = (current.hidden ?? []).some(k => k === key || k.startsWith(`${key}.`));
-    removed = inTree || hidden;
+    removed = inTree || hidden || options.invalidFile === true;
     if (!removed) return null;
     const meta = { ...(current._meta ?? {}) };
     removeFlatKeysUnder(meta, key);
@@ -383,7 +398,10 @@ export function removeValue(key: string, scope?: Scope  ): boolean {
     // another writer land between the two.
     const aliases = { ...current.aliases };
     for (const [alias] of aliasesPointingAt(aliases, key)) delete aliases[alias];
-    return { ...current, _meta: meta, aliases, removed: [key] };
+    return {
+      ...current, _meta: meta, aliases, removed: [key],
+      ...(options.invalidFile && { removeUnreadable: [key] }),
+    };
   }, effectiveScope);
   return removed;
 }

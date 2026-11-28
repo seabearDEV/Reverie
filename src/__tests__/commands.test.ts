@@ -94,7 +94,8 @@ vi.mock('../store', () => {
     const next = fn(clone(storeState.confirm));
     if (next !== null) saveConfirmMap(next);
   });
-  const updateAll = vi.fn((fn: (c: ReturnType<typeof current>) => Parameters<typeof saveAll>[0]) => { saveAll(fn(current())); });
+  // #305 L16: a reset reads what the store could not read; this mock store reads everything.
+  const updateAll = vi.fn((fn: (c: ReturnType<typeof current> & { hidden: string[]; unreadable: never[]; stray: never[] }) => Parameters<typeof saveAll>[0]) => { saveAll(fn({ ...current(), hidden: [], unreadable: [], stray: [] })); });
   // #259: the two-store transaction, over this mock's one store; each
   // section it changes shows up as its save* call.
   type Sections = ReturnType<typeof current>;
