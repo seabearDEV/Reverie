@@ -357,6 +357,9 @@ function readStoreFile(filePath: string): string {
  * exists and cannot be read (#283): a symlink, a directory, no permission.
  * That used to read as an empty map, and a cloned repository shipping
  * `_aliases.json` as a directory made a commit fail at its last write.
+ * An alias map with a target that is not a string is not a valid store file
+ * either (#303): every reader of a target takes it for a key, and `get` and
+ * `run` crashed on one.
  */
 function readSidecar<T>(filePath: string, kind: 'aliases' | 'confirm'): { data: T; unreadable?: UnreadableFile } {
   let raw: string;
@@ -370,7 +373,8 @@ function readSidecar<T>(filePath: string, kind: 'aliases' | 'confirm'): { data: 
   if (!raw.trim()) return { data: {} as T };
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      && (kind !== 'aliases' || Object.values(parsed).every(target => typeof target === 'string'))) {
       return { data: parsed as T };
     }
   } catch { /* classified below */ }
@@ -740,12 +744,17 @@ export function createDirectoryStore(
     // still authoritative. Skip the readdir + per-entry stat loop — unless a
     // file recorded as unreadable has since been repaired in place, which
     // the directory mtime cannot show.
+    // Recorded as the fast skip's mark only once the scan below completes. A
+    // scan that throws part-way (a directory that cannot be listed) must not
+    // let the next one skip over caches it never filled: the store would read
+    // as empty, its aliases and entries gone without a word (#305 PR 3).
+    let scannedMtimeMs: number;
     try {
       const dirStat = fs.statSync(dir);
       if (dirMtimeMs !== -1 && dirStat.mtimeMs === dirMtimeMs && !unreadableFileChanged()) {
         return;
       }
-      dirMtimeMs = dirStat.mtimeMs;
+      scannedMtimeMs = dirStat.mtimeMs;
     } catch (err) {
       if (isENOENT(err)) {
         entryCache.clear();
@@ -840,6 +849,7 @@ export function createDirectoryStore(
       'confirm',
       confirmCache
     );
+    dirMtimeMs = scannedMtimeMs;
   }
 
   /**

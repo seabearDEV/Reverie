@@ -3,8 +3,8 @@ import { Scope, loadAliasMap, saveAliasMap, updateAliasMap, updateStore, loadAli
 import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/aliasNames';
 import { isValidEntryKey } from './utils/directoryStore';
 import { resolveScopeForWrite, unusedProjectStore } from './projectResolution';
-import { assertSidecarsWritable } from './utils/unreadable';
-import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasListedIn, aliasTarget, aliasesPointingAt, aliasesSeen, defaultScopeInProject, referenceContext, resolveName, typedContext } from './utils/nameResolver';
+import { assertSidecarsWritable, describeUnreadable, listUnreadableFiles, unreadableAliasMap, type UnreadableFile } from './utils/unreadable';
+import { type AliasMap, type NameContext, type NameView, type Resolution, type StoreName, aliasListedIn, aliasTarget, aliasStoresSeen, aliasesPointingAt, aliasesSeen, defaultScopeInProject, readsProjectAliases, referenceContext, resolveName, typedContext } from './utils/nameResolver';
 
 /**
  * The resolver's view of the stores as they stand now (utils/nameResolver).
@@ -25,6 +25,42 @@ export function nameView(): NameView {
     get globalAliases() { return global ??= loadAliasMap('global'); },
     get unusedProject() { return (unused ??= { path: unusedProjectStore() }).path; },
   };
+}
+
+/**
+ * #303 item 1 (owner decision, 2026-11-27): the global alias map, when it
+ * cannot be read and a run whose names are looked up in `ctx` reads project
+ * aliases; undefined otherwise. The gate checks a name's global target too
+ * (#279), so that a project alias cannot take the name away from the user's
+ * global alias to a flagged entry — and with the global map unreadable it
+ * cannot see that target. The run then asks, as it does while a
+ * confirmation list cannot be read. A global-only run (-G, MCP scope
+ * "global", a global chain's members) reads no project alias, and outside a
+ * project there is none. Decide it from the context the run's first name
+ * was looked up in: a global chain's members are global names, but the
+ * chain's own name was not.
+ */
+export function unreadableGlobalAliasesFor(ctx: NameContext): UnreadableFile | undefined {
+  if (!readsProjectAliases(ctx) || !hasProjectStore()) return undefined;
+  return unreadableAliasMap('global');
+}
+
+/** Why a run asks while the global alias map cannot be read (unreadableGlobalAliasesFor). */
+export function unreadableGlobalAliasesReason(f: UnreadableFile): string {
+  return `the global alias map cannot be read, so the gate cannot see whether a project alias stands in front of a global alias to an entry that requires confirmation (${describeUnreadable(f)})`;
+}
+
+/**
+ * The alias maps a name typed with `scope` is looked up in that cannot be
+ * read (#305 L13). A name that is no entry may be an alias in one of them,
+ * so `get` answers that the map cannot be read (STORE_UNREADABLE) rather
+ * than "not found", which sends an agent off to write a fresh entry.
+ */
+export function unreadableAliasMapsFor(scope?: Scope): UnreadableFile[] {
+  // The lookup that found nothing has just read these maps, so their stores
+  // are scanned: no new scan.
+  return aliasStoresSeen(nameView(), typedContext(scope))
+    .flatMap(store => listUnreadableFiles(store).filter(f => f.kind === 'aliases'));
 }
 
 /** What `written` means in `ctx`, as the stores stand now. */

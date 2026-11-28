@@ -11,6 +11,7 @@ import { resolveScopeForWrite, ProjectResolutionError } from './projectResolutio
 import { StoreUnreadableError, markUnreadableShown, noteWriteRefused, readForWrite } from './utils/unreadable';
 import { isJsonMode, failJson, recordErrorCode } from './utils/output';
 import { assertAliasNamesFree, entryKeysIn, otherStoreEntryKeys } from './utils/aliasNames';
+import { aliasesPointingAt } from './utils/nameResolver';
 
 export type { Scope } from './store';
 
@@ -342,7 +343,9 @@ export function setValueWithMeta(
 }
 
 /**
- * Remove an entry (and children) by dot-path key. Returns true if anything was removed.
+ * Remove an entry (and children) by dot-path key, with the aliases in its
+ * store that point at it or under it, in one store write (#268). Returns
+ * true if anything was removed.
  * With 'auto' scope: removes from whichever scope contains it (project preferred).
  */
 export function removeValue(key: string, scope?: Scope  ): boolean {
@@ -375,7 +378,12 @@ export function removeValue(key: string, scope?: Scope  ): boolean {
     if (!removed) return null;
     const meta = { ...(current._meta ?? {}) };
     removeFlatKeysUnder(meta, key);
-    return { ...current, _meta: meta, removed: [key] };
+    // #268: the aliases pointing at the key or under it go in the same write.
+    // A second write left them pointing at nothing when it failed, and let
+    // another writer land between the two.
+    const aliases = { ...current.aliases };
+    for (const [alias] of aliasesPointingAt(aliases, key)) delete aliases[alias];
+    return { ...current, _meta: meta, aliases, removed: [key] };
   }, effectiveScope);
   return removed;
 }

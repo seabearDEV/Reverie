@@ -44,6 +44,12 @@ Out of scope:
 - Vulnerabilities in upstream dependencies (report these to the relevant maintainer)
 - Issues requiring physical access to the machine
 - Social engineering
+- A store written while a run is under way (accepted limit, 2026-11-27): the
+  confirmation gate checks the store once, before a command runs. A `$(…)`
+  command that writes entries mid-run, or another process writing one while
+  `rvr run` waits at its prompt, can change what a later reference in that
+  run reads, unchecked. A command that can write the store could as well run
+  `rvr run <flagged> --yes` itself. See the README, Run Confirmation.
 
 ## Detection and response
 

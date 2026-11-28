@@ -20,6 +20,7 @@ import type { CodexData } from '../types';
 import { flattenObject } from './objectPath';
 import { KeyCollisionError } from './keyCollision';
 import { entryNamedBy } from './entryIdentity';
+import { listUnreadableFiles } from './unreadable';
 
 /** The entry keys of the store a write does not write; none outside a project when the global store is written. */
 export function otherStoreEntryKeys(written: 'project' | 'global'): string[] {
@@ -32,9 +33,18 @@ export function entryKeysIn(state: { entries: CodexData; hidden?: readonly strin
   return [...Object.keys(flattenObject(state.entries)), ...(state.hidden ?? [])];
 }
 
-/** Throw the refusal (INVALID_INPUT) for the first of `names` that names one of `entryKeys`, or an entry file in either store. */
+/**
+ * Throw the refusal (INVALID_INPUT) for the first of `names` that names one
+ * of `entryKeys`, or an entry file in either store. An entry whose file does
+ * not parse counts (#291 item 4): its key is in no parsed state a caller
+ * passes, but the file is there, and once it is resolved the alias would
+ * stand in front of it. Those come from the stores this process has scanned,
+ * which every caller has just done — the one written under its lock, the
+ * other to list its keys.
+ */
 export function assertAliasNamesFree(names: Iterable<string>, entryKeys: Iterable<string>): void {
   const keys = new Set(entryKeys);
+  for (const f of listUnreadableFiles()) if (f.kind === 'entry' && f.key !== undefined) keys.add(f.key);
   for (const name of names) {
     const entry = entryNamedBy(name, keys);
     if (entry !== undefined) throw new KeyCollisionError({ kind: 'alias', key: name, existing: [entry] });

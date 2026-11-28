@@ -1,7 +1,7 @@
 {
-  "value": "2026-11-27 (late, 3) — PR 2 is #310 (L2–L5): every PR touching src/ runs the unit suite, the scope differential against its base (four shards plus write-then-run) and the fuzzer's quick mode (three shards). A PR that changes what a command does needs an exact expect-<issue>.mjs. CI runs Bun 1.4.5, this machine 1.3.13 (context.bunTestCompat). PICK UP: if #310 is merged, tick L2–L5 on #305, then PR 3 (gate and cache, L6–L14; L14 is decided with the owner at its start). One PR per session; end each with this note. Order and the rest: project.inFlight.",
+  "value": "2026-11-27 (late, 4) — PR 3 is #311 (L6–L14, plus L58 added from its review): one review, one fix round, a confirmation pass, CI green. Waiting on the owner's merge. Review B1 (fixed): scanAndSync set its fast-skip mark before listing the directory, so a store dir that could not be listed read as empty — now the mark is set only after a completed scan. Owner items in the PR body: L9 under -G, and MCP calls to a healthy store failing while the other store's dir is unlistable. PICK UP: if #311 is merged, tick L6–L14 and L58 on #305 with the merge commit, then PR 4 (store files and messages, L15–L27). At its start, ask the owner whether to keep `get --source --json` returning the stored text. One PR per session; end each with this note. Order and the rest: project.inFlight.",
   "meta": {
     "created": 1777392524252,
-    "updated": 1795824371853
+    "updated": 1795840113851
   }
 }

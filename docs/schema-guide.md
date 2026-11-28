@@ -347,12 +347,12 @@ The warning is advisory and never fails the write. Writes are counted per entry:
 
 Reverie treats a store file that exists but does not parse as an error, never as a missing entry ([#215](https://github.com/seabearDEV/reverie/issues/215)):
 
-- **Reading it fails** with error code `STORE_UNREADABLE` (not `NOT_FOUND`), naming the file and the reason.
-- **Writing over it is refused** — `set`, `copy`, `rename`, `import`, and for the sidecars `alias set` / `confirm set`. Nothing is written: a command that touches several files checks them all first. While `_aliases.json` or `_confirm.json` is unreadable, `rename` and `rm` are refused for every key (they have to carry aliases and confirm flags along), and so are `set -a` / `set --confirm`. Plain `set` and `copy` on other keys keep working.
+- **Reading it fails** with error code `STORE_UNREADABLE` (not `NOT_FOUND`), naming the file and the reason. So does `get` of a name that is no entry while an alias map it would look in is unreadable: the name may be an alias there. An `_aliases.json` whose targets are not all strings counts as unreadable.
+- **Writing over it is refused** — `set`, `copy`, `rename`, `import`, and for the sidecars `alias set` / `confirm set`. Nothing is written: a command that touches several files checks them all first. While `_aliases.json` or `_confirm.json` is unreadable, `rename` and `rm` are refused for every key (they have to carry aliases and confirm flags along), and so are `set -a` / `set --confirm`. Plain `set` and `copy` on other keys keep working. No alias may be named after an unreadable entry.
 - **What the file hides is not acted on.** `alias remove` / `alias rename` and `confirm remove` are refused while their sidecar is unreadable (it would read as empty). `rm` and `rename` of a parent key are refused while an entry under it is unreadable, and so is a write to a child or a parent of an unreadable entry. A broken file in the global store does not block writes to the project store.
 - **The bootstrap opens with the list** of unreadable files, ahead of the handoff banner; `--json` adds `result.unreadable`. Other commands warn (`warnings[]` code `STORE_UNREADABLE`, stderr in text mode).
 - **`rvr lint` fails** and lists each file.
-- **`rvr run` fails closed**: while `_confirm.json` is unreadable every entry requires confirmation.
+- **`rvr run` fails closed**: while `_confirm.json` is unreadable every entry requires confirmation, and while the global `_aliases.json` is unreadable so does every run in a project except a `-G` one.
 
 To resolve, keep one side of the file whole, then mark it resolved:
 

@@ -13,12 +13,12 @@ import { displayTree } from '../formatting';
 import { color } from '../formatting';
 import { execSync, spawnSync } from 'child_process';
 import { ensureDataDirectoryExists } from '../utils/paths';
-import { buildKeyToAliasMap, setAlias, removeAliasesForKey, loadAliases, renameAlias, nameView, resolveNameNow, aliasListed } from '../alias';
+import { buildKeyToAliasMap, setAlias, loadAliases, renameAlias, nameView, resolveNameNow, aliasListed, unreadableAliasMapsFor, unreadableGlobalAliasesFor, unreadableGlobalAliasesReason } from '../alias';
 import { chainMemberContext, typedContext } from '../utils/nameResolver';
 import { hasConfirm, setConfirm, removeConfirm, flagsListedUnder, flagsGating } from '../confirm';
 import { resolveScopeForWrite, unusedProjectReason } from '../projectResolution';
 import { debug } from '../utils/debug';
-import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles } from '../utils/unreadable';
+import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles, type UnreadableFile } from '../utils/unreadable';
 import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
@@ -90,13 +90,18 @@ export async function runCommand(keys: string[], options: RunOptions): Promise<v
 /**
  * `gateAlso`: names the confirmation gate checks besides the keys run — the
  * chain entry that listed them, as typed and as its alias resolves (#279).
+ * `aliasesUnread`: for a chain's members, what the chain's own lookup found
+ * (unreadableGlobalAliasesFor).
  */
-async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]): Promise<void> {
+async function runKeys(keys: string[], options: RunOptions, gateAlso: string[], aliasesUnread?: UnreadableFile): Promise<void> {
   debug('runCommand called', { keys, options });
   const scope = toScope(options.global);
   // What the names typed here mean (utils/nameResolver): -G or the default.
   const named = typedContext(scope);
   try {
+    // #303 item 1: decided where the first name is looked up, and carried to
+    // a chain's members — a global chain's are global names, its own was not.
+    const globalAliasesUnread = aliasesUnread ?? unreadableGlobalAliasesFor(named);
     // --chain: resolve the first key's value as a space-separated list of key references
     if (options.chain) {
       if (keys.length !== 1) {
@@ -132,7 +137,7 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
       // entry's own flag gates the run, under the name typed as well.
       const members = chainMemberContext(named, chainFound?.store);
       return runKeys(chainKeys, { ...options, chain: false, global: members.kind === 'typed' && members.scope === 'global' },
-        [...gateAlso, ...chain.gateNames]);
+        [...gateAlso, ...chain.gateNames], globalAliasesUnread);
     }
 
     const commands: string[] = [];
@@ -243,6 +248,7 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
     const reasons = [
       ...(unchecked === undefined ? [] : [`not every reference it reaches could be checked for a confirmation flag (${unchecked})`]),
       ...(unusedProject === undefined ? [] : [unusedProjectReason(unusedProject)]),
+      ...(globalAliasesUnread === undefined ? [] : [unreadableGlobalAliasesReason(globalAliasesUnread)]),
     ];
     const refusal = reasons.length === 0
       ? 'Entry requires confirmation.'
@@ -250,7 +256,8 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
     // #215: fail closed. An unreadable confirmation list loads as empty, so
     // while one is unreadable every entry is gated. hasConfirm runs first —
     // it does the scan the second check reads.
-    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || unchecked !== undefined || confirmListUnreadable() || unusedProject !== undefined;
+    const anyKeyNeedsConfirm = [...confirmKeys].some(k => hasConfirm(k)) || unchecked !== undefined || confirmListUnreadable() || unusedProject !== undefined
+      || globalAliasesUnread !== undefined;
 
     // SECURITY: produce the real shell command ONLY when actually executing —
     // this is the single place `$(key)` exec refs run. Callers invoke it past
@@ -326,6 +333,7 @@ async function runKeys(keys: string[], options: RunOptions, gateAlso: string[]):
       if (process.stdin.isTTY) {
         if (unchecked !== undefined) console.error(`warning: not every reference this command reaches could be checked for a confirmation flag (${unchecked}).`);
         if (unusedProject !== undefined) console.error(`warning: ${unusedProjectReason(unusedProject)}.`);
+        if (globalAliasesUnread !== undefined) console.error(`warning: ${unreadableGlobalAliasesReason(globalAliasesUnread)}.`);
         const answer = await askConfirmation('Run this? [y/N] ', options.source ? process.stderr : undefined);
         if (answer.toLowerCase() !== 'y') {
           if (options.source) {
@@ -934,6 +942,9 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
     const found = getValueWithStore(key, lookupScope);
     const val = found?.value;
     if (found === undefined || val === undefined) {
+      // #305 L13: the name may be an alias in a map that cannot be read.
+      const maps = unreadableAliasMapsFor(lookupScope);
+      if (maps.length > 0) throw new StoreUnreadableError(maps, 'read');
       failJson('NOT_FOUND', `Entry '${key}' not found`);
       return;
     }
@@ -985,6 +996,9 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
   const value = found?.value;
 
   if (found === undefined || value === undefined) {
+    // #305 L13, as above.
+    const maps = unreadableAliasMapsFor(lookupScope);
+    if (maps.length > 0) throw new StoreUnreadableError(maps, 'read');
     printError(`Entry '${key}' not found.`, 'NOT_FOUND');
     process.exitCode = 1;
     return;
@@ -1220,8 +1234,8 @@ export async function removeEntry(key: string, force = false, global?: boolean):
     return;
   }
 
-  // Cascade delete: remove any aliases pointing to this key or its children
-  removeAliasesForKey(key, scope);
+  // The aliases pointing at this key or under it went with it, in the same
+  // store write (#268).
 
   // #244: the confirmation flags stay. A flag gates by name and the global
   // list is read in every project, so a flag listed under this key may be

@@ -186,6 +186,10 @@ vi.mock('../alias', () => ({
     return true;
   }),
   removeAliasesForKey: vi.fn(),
+  // #303, #305 L13: no store here, so no unreadable alias map.
+  unreadableAliasMapsFor: vi.fn(() => []),
+  unreadableGlobalAliasesFor: vi.fn(() => undefined),
+  unreadableGlobalAliasesReason: vi.fn(() => ''),
   renameAlias: vi.fn((oldName: string, newName: string) => {
     if (!(oldName in mockAliases)) return false;
     if (newName in mockAliases) return false;
@@ -249,6 +253,7 @@ vi.mock('../store', () => {
     hasProjectStore: vi.fn(() => false),
     clearProjectFileCache: vi.fn(),
     clearStoreCaches: vi.fn(),
+    rescanStores: vi.fn(),
     loadEntries: vi.fn(() => ({ ...mockData })),
     saveEntries: vi.fn((d: any) => {
       Object.keys(mockData).forEach(k => delete mockData[k]);

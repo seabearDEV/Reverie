@@ -432,6 +432,18 @@ export function assertSubtreeReadable(target: () => string, key: string, verb: '
 }
 
 /**
+ * The alias map of the store `sourceId` names, when it cannot be read, from
+ * a scan made now (as assertSidecarsWritable scans): undefined when it reads,
+ * or when no such store is registered (a mocked store).
+ */
+export function unreadableAliasMap(sourceId: string): UnreadableFile | undefined {
+  const source = sources.get(sourceId);
+  if (!source) return undefined;
+  source.refresh?.();
+  return source.list().find(f => f.kind === 'aliases');
+}
+
+/**
  * True while any scanned store's confirmation list is unreadable. The `run`
  * gates OR this with the entry's own flag, so they fail closed: a conflicted
  * `_confirm.json` loads as empty, and "no flag" would run entries that
