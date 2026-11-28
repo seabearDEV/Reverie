@@ -195,6 +195,10 @@ describe('the scan sees a lookup however it is written', () => {
     ['hasOwnProperty.call', 'const seen = aliasesSeen(view, ctx);\nif (Object.prototype.hasOwnProperty.call(seen, key)) use();'],
     ['Object.entries(…).find', 'const hit = Object.entries(loadAliases(scope)).find(([a]) => a === key);'],
     ['an assignment split over two statements', 'let seen;\nseen = loadAliases(scope);\nconst t = seen[key];'],
+    // The same forms on the other side: a map variable, the method call, another search.
+    ['a destructured key of a map variable', 'const seen = aliasesSeen(view, ctx);\nconst { [key]: t } = seen;'],
+    ['seen.hasOwnProperty(…)', 'const seen = aliasesSeen(view, ctx);\nif (seen.hasOwnProperty(key)) use();'],
+    ['Object.keys(…).includes', 'const seen = aliasesSeen(view, ctx);\nif (Object.keys(seen).includes(key)) use();'],
   ];
   for (const [what, code] of cases) it(`catches ${what}`, () => { expect(scan(code)).not.toEqual([]); });
 
