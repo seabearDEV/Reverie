@@ -181,8 +181,9 @@ Keep one side whole — \`git checkout --ours -- <file>\` or
 
 A file that is not a conflict but simply invalid (truncated, emptied) is
 refused the same way. Restore it from version control or a backup, or
-delete it — the one case where removing a file here by hand is the fix:
-the tools will not remove a file they cannot read.
+remove it through the CLI: \`rvr rm <key>\` for an entry, \`rvr data reset
+aliases\` or \`rvr data reset confirm\` for \`_aliases.json\` or
+\`_confirm.json\` (which empties it).
 `;
 
 /**
@@ -508,8 +509,21 @@ function writeEpoch(dir: string, epoch: number): void {
  * failed, a failure to write the even value is logged and the commit's own
  * error is the one thrown. `committed` runs after the even value is written,
  * only when the commit succeeded.
+ *
+ * #305 L25: `untouched` says the commit wrote no file — refused, or nothing
+ * to write. On a store that had no `_epoch.json` (a clone of a repository
+ * whose `.reverie/` was committed without one), the file this bump created
+ * is removed again instead, so a refused command leaves the working tree
+ * as it was. A missing file reads as 0, an even value.
  */
-function underOddEpoch(dir: string, commit: () => void, committed?: () => void): void {
+function underOddEpoch(dir: string, commit: () => void, committed?: () => void, untouched?: () => boolean): void {
+  const epochPath = path.join(dir, EPOCH_FILE);
+  let hadEpochFile = true;
+  try {
+    fs.lstatSync(epochPath);
+  } catch (err) {
+    hadEpochFile = !isENOENT(err);
+  }
   const startEpoch = readEpoch(dir);
   const inProgressEpoch = startEpoch + (startEpoch % 2 === 0 ? 1 : 2);
   writeEpoch(dir, inProgressEpoch);
@@ -520,13 +534,24 @@ function underOddEpoch(dir: string, commit: () => void, committed?: () => void):
     failure = { err };
   }
   try {
-    writeEpoch(dir, inProgressEpoch + 1);
+    if (hadEpochFile || !untouched?.() || !removeQuietly(epochPath)) writeEpoch(dir, inProgressEpoch + 1);
   } catch (err) {
     if (!failure) throw err;
     debug(`Could not write epoch ${inProgressEpoch + 1} to ${dir} after a failed commit: ${String(err)}`);
   }
   if (failure) throw failure.err;
   committed?.();
+}
+
+/** Delete `p`; whether it went. */
+function removeQuietly(p: string): boolean {
+  try {
+    fs.unlinkSync(p);
+    return true;
+  } catch (err) {
+    debug(`Could not remove ${p}: ${String(err)}`);
+    return false;
+  }
 }
 
 /**
@@ -1023,7 +1048,11 @@ export function createDirectoryStore(
     const dir = getDirPath();
     assertNotTestCheckout(dir);
     ensureDir();
-    ensureStoreSeeds(dir);
+    // #305 L25: the store's README and .gitignore are seeded once the
+    // commit is past every refusal (step 4), and a refused commit takes
+    // back an `_epoch.json` it created: a refused command left all three
+    // in a store that had none, which dirtied a cloned repository.
+    let applying = false;
 
     // 0. Begin commit: bump epoch to the next odd value. Readers that
     //    observe an odd epoch loop in their seqlock retry until we finish.
@@ -1074,6 +1103,22 @@ export function createDirectoryStore(
           || !Object.hasOwn(newFlat, under)
           || removed.some(r => key === r || key.startsWith(`${r}.`))) toDelete.push(key);
       }
+      // #305 L16/L17: a file this scan could not read goes only when the
+      // write names it — `rm` of an invalid file, `data reset` — and never
+      // a directory in an entry's place, which stays and is still reported.
+      for (const key of data.removeUnreadable ?? []) {
+        if (entryCache.has(key) || !isValidEntryKey(key)) continue;
+        // One the scan recorded, or a symbolic link it skips (#159).
+        const p = unreadableEntries.get(key)?.file.path ?? entryFilePath(dir, key);
+        try {
+          const st = fs.lstatSync(p);
+          if (st.isDirectory()) continue;
+          if (!unreadableEntries.has(key) && !st.isSymbolicLink()) continue;
+        } catch {
+          continue;   // gone already
+        }
+        toDelete.push(key);
+      }
       const toWrite: [string, CodexValue, number | undefined][] = [];
       for (const [key, value] of Object.entries(newFlat)) {
         const current = entryCache.get(key);
@@ -1086,8 +1131,13 @@ export function createDirectoryStore(
       }
       const aliasPath = path.join(dir, ALIASES_FILE);
       const confirmPath = path.join(dir, CONFIRM_FILE);
-      const rewriteAliases = !aliasesCache || aliasesCache.mtimeMs === -1 || !shallowEquals(aliasesCache.data, data.aliases);
-      const rewriteConfirm = !confirmCache || confirmCache.mtimeMs === -1 || !shallowEquals(confirmCache.data, data.confirm);
+      // #305 L16: `data reset` replaces a sidecar that cannot be read. It
+      // loaded as {}, so writing {} looked like no change: the reset said
+      // the list was empty and left the broken file.
+      const replaceAliases = !!aliasesCache?.unreadable && (data.replaceUnreadable ?? []).includes('aliases');
+      const replaceConfirm = !!confirmCache?.unreadable && (data.replaceUnreadable ?? []).includes('confirm');
+      const rewriteAliases = replaceAliases || !aliasesCache || aliasesCache.mtimeMs === -1 || !shallowEquals(aliasesCache.data, data.aliases);
+      const rewriteConfirm = replaceConfirm || !confirmCache || confirmCache.mtimeMs === -1 || !shallowEquals(confirmCache.data, data.confirm);
 
       // 3b. Refuse to replace a file that does not parse (#215). An
       //     unreadable entry is absent from entryCache, so a write to its key
@@ -1101,11 +1151,11 @@ export function createDirectoryStore(
         const broken = probeEntryFile(entryFilePath(dir, key), key);
         if (broken) refused.push(broken);
       }
-      if (rewriteAliases) {
+      if (rewriteAliases && !replaceAliases) {
         const broken = readSidecar(aliasPath, 'aliases').unreadable;
         if (broken) refused.push(broken);
       }
-      if (rewriteConfirm) {
+      if (rewriteConfirm && !replaceConfirm) {
         const broken = readSidecar(confirmPath, 'confirm').unreadable;
         if (broken) refused.push(broken);
       }
@@ -1133,6 +1183,9 @@ export function createDirectoryStore(
         const twin = foldTwin(dir, key, entryCache.keys());
         if (twin !== undefined && !deleting.has(twin)) throw new KeyCollisionError({ kind: 'fold', key, existing: [twin] });
       }
+
+      applying = true;
+      ensureStoreSeeds(dir);
 
       // 4. Apply deltas, every write before any delete (#259). A write can
       //    fail (a name too long for the filesystem, a directory in the
@@ -1277,8 +1330,8 @@ export function createDirectoryStore(
       // leaves the store as it was. A sidecar written where there was none,
       // with nothing in it, changes nothing: a missing one reads as empty.
       if (written.length > 0 || confirmTouched
-        || (aliasesTouched && !shallowEquals(priorAliases ?? {}, data.aliases))
-        || (finalConfirmUndoable && !shallowEquals(oldConfirm, data.confirm))) progress.changed = true;
+        || (aliasesTouched && (replaceAliases || !shallowEquals(priorAliases ?? {}, data.aliases)))
+        || (finalConfirmUndoable && (replaceConfirm || !shallowEquals(oldConfirm, data.confirm)))) progress.changed = true;
       for (const [key, wrapper] of written) {
         entryCache.set(key, { wrapper, mtimeMs: fs.statSync(entryFilePath(dir, key)).mtimeMs });
         unreadableEntries.delete(key);
@@ -1294,6 +1347,7 @@ export function createDirectoryStore(
       // the list keeps any flag it would have lost after them (step 5): the
       // entry is still there, and a flag too many gates nothing that is gone.
       let deleteFailure: { err: unknown } | undefined;
+      const notDeleted: string[] = [];
       for (const key of toDelete) {
         const filePath = entryFilePath(dir, key);
         if (!writtenFiles.has(fileIdentity(filePath))) {
@@ -1304,13 +1358,38 @@ export function createDirectoryStore(
             if (!isENOENT(err)) {
               debug(`Failed to delete entry file for ${key}: ${String(err)}`);
               deleteFailure ??= { err };
+              notDeleted.push(key);
               continue;   // still on disk: it stays cached
             }
           }
         }
         entryCache.delete(key);
+        unreadableEntries.delete(key);
       }
       if (deleteFailure) {
+        // #305 L21: the alias map went before the deletes, without the
+        // aliases of every key this commit meant to delete. Put back each
+        // one whose target is still on disk — a key that could not be
+        // deleted, or a namespace above one — so only the aliases of what
+        // is really gone are dropped.
+        if (aliasesTouched && priorAliases !== undefined && notDeleted.length > 0) {
+          const kept = { ...data.aliases };
+          let restored = false;
+          for (const [alias, target] of Object.entries(priorAliases)) {
+            if (Object.hasOwn(kept, alias)) continue;
+            if (notDeleted.some(k => k === target || k.startsWith(`${target}.`))) {
+              kept[alias] = target;
+              restored = true;
+            }
+          }
+          if (restored) {
+            try {
+              atomicWriteFileSync(aliasPath, serializeSidecar(kept));
+            } catch (undo) {
+              debug(`Could not put back the aliases of entries still on disk: ${String(undo)}`);
+            }
+          }
+        }
         // Neither sidecar cache can be trusted to match the disk now: re-read both.
         aliasesCache = null;
         confirmCache = null;
@@ -1324,7 +1403,12 @@ export function createDirectoryStore(
         aliasesCache = { data: { ...data.aliases }, mtimeMs: fs.statSync(aliasPath).mtimeMs };
       }
       if (rewriteConfirm) {
-        if (finalConfirm && !finalConfirmUndoable) atomicWriteFileSync(confirmPath, serializeSidecar(data.confirm));
+        if (finalConfirm && !finalConfirmUndoable) {
+          atomicWriteFileSync(confirmPath, serializeSidecar(data.confirm));
+          // #305 L19: a list that changed is a change, even when every
+          // delete before it found its file already gone.
+          if (replaceConfirm || !shallowEquals(oldConfirm, data.confirm)) progress.changed = true;
+        }
         confirmCache = { data: { ...data.confirm }, mtimeMs: fs.statSync(confirmPath).mtimeMs };
       }
 
@@ -1337,7 +1421,7 @@ export function createDirectoryStore(
       //    rescan. Safe here: scanAndSync ran under this lock (step 1) and
       //    every later mutation was ours, the even epoch included.
       refreshDirToken(dir);
-    }));
+    }, () => !applying));
   }
 
   /**
@@ -1475,7 +1559,6 @@ export function createDirectoryStore(
     const dir = getDirPath();
     assertNotTestCheckout(dir);
     ensureDir();
-    ensureStoreSeeds(dir);
 
     return withStoreLock(dir, () => {
       // Whether the dir-mtime fast-skip token is current right now. Unlike
@@ -1547,6 +1630,9 @@ export function createDirectoryStore(
         existingCreated = existing.meta?.created;
       }
 
+      // #305 L25: seeded past every refusal above, as update() does.
+      ensureStoreSeeds(dir);
+
       // 0. Begin commit: bump epoch odd. Mirrors save()'s seqlock contract so
       //    concurrent readers see the in-progress state and retry their scan.
       //    6. End commit: underOddEpoch bumps it even on every way out, so a
@@ -1589,7 +1675,54 @@ export function createDirectoryStore(
     return [...entryCache.keys()];
   }
 
-  return { load, loadConfirm, save, update, inspect, storedKeys, clear, getOne, setOne, unreadable };
+  /**
+   * #305 L23: the key the last scan listed for the entry file `key`'s path
+   * opens — `key` itself, or the spelling the store lists it under when a
+   * filesystem that folds names (case, Unicode form) opens the same file.
+   * `get` reads through the path, so it finds the entry under any such
+   * spelling; a removal has to name the key as stored. Asked of the
+   * filesystem by lstat identity, as foldTwin does. A stat per stored key,
+   * only when `key` is not stored as typed.
+   */
+  function storedSpelling(key: string): string | undefined {
+    if (entryCache.has(key)) return key;
+    if (!isValidEntryKey(key)) return undefined;
+    const dir = getDirPath();
+    const id = fileIdentity(entryFilePath(dir, key));
+    if (id === undefined) return undefined;
+    for (const other of entryCache.keys()) {
+      if (fileIdentity(entryFilePath(dir, other)) === id) return other;
+    }
+    return undefined;
+  }
+
+  /**
+   * #305 L16: the paths named like an entry that the scan does not read — a
+   * symbolic link (never followed, #159) or a directory at `<key>.json` —
+   * which `data reset` removes (a link, never its target) or names (a
+   * directory). One listing and an lstat per entry-named path.
+   */
+  function strayEntryPaths(): { key: string; path: string; directory: boolean }[] {
+    const dir = getDirPath();
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      return [];
+    }
+    const stray: { key: string; path: string; directory: boolean }[] = [];
+    for (const name of names) {
+      if (!isEntryFilename(name)) continue;
+      const p = path.join(dir, name);
+      try {
+        const st = fs.lstatSync(p);
+        if (st.isSymbolicLink() || st.isDirectory()) stray.push({ key: keyFromFilename(name), path: p, directory: st.isDirectory() });
+      } catch { /* gone */ }
+    }
+    return stray;
+  }
+
+  return { load, loadConfirm, save, update, inspect, storedKeys, storedSpelling, strayEntryPaths, clear, getOne, setOne, unreadable };
 }
 
 // ── Migration ──────────────────────────────────────────────────────────

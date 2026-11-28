@@ -20,6 +20,7 @@ import { createDirectoryStore, migrateFileToDirectory } from './utils/directoryS
 import { flattenObject, removeFlatKeysUnder } from './utils/objectPath';
 import { debug } from './utils/debug';
 import { registerUnreadableSource, type UnreadableFile } from './utils/unreadable';
+import { toStoreWriteError } from './utils/storeWriteError';
 import { registerStoredKeysSource } from './utils/keyCollision';
 import { resolveScopeForWrite, ProjectResolutionError, registerProjectStoreLookup } from './projectResolution';
 
@@ -42,6 +43,18 @@ export interface UnifiedData {
    * hidden entry otherwise, unless it removes the entry it is hidden under.
    */
   removed?: string[] | undefined;
+  /**
+   * #305 L16/L17: entry keys whose files the store cannot read that the
+   * write deletes: `rm` of an invalid file, `data reset`. Every other write
+   * leaves such a file alone. Never a directory: one in an entry's place
+   * stays. A write ignores a key whose file reads (or is gone) by then.
+   */
+  removeUnreadable?: string[] | undefined;
+  /**
+   * #305 L16: sidecars the write replaces although they cannot be read
+   * (`data reset`). Any other write to an unreadable sidecar is refused.
+   */
+  replaceUnreadable?: ('aliases' | 'confirm')[] | undefined;
 }
 
 export type Scope = 'project' | 'global' | 'auto';
@@ -87,6 +100,17 @@ export interface ScopedStore {
    * it that a store written by hand or by a merge can hold side by side.
    */
   storedKeys(): string[];
+  /**
+   * #305 L23: the key the last scan listed for the file `key`'s path opens:
+   * `key`, another spelling of it on a filesystem that folds names, or
+   * undefined. One stat per stored key when `key` is not stored as typed.
+   */
+  storedSpelling(key: string): string | undefined;
+  /**
+   * #305 L16: paths named like an entry that the scan does not read — a
+   * symbolic link or a directory at `<key>.json`. Lists the directory.
+   */
+  strayEntryPaths(): { key: string; path: string; directory: boolean }[];
   clear(): void;
   /**
    * Fast-path single-entry read. Reads exactly one entry file (no directory
@@ -409,6 +433,9 @@ export interface StoreSections {
   confirm?: Record<string, true> | undefined;
   /** #267: hidden keys the write removes (see UnifiedData.removed). */
   removed?: string[] | undefined;
+  /** #305 L16: see UnifiedData.removeUnreadable and replaceUnreadable. */
+  removeUnreadable?: string[] | undefined;
+  replaceUnreadable?: ('aliases' | 'confirm')[] | undefined;
 }
 
 /**
@@ -421,12 +448,13 @@ export interface StoreSections {
  * show (#267); a replace names the ones it drops in `removed`.
  */
 export function updateAll(
-  fn: (current: { entries: CodexData; aliases: Record<string, string>; confirm: Record<string, true>; hidden: string[] }) => StoreSections,
+  fn: (current: { entries: CodexData; aliases: Record<string, string>; confirm: Record<string, true>; hidden: string[]; unreadable: UnreadableFile[]; stray: { key: string; path: string; directory: boolean }[] }) => StoreSections,
   scope?: Scope,
 ): void {
   // Bulk transactional write (#77): import handlers + reset paths route here.
   const effectiveScope = resolveScopeForWrite(scope);
-  resolveStore(effectiveScope).update(current => {
+  const store = resolveStore(effectiveScope);
+  store.update(current => {
     // Copies: a merge builds on what it is handed, and what is written for
     // a section it leaves out — and the stamp below — is the store as it was.
     const sections = fn({
@@ -434,6 +462,10 @@ export function updateAll(
       aliases: { ...current.aliases },
       confirm: { ...current.confirm },
       hidden: [...(current.hidden ?? [])],
+      // #305 L16: what the scan under the lock could not read, and the
+      // entry-named links and directories it skips (reset removes them).
+      unreadable: store.unreadable(),
+      stray: store.strayEntryPaths(),
     });
 
     // Stamp _meta for new/changed leaves when entries are written. Without
@@ -453,6 +485,8 @@ export function updateAll(
       ...(sections.aliases !== undefined && { aliases: sections.aliases }),
       ...(sections.confirm !== undefined && { confirm: sections.confirm }),
       ...(sections.removed !== undefined && { removed: sections.removed }),
+      ...(sections.removeUnreadable !== undefined && { removeUnreadable: sections.removeUnreadable }),
+      ...(sections.replaceUnreadable !== undefined && { replaceUnreadable: sections.replaceUnreadable }),
     };
   });
 }
@@ -528,11 +562,22 @@ export function updateUnderBothLocks(
     }
     return;
   }
+  // #305 L24: the other store's own file operations fail as a store write
+  // does, IO naming the file. Inside update() their error counted as fn's
+  // and came through raw, as RUNTIME. What fn throws is thrown as it is.
+  const inspectOther = <T>(store: ScopedStore, read: (data: UnifiedData) => T): T => {
+    let inFn = false;
+    try {
+      return store.inspect(data => { inFn = true; return read(data); });
+    } catch (err) {
+      throw inFn ? err : toStoreWriteError(err, true);
+    }
+  };
   if (scope === 'project') {
-    project.update(current => global.inspect(other =>
+    project.update(current => inspectOther(global, other =>
       fn(view(project, 'project', projectDir, current), view(global, 'global', globalDir, other))));
   } else {
-    project.inspect(other => {
+    inspectOther(project, other => {
       global.update(current =>
         fn(view(global, 'global', globalDir, current), view(project, 'project', projectDir, other)));
     });
@@ -632,8 +677,8 @@ registerUnreadableSource('project', () => projectStore?.unreadable() ?? [], () =
 registerUnreadableSource('global', () => globalStore?.unreadable() ?? [], () => { getGlobalStore().load(); });
 
 // #267: the keys each store holds, one per file, for lint — read the same way.
-registerStoredKeysSource('project', () => projectStore?.storedKeys() ?? []);
-registerStoredKeysSource('global', () => globalStore?.storedKeys() ?? []);
+registerStoredKeysSource('project', () => projectStore?.storedKeys() ?? [], key => projectStore?.storedSpelling(key));
+registerStoredKeysSource('global', () => globalStore?.storedKeys() ?? [], key => globalStore?.storedSpelling(key));
 
 // ── Cache management ───────────────────────────────────────────────────
 

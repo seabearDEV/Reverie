@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { loadData, handleError, getValue, getValueWithStore, getValueForWrite, setValue, setValueWithMeta, removeValue, Scope } from '../storage';
 import { flattenObject, setNestedValue } from '../utils/objectPath';
-import { assertKeysWritable, renameDestinationProblem } from '../utils/keyCollision';
+import { assertKeysWritable, renameDestinationProblem, hiddenKeysUnder, storedSpellingOf } from '../utils/keyCollision';
 import { renameKey, RenameRefusal, renameNotes, type RenameResult } from '../rename';
 import { isValidEntryKey } from '../utils/directoryStore';
 import { hasProjectStore, updateEntries, loadMeta, loadMetaMerged, getStalenessTag } from '../store';
@@ -18,12 +18,12 @@ import { chainMemberContext, typedContext } from '../utils/nameResolver';
 import { hasConfirm, setConfirm, removeConfirm, flagsListedUnder, flagsGating } from '../confirm';
 import { resolveScopeForWrite, unusedProjectReason } from '../projectResolution';
 import { debug } from '../utils/debug';
-import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles, type UnreadableFile } from '../utils/unreadable';
+import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, confirmListUnreadable, listUnreadableFiles, invalidEntryFile, displayPath, unreadableAliasSetRefusal, type UnreadableFile } from '../utils/unreadable';
 import { GetOptions } from '../types';
 import { printSuccess, printWarning, printError, displayEntries, displayKeys, displayAliases, askConfirmation, askPassword } from './helpers';
 import { copyToClipboard } from '../utils/clipboard';
 import { isEncrypted, encryptValue, decryptValue } from '../utils/crypto';
-import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, UNRESOLVED_WARNING_CODE, type UnresolvedOnRead, type EntryStore } from '../utils/interpolate';
+import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, UNRESOLVED_WARNING_CODE, CYCLE_WARNING_CODE, cycleWarning, StrictInterpolationError, type UnresolvedOnRead, type EntryStore } from '../utils/interpolate';
 import { getBinaryName } from '../utils/binaryName';
 import { isJsonMode, setResult, failJson, addWarning, recordErrorCode, type ErrorCode } from '../utils/output';
 import { markValueStored } from '../utils/writeAmp';
@@ -72,13 +72,24 @@ function warnUnresolved(found: [string, UnresolvedOnRead][]): void {
  */
 export function warnUnresolvedReferences(stored: [string, string][], from: EntryStore = 'project'): void {
   const found: [string, UnresolvedOnRead][] = [];
+  const cycles: string[] = [];
   for (const [key, value] of stored) {
     try {
       const read = interpolateForRead(value, from);
       if (read.unresolved) found.push([key, read.unresolved]);
-    } catch { /* `:?` or a cycle fails the read of this entry; that is the read's to report, and a fault here must not fail a write that succeeded */ }
+    } catch (err) {
+      // #305 L26: a value that completes a cycle was stored without a word,
+      // and every entry in the cycle then failed every read. A `:?` guard
+      // fails the read on purpose, and a fault here must not fail a write
+      // that succeeded: neither is reported.
+      if (err instanceof StrictInterpolationError && err.cycle) cycles.push(cycleWarning(key, err));
+    }
   }
   warnUnresolved(found);
+  for (const message of cycles) {
+    if (isJsonMode()) addWarning(message, CYCLE_WARNING_CODE);
+    else console.error(`warning: ${message}`);
+  }
 }
 
 interface RunOptions { yes?: boolean, dry?: boolean, decrypt?: boolean, source?: boolean, capture?: boolean, chain?: boolean, global?: boolean, passwordFile?: string }
@@ -757,6 +768,19 @@ export async function setEntry(key: string, value: string | undefined, force = f
     if (confirm !== undefined) sidecars.push('confirm');
     if (sidecars.length > 0) assertSidecarsWritable(() => resolveScopeForWrite(scope), sidecars);
 
+    // #305 L15: no entry under this name while an alias map the lookup read
+    // cannot be read: the name may be an alias there, and the value would
+    // land under the alias's name. After the write's own refusals — a
+    // project that cannot be resolved, a sidecar it cannot write — so those
+    // stay the answer they were.
+    if (existing === undefined) {
+      const maps = unreadableAliasMapsFor(scope);
+      if (maps.length > 0) {
+        resolveScopeForWrite(scope);
+        throw unreadableAliasSetRefusal(key, maps);
+      }
+    }
+
     let flagRemoved = false;
     if (sidecars.length === 0) {
       setValue(key, storedValue, scope);
@@ -958,12 +982,17 @@ export async function getEntry(key?: string, options: GetOptions = {}): Promise<
       } else if (options.source) {
         displayVal = strVal; // --source: the stored text, as in text mode
       } else {
-        // A `:?` or a cycle keeps the raw value here, as it always has.
+        // #305 L27: a `:?` or a cycle fails the read, as plain `get` does —
+        // it came back as the raw value, `ok: true`. `--source` is the way
+        // to the stored text.
         try {
           const read = interpolateForRead(strVal, found.store);
           displayVal = read.value;
           if (read.unresolved) warnUnresolved([[key, read.unresolved]]);
-        } catch { displayVal = strVal; }
+        } catch (err) {
+          printError(err instanceof Error ? err.message : String(err));
+          return;
+        }
       }
       setResult({ [key]: displayVal });
     }
@@ -1191,7 +1220,7 @@ export async function editEntry(key: string, options: { decrypt?: boolean, globa
   }
 }
 
-export async function removeEntry(key: string, force = false, global?: boolean): Promise<{ key: string; removed: true } | undefined> {
+export async function removeEntry(key: string, force = false, global?: boolean): Promise<{ key: string; removed: true; hidden?: string[] } | undefined> {
   debug('removeEntry called', { key, force, global });
   const scope = toScope(global);
 
@@ -1201,14 +1230,26 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   // children are unreadable looks absent, and "not found" is the wrong answer.
   assertSubtreeReadable(() => resolveScopeForWrite(scope), key, 'remove');
 
-  const existing = getValue(key, scope);
-  if (existing === undefined) {
-    printWarning(`Entry '${key}' not found.`);
-    return;
+  // #305 L17 (owner decision 2026-11-28): an entry file that is simply not
+  // valid (truncated, emptied) is removed. The read below refuses it, as it
+  // refuses a conflict, which stays refused: which side to keep is the user's.
+  const invalid = invalidEntryFile(() => resolveScopeForWrite(scope), key);
+  if (!invalid) {
+    const existing = getValue(key, scope);
+    if (existing === undefined) {
+      printWarning(`Entry '${key}' not found.`);
+      return;
+    }
   }
 
+  // #305 L22: the entries stored under this one go with it, and the tree
+  // cannot show them (#267): say so before and after.
+  const hidden = hiddenUnder(scope, key);
+  const withHidden = hidden.length === 0 ? ''
+    : `, with the ${hidden.length === 1 ? 'entry' : `${hidden.length} entries`} hidden under it: ${hidden.map(k => `'${k}'`).join(', ')}`;
+
   if (!force && process.stdin.isTTY) {
-    const answer = await askConfirmation(`Remove '${key}'? [y/N] `);
+    const answer = await askConfirmation(`Remove '${key}'${withHidden}? [y/N] `);
     if (answer.toLowerCase() !== 'y') {
       console.log('Aborted.');
       return;
@@ -1220,7 +1261,7 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   // refuse before the entry is gone rather than leave them dangling.
   assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
 
-  if (!removeValue(key, scope)) {
+  if (!removeValue(key, scope, { invalidFile: invalid !== undefined })) {
     // The lookup above falls through from the project store to the global
     // one; the removal deliberately does not (#99). So a key that exists
     // only in the global store was found, not removed, and reported as
@@ -1241,12 +1282,30 @@ export async function removeEntry(key: string, force = false, global?: boolean):
   // list is read in every project, so a flag listed under this key may be
   // what gates another project's entry of the same name — which this removal
   // cannot see. As with rename (#234), only `confirm remove` clears a flag.
-  printSuccess(`Entry '${key}' removed successfully.`);
+  printSuccess(invalid
+    ? `Entry '${key}' removed successfully (${displayPath(invalid.path)} was not a valid store file)${withHidden}.`
+    : `Entry '${key}' removed successfully${withHidden}.`);
   const kept = flagsListedUnder(key, scope);
   if (kept.length > 0) {
     printWarning(`The confirmation flag${kept.length === 1 ? '' : 's'} listed under ${kept.map(k => `'${k}'`).join(', ')} stay${kept.length === 1 ? 's' : ''}: a flag gates its name in every project. Clear ${kept.length === 1 ? 'it' : 'them'} with \`${getBinaryName()} confirm remove\` once nothing uses ${kept.length === 1 ? 'it' : 'them'}.`);
   }
-  return { key, removed: true };
+  return { key, removed: true, ...(hidden.length > 0 && { hidden }) };
+}
+
+/**
+ * #305 L22: the keys stored under `key` that the tree cannot show (#267), in
+ * the store a removal in `scope` writes, under the spelling it lists `key`
+ * by (L23). From the scan the command already made; none when the store
+ * cannot be resolved (the removal reports that).
+ */
+function hiddenUnder(scope: Scope | undefined, key: string): string[] {
+  let id: 'project' | 'global';
+  try {
+    id = resolveScopeForWrite(scope);
+  } catch {
+    return [];
+  }
+  return hiddenKeysUnder(id, storedSpellingOf(id, key) ?? key);
 }
 
 export async function copyEntry(sourceKey: string, destKey: string, force = false, global?: boolean): Promise<{ source: string; dest: string } | undefined> {

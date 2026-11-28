@@ -26,7 +26,7 @@ A store is a directory. Every entry is its own file, named by its key, and a few
 
 The project store lives in `.reverie/` at the project root and is meant to be committed. The global store has the same layout under `~/.reverie/store/`.
 
-You never edit the entry files or the two sidecars by hand — `rvr` and the MCP tools maintain them, along with the timestamps, alias integrity and audit log that hand edits would skip. (The one exception is deleting a file that can no longer be parsed: see [When a store file cannot be read](#when-a-store-file-cannot-be-read-merge-conflicts).) This section describes the layout so that a diff or a merge makes sense when you see one.
+You never edit the entry files or the two sidecars by hand — `rvr` and the MCP tools maintain them, along with the timestamps, alias integrity and audit log that hand edits would skip. (A file that can no longer be parsed is removed through them too: see [When a store file cannot be read](#when-a-store-file-cannot-be-read-merge-conflicts).) This section describes the layout so that a diff or a merge makes sense when you see one.
 
 ### Entries — one file per key
 
@@ -361,7 +361,7 @@ git checkout --ours -- .reverie/context.next_session.json     # or --theirs
 git add .reverie/context.next_session.json
 ```
 
-A file that is not a conflict but simply invalid — truncated, emptied — is reported the same way, with a different fix: restore it from version control or a backup, or delete the file by hand. `rvr rm` does not remove a file it cannot read.
+A file that is not a conflict but simply invalid — truncated, emptied — is reported the same way, with a different fix: restore it from version control or a backup, or remove it: `rvr rm <key>` for an entry, `rvr data reset aliases` or `rvr data reset confirm` for a sidecar (which empties it). `rvr rm` still refuses a file with conflict markers. `rvr data reset` removes every file it cannot read in the sections it resets, conflicts included, after its automatic backup.
 
 Any way of repairing the file works, including an editor save or `cp` over it; a running MCP server picks the repair up on its next call.
 

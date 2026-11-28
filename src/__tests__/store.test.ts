@@ -408,7 +408,10 @@ describe('meta operations', () => {
 
     expect(readData().entries).toEqual({ a: 'b' });
     // The commit epoch is even again: readers are not left waiting on a writer.
-    const epoch = JSON.parse(fs.readFileSync(path.join(storeDir, '_epoch.json'), 'utf8')).epoch as number;
+    // #305 L25: this store had no _epoch.json, and a refused commit takes back
+    // the one it created; a missing file reads as 0.
+    const epochPath = path.join(storeDir, '_epoch.json');
+    const epoch = fs.existsSync(epochPath) ? JSON.parse(fs.readFileSync(epochPath, 'utf8')).epoch as number : 0;
     expect(epoch % 2).toBe(0);
   });
 

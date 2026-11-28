@@ -7,6 +7,7 @@ import os from 'os';
 import path from 'path';
 import { createDirectoryStore, serializeEntryWrapper } from '../utils/directoryStore';
 import type { UnifiedData } from '../store';
+import { getBinaryName } from '../utils/binaryName';
 import {
   StoreUnreadableError,
   UnreadableFile,
@@ -519,22 +520,31 @@ describe('messages', () => {
     expect(msg).not.toContain('git checkout');
   });
 
-  it('the fix for an invalid file says to delete it by hand: the store will not remove what it cannot read', () => {
+  // #305 L16/L17 (owner decision 2026-11-28): the store removes an invalid
+  // file itself, so the fix names the command, never a hand delete.
+  it('the fix for an invalid file names the command that removes it: rm for an entry, data reset for a sidecar', () => {
+    const bin = getBinaryName();
     expect(resolutionHint(confirm)).toBe(
-      'Restore /repo/.reverie/_confirm.json from version control or a backup, or delete that file by hand (the store will not remove a file it cannot read).',
+      `Restore /repo/.reverie/_confirm.json from version control or a backup, or remove it: \`${bin} data reset confirm\`, which empties it.`,
+    );
+    const truncated: UnreadableFile = { ...entry, key: 'a.cut', path: '/repo/.reverie/a.cut.json', reason: 'parse' };
+    expect(resolutionHint(truncated)).toBe(
+      `Restore /repo/.reverie/a.cut.json from version control or a backup, or remove it: \`${bin} rm a.cut\`.`,
     );
   });
 
   it('a mixed set gets both fixes, each labelled', () => {
+    const bin = getBinaryName();
+    const removeEach = `\`${bin} rm <key>\` for an entry, \`${bin} data reset aliases\` or \`confirm\` for the alias map or the confirmation list (with -G in the global store)`;
     const truncated: UnreadableFile = { ...entry, key: 'a.cut', path: '/repo/.reverie/a.cut.json', reason: 'parse' };
     for (const lines of [unreadableWarningBlock([entry, truncated]), bootstrapUnreadableLines([entry, truncated])]) {
       const fixes = lines.slice(-2).map(l => l.trim());
       expect(fixes[0]).toBe("With conflict markers: which side to keep is the user's call: `git checkout --ours -- <file>` (or `--theirs`), then `git add <file>`.");
-      expect(fixes[1]).toBe('Not a valid store file: restore each from version control or a backup, or delete it by hand (the store will not remove a file it cannot read).');
+      expect(fixes[1]).toBe(`Not a valid store file: restore each from version control or a backup, or remove it: ${removeEach}.`);
     }
     // One kind only: one line, unlabelled.
     expect(unreadableWarningBlock([truncated, { ...truncated, key: 'a.b', path: '/repo/.reverie/a.b.json' }]).slice(-1)[0].trim())
-      .toBe('Restore each from version control or a backup, or delete it by hand (the store will not remove a file it cannot read).');
+      .toBe(`Restore each from version control or a backup, or remove it: ${removeEach}.`);
   });
 
   it('the conflict fix is whole-file, valid as written, and leaves the choice of side to the user', () => {

@@ -45,12 +45,12 @@ import { renameKey, RenameRefusal, renameNotes } from "./rename";
 import { loadConfig, getConfigSetting, setConfigSetting, unsetConfigSetting, VALID_CONFIG_KEYS } from "./config";
 import { computeImportSections, assertImportedAliasesFree } from "./utils/importSections";
 import { assertAliasNameFreeNow, otherStoreEntryKeys } from "./utils/aliasNames";
-import { KeyCollisionError, assertKeysWritable, renameDestinationProblem } from "./utils/keyCollision";
+import { KeyCollisionError, assertKeysWritable, renameDestinationProblem, hiddenKeysUnder, storedSpellingOf } from "./utils/keyCollision";
 import { version as pkgVersion } from "../package.json";
 import { wrapExport, tryUnwrapImport } from "./utils/envelope";
 import { formatTree, resetColorCache } from "./formatting";
 import { isEncrypted, maskEncryptedValues, encryptValue, decryptValue } from "./utils/crypto";
-import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, interpolateForRead, unresolvedWarning, unresolvedOverflowNote } from "./utils/interpolate";
+import { interpolateFrom, interpolateExec, interpolateObject, collectRunReferences, walkUnchecked, interpolateForRead, unresolvedWarning, unresolvedOverflowNote, cycleWarning, StrictInterpolationError } from "./utils/interpolate";
 import type { UnresolvedOnRead, EntryStore } from "./utils/interpolate";
 import { logToolCall, computeStats, classifyOp, getTelemetryPath, getMissPathsPath, TelemetryExtras, MissWindowTracker, appendMissPath, getSessionId, extractNamespace, keyIsEntryKey } from "./utils/telemetry";
 import { resolveAgentIdentity } from "./utils/agentIdentity";
@@ -60,7 +60,7 @@ import type { ErrorCode } from "./utils/output";
 import { resolveScopeForWrite, ProjectResolutionError, unusedProjectReason } from "./projectResolution";
 import { isStoreIoError } from "./utils/storeWriteError";
 import type { CodexValue } from "./types";
-import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, bootstrapListed, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, readForWrite, setAbsoluteDisplayPaths, unreadableWarning, type UnreadableFile } from "./utils/unreadable";
+import { StoreUnreadableError, assertSidecarsWritable, assertSubtreeReadable, invalidEntryFile, unreadableAliasSetRefusal, bootstrapListed, bootstrapUnreadableLines, confirmListUnreadable, listUnreadableFiles, readForWrite, setAbsoluteDisplayPaths, unreadableWarning, type UnreadableFile } from "./utils/unreadable";
 import { getEffectiveInstructions } from "./llm-instructions";
 import { parsePeriodDays } from "./utils";
 import { getBinaryName } from "./utils/binaryName";
@@ -561,6 +561,19 @@ server.tool(
       // #279: likewise an alias named after an entry, the one this call
       // writes included. setAlias checks again under the lock.
       if (alias) assertAliasNameFreeNow(alias, [resolved]);
+      // #305 L15: no entry under this name while an alias map the lookup
+      // read cannot be read: the name may be an alias there.
+      let exists = true;
+      try {
+        exists = getValue(resolved, scope) !== undefined;
+      } catch { /* an entry that cannot be read: setValue refuses it */ }
+      if (!exists) {
+        const maps = unreadableAliasMapsFor(scope);
+        if (maps.length > 0) {
+          resolveScopeForWrite(scope);   // an unresolved project stays the answer
+          throw unreadableAliasSetRefusal(resolved, maps);
+        }
+      }
       setValue(resolved, storedValue, scope);
       if (alias) {
         setAlias(alias, resolved, scope);
@@ -586,7 +599,11 @@ server.tool(
         try {
           const read = interpolateForRead(value, wroteTo);
           if (read.unresolved) lines.push(`warning: ${unresolvedWarning(resolved, read.unresolved)}`);
-        } catch { /* `:?` or a cycle: the author asked for that failure on read */ }
+        } catch (err) {
+          // #305 L26: a cycle this value completes is said; a `:?` guard is
+          // the failure on read the author asked for.
+          if (err instanceof StrictInterpolationError && err.cycle) lines.push(`warning: ${cycleWarning(resolved, err)}`);
+        }
       }
 
       // Write-amp guard (#101) — warn when the same key has been written
@@ -799,10 +816,19 @@ server.tool(
       // before the entry is gone. Nor may an unreadable entry UNDER this key
       // be left on disk while the cascade drops its alias and its flag.
       assertSubtreeReadable(() => resolveScopeForWrite(scope), resolvedKey, 'remove');
-      if (getValue(resolvedKey, scope) !== undefined) {
+      // #305 L17: an entry file that is simply not valid is removed; a
+      // conflict stays refused (getValue throws for it).
+      const invalid = invalidEntryFile(() => resolveScopeForWrite(scope), resolvedKey);
+      if (invalid !== undefined || getValue(resolvedKey, scope) !== undefined) {
         assertSidecarsWritable(() => resolveScopeForWrite(scope), ['aliases', 'confirm']);
       }
-      const removed = removeValue(resolvedKey, scope);
+      // #305 L22: the entries stored under this one, which the tree cannot show, go with it.
+      let hidden: string[] = [];
+      try {
+        const id = resolveScopeForWrite(scope);
+        hidden = hiddenKeysUnder(id, storedSpellingOf(id, resolvedKey) ?? resolvedKey);
+      } catch { /* the removal reports an unresolved project */ }
+      const removed = removeValue(resolvedKey, scope, { invalidFile: invalid !== undefined });
       if (!removed) {
         return errorResponse(`Key '${key}' not found.`, 'NOT_FOUND');
       }
@@ -810,9 +836,10 @@ server.tool(
       // store write (#268). The confirmation flags stay (#244): a flag gates
       // its name in every project, and only reverie's confirm removal clears one.
       const kept = flagsListedUnder(resolvedKey, scope);
-      return textResponse(kept.length > 0
-        ? `Removed: ${resolvedKey}\nConfirmation flags kept (a flag gates its name in every project): ${kept.join(', ')}`
-        : `Removed: ${resolvedKey}`);
+      const lines = [`Removed: ${resolvedKey}`];
+      if (hidden.length > 0) lines.push(`Also removed, hidden under it: ${hidden.join(', ')}`);
+      if (kept.length > 0) lines.push(`Confirmation flags kept (a flag gates its name in every project): ${kept.join(', ')}`);
+      return textResponse(lines.join('\n'));
     } catch (err) {
       if (err instanceof ProjectResolutionError || err instanceof StoreUnreadableError || isStoreIoError(err)) throw err;
       return errorResponse(`Error removing entry: ${String(err)}`);

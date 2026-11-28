@@ -218,14 +218,36 @@ export function entriesUnderEntries(keys: Iterable<string>): Map<string, string>
 // store.ts, as the unreadable-file registry is, so that lint.ts needs no new
 // import from '../store' — which several suites mock with explicit factories.
 const storedKeySources = new Map<'project' | 'global', () => string[]>();
+const storedSpellingSources = new Map<'project' | 'global', (key: string) => string | undefined>();
 
-export function registerStoredKeysSource(id: 'project' | 'global', list: () => string[]): void {
+export function registerStoredKeysSource(id: 'project' | 'global', list: () => string[], spelling?: (key: string) => string | undefined): void {
   storedKeySources.set(id, list);
+  if (spelling) storedSpellingSources.set(id, spelling);
 }
 
 /** The keys `id`'s last scan in this process listed; none when it has not scanned. No I/O. */
 export function storedKeysOf(id: 'project' | 'global'): string[] {
   return storedKeySources.get(id)?.() ?? [];
+}
+
+/**
+ * #305 L23: the key `id` stores the entry `key`'s path opens under — `key`
+ * itself, or the spelling its last scan listed when the filesystem folds
+ * names (case, Unicode form) — or undefined. `get` finds an entry under any
+ * such spelling; `rm` removes it by the stored one.
+ */
+export function storedSpellingOf(id: 'project' | 'global', key: string): string | undefined {
+  return storedSpellingSources.get(id)?.(key);
+}
+
+/**
+ * #305 L22: the keys `id`'s last scan listed under `key` that its tree
+ * cannot show — each stored under another entry (#267). Removing `key`
+ * removes them too. No I/O.
+ */
+export function hiddenKeysUnder(id: 'project' | 'global', key: string): string[] {
+  const prefix = `${key}.`;
+  return [...entriesUnderEntries(storedKeysOf(id)).keys()].filter(k => k.startsWith(prefix)).sort();
 }
 
 /**

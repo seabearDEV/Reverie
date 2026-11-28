@@ -94,9 +94,12 @@ export function walkUnchecked(trace: ReferenceTrace): boolean {
  * subtree with one broken template doesn't fail the whole subtree.
  */
 export class StrictInterpolationError extends Error {
-  constructor(message: string) {
+  /** A cycle (`a → b → a`), not a `:?` guard (#305 L26: `set` warns of one). */
+  readonly cycle: boolean;
+  constructor(message: string, cycle = false) {
     super(message);
     this.name = 'StrictInterpolationError';
+    this.cycle = cycle;
   }
 }
 
@@ -238,6 +241,19 @@ export function unresolvedOverflowNote(rest: number): string {
 /** Envelope warning code for unresolvedWarning. */
 export const UNRESOLVED_WARNING_CODE = 'INTERPOLATION_UNRESOLVED';
 
+/** The warning code `set` gives a value that completes a reference cycle (#305 L26). */
+export const CYCLE_WARNING_CODE = 'INTERPOLATION_CYCLE';
+
+/**
+ * #305 L26: after a set, the cycle the value stored under `key` completes.
+ * The write stands; every read of an entry in the cycle fails until one of
+ * them changes. Names keys only, never a value.
+ */
+export function cycleWarning(key: string, err: StrictInterpolationError): string {
+  const chain = err.message.replace(/^Circular interpolation detected: /, '');
+  return `'${key}' completes a reference cycle (${chain}). The value is stored, and every read of an entry in the cycle fails until one of them changes.`;
+}
+
 /**
  * Parse a ref string for conditional modifiers (`:-` default, `:?` error).
  * Returns the key and optional modifier with its value.
@@ -299,7 +315,7 @@ function resolveRef(ref: string, maxDepth: number, seen: Set<string>, execCache:
     const chain = [...[...seen].map(keyOfId), resolvedKey].join(' → ');
     // Strict: a cycle is a structural bug, not a "missing data" condition.
     // Subtree fallbacks would mask real misconfigurations.
-    throw new StrictInterpolationError(`Circular interpolation detected: ${chain}`);
+    throw new StrictInterpolationError(`Circular interpolation detected: ${chain}`, true);
   }
 
   if (resolved === undefined) {
@@ -369,7 +385,7 @@ function resolveExecRef(ref: string, maxDepth: number, seen: Set<string>, execCa
 
   if (seen.has(id)) {
     const chain = [...[...seen].map(keyOfId), resolvedKey].join(' → ');
-    throw new StrictInterpolationError(`Circular interpolation detected: ${chain}`);
+    throw new StrictInterpolationError(`Circular interpolation detected: ${chain}`, true);
   }
 
   // Return cached result if this entry already ran in this pass. Keyed by
